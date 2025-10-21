@@ -7,6 +7,11 @@
   "bin": {
     "swallowkit": "dist/cli/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -22,7 +27,7 @@
     "typescript",
     "framework"
   ],
-  "author": "",
+  "author": "Takumasa Hirabayashi",
   "license": "MIT",
   "dependencies": {
     "@azure/cosmos": "^4.0.0",
@@ -48,5 +53,16 @@
   },
   "peerDependencies": {
     "react": ">=16.8.0"
-  }
+  },
+  "directories": {
+    "doc": "docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/himanago/swallowkit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/himanago/swallowkit/issues"
+  },
+  "homepage": "https://github.com/himanago/swallowkit#readme"
 }
