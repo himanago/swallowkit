@@ -122,17 +122,21 @@ export function useQuery<T>(
   };
 }
 
+// useMutation は hooks/useMutation.ts に移動されました
+// 互換性のために型のみ再エクスポート
+import type { UseMutationOptions as NewUseMutationOptions, UseMutationResult as NewUseMutationResult } from './useMutation';
+
 /**
- * ミューテーションのオプション
+ * @deprecated Use UseMutationOptions from 'swallowkit' instead
  */
 export interface UseMutationOptions<TVariables, TData> {
-  onSuccess?: (data: TData, variables: TVariables) => void;
-  onError?: (error: any, variables: TVariables) => void;
-  onMutate?: (variables: TVariables) => void;
+  onSuccess?: (data: TData, variables?: TVariables) => void;
+  onError?: (error: any, variables?: TVariables) => void;
+  onMutate?: (variables?: TVariables) => void;
 }
 
 /**
- * ミューテーションの状態
+ * @deprecated Use UseMutationResult from 'swallowkit' instead
  */
 export interface UseMutationResult<TVariables, TData> {
   mutate: (variables: TVariables) => Promise<TData>;
@@ -141,58 +145,6 @@ export interface UseMutationResult<TVariables, TData> {
   error: any;
   data: TData | undefined;
   reset: () => void;
-}
-
-/**
- * データ変更フック
- */
-export function useMutation<TVariables, TData>(
-  mutationFn: (variables: TVariables) => Promise<TData>,
-  options: UseMutationOptions<TVariables, TData> = {}
-): UseMutationResult<TVariables, TData> {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<any>(null);
-  const [data, setData] = useState<TData | undefined>(undefined);
-
-  const { onSuccess, onError, onMutate } = options;
-
-  const mutateAsync = useCallback(async (variables: TVariables): Promise<TData> => {
-    setLoading(true);
-    setError(null);
-    
-    try {
-      onMutate?.(variables);
-      const result = await mutationFn(variables);
-      setData(result);
-      onSuccess?.(result, variables);
-      return result;
-    } catch (err) {
-      setError(err);
-      onError?.(err, variables);
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, [mutationFn, onMutate, onSuccess, onError]);
-
-  const mutate = useCallback((variables: TVariables) => {
-    return mutateAsync(variables);
-  }, [mutateAsync]);
-
-  const reset = useCallback(() => {
-    setLoading(false);
-    setError(null);
-    setData(undefined);
-  }, []);
-
-  return {
-    mutate,
-    mutateAsync,
-    loading,
-    error,
-    data,
-    reset,
-  };
 }
 
 /**
@@ -214,16 +166,55 @@ export function useSchemaQuery<T>(
 
 /**
  * Zodスキーマ付きのミューテーションフック
+ * @deprecated Use useMutation with schema validation instead
  */
 export function useSchemaMutation<TVariables, TData>(
   mutationFn: (variables: TVariables) => Promise<unknown>,
   responseSchema: z.ZodSchema<TData>,
   options: UseMutationOptions<TVariables, TData> = {}
 ): UseMutationResult<TVariables, TData> {
-  const schemaMutationFn = useCallback(async (variables: TVariables): Promise<TData> => {
-    const result = await mutationFn(variables);
-    return responseSchema.parse(result);
-  }, [mutationFn, responseSchema]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<any>(null);
+  const [data, setData] = useState<TData | undefined>(undefined);
 
-  return useMutation(schemaMutationFn, options);
+  const { onSuccess, onError, onMutate } = options;
+
+  const mutateAsync = useCallback(async (variables: TVariables): Promise<TData> => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      onMutate?.(variables);
+      const result = await mutationFn(variables);
+      const validated = responseSchema.parse(result);
+      setData(validated);
+      onSuccess?.(validated, variables);
+      return validated;
+    } catch (err) {
+      setError(err);
+      onError?.(err, variables);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [mutationFn, responseSchema, onMutate, onSuccess, onError]);
+
+  const mutate = useCallback((variables: TVariables) => {
+    return mutateAsync(variables);
+  }, [mutateAsync]);
+
+  const reset = useCallback(() => {
+    setLoading(false);
+    setError(null);
+    setData(undefined);
+  }, []);
+
+  return {
+    mutate,
+    mutateAsync,
+    loading,
+    error,
+    data,
+    reset,
+  };
 }

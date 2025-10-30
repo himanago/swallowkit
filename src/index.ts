@@ -7,14 +7,18 @@
 export { useServerFn, useTypedServerFn, setRpcEndpoint, getRpcEndpoint, callServerFn } from "./hooks/useServerFn";
 export { 
   useQuery, 
-  useMutation, 
   useSchemaQuery, 
   useSchemaMutation,
   type UseQueryOptions,
   type UseQueryResult,
-  type UseMutationOptions,
-  type UseMutationResult
 } from "./hooks/useQuery";
+
+// ミューテーション・楽観的更新（Next.js統合）
+export { useMutation, type UseMutationOptions, type UseMutationResult } from "./hooks/useMutation";
+export { useOptimistic } from "./next/use-optimistic";
+
+// Next.js 統合（内部で使用、高度なユーザー向けに公開）
+export { revalidatePath, revalidateTag } from "./next/server-action-wrapper";
 
 // サーバー関数レジストリ
 export {

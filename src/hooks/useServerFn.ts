@@ -8,6 +8,7 @@ import {
   ServerFnFactory,
 } from "../types";
 import { getServerFunctionName, isServerFunctionRegistered } from "./server-function-registry";
+import { createCachedServerFunction, isNextJsAppRouter } from "../next/server-action-wrapper";
 
 // 設定可能なRPCエンドポイント
 let rpcEndpoint = "/api/_swallowkit";
@@ -64,7 +65,16 @@ export function useServerFn<TArgs extends any[], TResult>(
 
       if ((mode === "auto" && isServer) || mode === "force-server") {
         // サーバーサイドで直接実行
-        result = await Promise.resolve(serverFn(...args));
+        // Next.js のキャッシュ機能が利用可能な場合は活用
+        if (isNextJsAppRouter() && options.cache !== false) {
+          const cachedFn = createCachedServerFunction(serverFn, {
+            revalidate: options.revalidate,
+            tags: options.tags,
+          });
+          result = await Promise.resolve(cachedFn(...args));
+        } else {
+          result = await Promise.resolve(serverFn(...args));
+        }
       } else {
         // クライアントサイドでRPC呼び出し
         result = await callServerFnRPC(serverFn, args);

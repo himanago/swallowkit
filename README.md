@@ -1,16 +1,20 @@
 # SwallowKit
 
-A React framework for building full-stack Azure Static Web Apps with Cosmos DB integration.
+A React framework for building full-stack Azure Static Web Apps with Next.js integration.
+
+SwallowKit provides a simple, intuitive API while leveraging Next.js's powerful features under the hood.
 
 > **Note**: This project is in early development. APIs may change in future versions.
 
 ## 🚀 Features
 
+- **SSR/CSR Auto-Detection**: `useServerFn` automatically chooses the optimal execution method
+- **Next.js Integration**: Leverages Next.js Server Actions, caching, and transitions internally
 - **Cosmos DB Integration**: Built-in Cosmos DB support with automatic setup
-- **React Hooks Based**: Simple server function calls with `useServerFn` / `callServerFn`
+- **React Hooks Based**: Simple server function calls with `useServerFn`, `useMutation`, `useOptimistic`
 - **Type-Safe**: Full TypeScript support with end-to-end type safety
 - **Azure Optimized**: Designed for Azure Static Web Apps + Azure Functions v4
-- **Developer Experience**: Simple CLI commands to get started
+- **Developer Experience**: Simple API that hides Next.js complexity
 
 ## 📋 Prerequisites
 
@@ -22,37 +26,56 @@ A React framework for building full-stack Azure Static Web Apps with Cosmos DB i
 ## 📦 Installation
 
 ```bash
-npm install swallowkit
+npm install swallowkit next react react-dom
 ```
+
+SwallowKit requires Next.js 14+ as a peer dependency, but you don't need to use Next.js APIs directly.
 
 ## 🛠️ Quick Start
 
 ### Basic Usage
 
 ```typescript
-import { useServerFn, callServerFn } from 'swallowkit';
+import { defineServerFunction, useServerFn, useMutation } from 'swallowkit';
 
-// Define your server function type
-async function getTodos(): Promise<Todo[]> {
-  // Implementation will be on the server side
-  throw new Error("Server function");
-}
+// 1. Define server functions
+const getTodos = defineServerFunction('getTodos', async () => {
+  // Server-side code (Cosmos DB, etc.)
+  return await db.todos.findAll();
+});
 
-// Use in React component
-function TodoList() {
-  const { data, loading, error, refetch } = useServerFn(getTodos, []);
+const addTodo = defineServerFunction('addTodo', async (text: string) => {
+  return await db.todos.create({ text, completed: false });
+});
+
+// 2. Use in React components
+function TodoApp() {
+  // Auto SSR/CSR detection - optimized for both!
+  const { data: todos, loading, refetch } = useServerFn(getTodos, []);
+  
+  // Mutation with loading state
+  const addMutation = useMutation(addTodo, {
+    onSuccess: () => refetch(),
+  });
 
   if (loading) return <div>Loading...</div>;
-  if (error) return <div>Error: {error.message}</div>;
 
   return (
     <div>
       <ul>
-        {data?.map((todo) => (
+        {todos?.map((todo) => (
           <li key={todo.id}>{todo.text}</li>
         ))}
       </ul>
-      <button onClick={refetch}>Refresh</button>
+      <form onSubmit={async (e) => {
+        e.preventDefault();
+        const text = new FormData(e.currentTarget).get('text') as string;
+        await addMutation.mutateAsync(text);
+        e.currentTarget.reset();
+      }}>
+        <input name="text" required />
+        <button disabled={addMutation.isLoading}>Add</button>
+      </form>
     </div>
   );
 }

@@ -10,6 +10,10 @@ export interface UseServerFnOptions {
   mode?: ServerFnMode;
   refetchOnMount?: boolean;
   enabled?: boolean;
+  // Next.js キャッシュオプション（内部で使用）
+  cache?: boolean;
+  revalidate?: number | false;
+  tags?: string[];
 }
 
 // useServerFn の戻り値
