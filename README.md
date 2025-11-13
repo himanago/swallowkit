@@ -1,20 +1,21 @@
 # SwallowKit
 
-A React framework for building full-stack Azure Static Web Apps with Next.js integration.
+A Next.js framework for building full-stack applications optimized for Azure deployment.
 
-SwallowKit provides a simple, intuitive API while leveraging Next.js's powerful features under the hood.
+SwallowKit enables you to build Next.js applications following standard React Server Components and Server Actions patterns, then automatically split them into individual Azure Functions to overcome Azure Static Web Apps' 250MB size limit.
 
 > **Note**: This project is in early development. APIs may change in future versions.
 
 ## 🚀 Features
 
-- **SSR/CSR Auto-Detection**: `useServerFn` automatically chooses the optimal execution method
-- **Next.js Integration**: Leverages Next.js Server Actions, caching, and transitions internally
+- **Next.js Standard Approach**: Build with standard Next.js SSR, Server Components, and Server Actions
+- **Automatic Function Splitting**: CLI command splits SSR components/actions into individual Azure Functions
+- **Azure Static Web Apps Optimization**: Overcomes 250MB deployment size limit
+- **Independent Azure Functions**: Deploy backend functions separately from SWA
 - **Cosmos DB Integration**: Built-in Cosmos DB support with automatic setup
-- **React Hooks Based**: Simple server function calls with `useServerFn`, `useMutation`, `useOptimistic`
 - **Type-Safe**: Full TypeScript support with end-to-end type safety
 - **Azure Optimized**: Designed for Azure Static Web Apps + Azure Functions v4
-- **Developer Experience**: Simple API that hides Next.js complexity
+- **Developer Experience**: Simple CLI commands for build and deployment
 
 ## 📋 Prerequisites
 
@@ -33,168 +34,258 @@ SwallowKit requires Next.js 14+ as a peer dependency, but you don't need to use 
 
 ## 🛠️ Quick Start
 
-### Basic Usage
+### 1. Initialize SwallowKit Project
+
+```bash
+npx swallowkit init my-app
+cd my-app
+npm install
+```
+
+### 2. Write Standard Next.js Code
+
+Build your application using standard Next.js patterns:
 
 ```typescript
-import { defineServerFunction, useServerFn, useMutation } from 'swallowkit';
+// app/page.tsx - Server Component
+import { getTodos } from '@/lib/server/todos';
 
-// 1. Define server functions
-const getTodos = defineServerFunction('getTodos', async () => {
-  // Server-side code (Cosmos DB, etc.)
-  return await db.todos.findAll();
-});
-
-const addTodo = defineServerFunction('addTodo', async (text: string) => {
-  return await db.todos.create({ text, completed: false });
-});
-
-// 2. Use in React components
-function TodoApp() {
-  // Auto SSR/CSR detection - optimized for both!
-  const { data: todos, loading, refetch } = useServerFn(getTodos, []);
+export default async function TodoPage() {
+  const todos = await getTodos();
   
-  // Mutation with loading state
-  const addMutation = useMutation(addTodo, {
-    onSuccess: () => refetch(),
-  });
-
-  if (loading) return <div>Loading...</div>;
-
   return (
     <div>
+      <h1>Todos</h1>
       <ul>
-        {todos?.map((todo) => (
+        {todos.map((todo) => (
           <li key={todo.id}>{todo.text}</li>
         ))}
       </ul>
-      <form onSubmit={async (e) => {
-        e.preventDefault();
-        const text = new FormData(e.currentTarget).get('text') as string;
-        await addMutation.mutateAsync(text);
-        e.currentTarget.reset();
-      }}>
-        <input name="text" required />
-        <button disabled={addMutation.isLoading}>Add</button>
-      </form>
+      <AddTodoForm />
     </div>
   );
 }
 ```
 
-## 🎯 Usage with React
+```typescript
+// app/actions.ts - Server Actions
+'use server'
 
-### Query with `useServerFn`
+import { revalidatePath } from 'next/cache';
+import { addTodo } from '@/lib/server/todos';
 
-For data fetching operations that need state management:
+export async function addTodoAction(formData: FormData) {
+  const text = formData.get('text') as string;
+  await addTodo(text);
+  revalidatePath('/');
+}
+```
 
-```tsx
-import { useServerFn } from "swallowkit";
+```typescript
+// components/AddTodoForm.tsx - Client Component
+'use client'
 
-function TodoList() {
-  const { data: todos, loading, error, refetch } = useServerFn(getTodos, []);
+import { addTodoAction } from '@/app/actions';
+import { useFormStatus } from 'react-dom';
 
-  if (loading) return <div>Loading...</div>;
-  if (error) return <div>Error: {error.message}</div>;
-
+export function AddTodoForm() {
   return (
-    <div>
-      <ul>
-        {todos?.map((todo) => (
-          <li key={todo.id}>{todo.text}</li>
-        ))}
-      </ul>
-      <button onClick={refetch}>Refresh</button>
-    </div>
+    <form action={addTodoAction}>
+      <input name="text" required />
+      <SubmitButton />
+    </form>
+  );
+}
+
+function SubmitButton() {
+  const { pending } = useFormStatus();
+  return <button disabled={pending}>Add</button>;
+}
+```
+
+### 3. Build and Deploy with SwallowKit CLI
+
+```bash
+# Generate individual Azure Functions from your Next.js app
+npx swallowkit generate
+
+# Build for production
+npx swallowkit build
+
+# Deploy to Azure
+npx swallowkit deploy
+```
+
+The `generate` command automatically:
+- Analyzes your Next.js app
+- Identifies Server Components and Server Actions
+- Splits them into individual Azure Functions
+- Generates Azure Functions v4 compatible code
+- Creates deployment configuration
+
+## 🏗️ Architecture
+
+### Development Flow
+
+1. **Develop** with standard Next.js (SSR, RSC, Server Actions)
+2. **Generate** individual Azure Functions with SwallowKit CLI
+3. **Deploy** to Azure Static Web Apps + Azure Functions
+
+### Why This Approach?
+
+**Problem**: Azure Static Web Apps has a 250MB deployment size limit. Next.js apps with SSR often exceed this limit because the backend bundle is not optimized.
+
+**Solution**: SwallowKit splits your SSR components and Server Actions into individual, optimized Azure Functions:
+
+```
+Next.js App Structure          →    Generated Azure Functions
+├── app/
+│   ├── page.tsx (SSR)        →    ├── functions/
+│   ├── todos/                     │   ├── page-root/
+│   │   └── page.tsx (SSR)    →    │   │   └── index.ts
+│   └── actions.ts            →    │   ├── page-todos/
+│                                  │   │   └── index.ts
+│                                  │   └── actions-addTodo/
+│                                  │       └── index.ts
+│                                  └── static/ (Client Components)
+```
+
+Each function is:
+- **Independently deployable** to Azure Functions
+- **Optimized and tree-shaken** for size
+- **Can scale independently**
+- **Not limited by SWA's 250MB constraint**
+
+## 🎯 Usage Patterns
+
+### Server Components (SSR)
+
+```typescript
+// app/users/page.tsx
+import { getUsers } from '@/lib/server/users';
+
+export default async function UsersPage() {
+  const users = await getUsers();
+  return <UserList users={users} />;
+}
+```
+
+### Server Actions
+
+```typescript
+// app/users/actions.ts
+'use server'
+
+export async function createUser(formData: FormData) {
+  const name = formData.get('name') as string;
+  // ... create user
+  revalidatePath('/users');
+}
+```
+
+### Client Components with Server Actions
+
+```typescript
+// components/CreateUserForm.tsx
+'use client'
+
+import { createUser } from '@/app/users/actions';
+
+export function CreateUserForm() {
+  return (
+    <form action={createUser}>
+      <input name="name" required />
+      <button>Create</button>
+    </form>
   );
 }
 ```
 
-### Mutations with `callServerFn`
+## 📚 CLI Commands
 
-For operations like create, update, delete that don't need state management:
+### `swallowkit init [project-name]`
 
-```tsx
-import { useServerFn, callServerFn } from "swallowkit";
+Initialize a new SwallowKit project with Next.js template.
 
-function TodoApp() {
-  const [newTodoText, setNewTodoText] = useState("");
-  const { data: todos, loading, error, refetch } = useServerFn(getTodos, []);
+```bash
+npx swallowkit init my-app
+```
 
-  const handleAddTodo = async () => {
-    if (!newTodoText.trim()) return;
+### `swallowkit generate`
+
+Analyze your Next.js app and generate individual Azure Functions.
+
+```bash
+npx swallowkit generate
+```
+
+Options:
+- `--output-dir <dir>`: Output directory for generated functions (default: `./azure-functions`)
+- `--config <file>`: Custom configuration file
+
+### `swallowkit build`
+
+Build the Next.js app and Azure Functions for production.
+
+```bash
+npx swallowkit build
+```
+
+### `swallowkit deploy`
+
+Deploy to Azure Static Web Apps and Azure Functions.
+
+```bash
+npx swallowkit deploy
+```
+
+Options:
+- `--swa-name <name>`: Azure Static Web Apps resource name
+- `--functions-name <name>`: Azure Functions resource name
+- `--resource-group <name>`: Azure resource group
+
+### `swallowkit dev`
+
+Start development server.
+
+```bash
+npx swallowkit dev
+```
+
+## 🔧 Configuration
+
+Create `swallowkit.config.js` in your project root:
+
+```javascript
+module.exports = {
+  // Output directory for generated Azure Functions
+  outputDir: './azure-functions',
+  
+  // Azure Functions runtime version
+  functionsVersion: 'v4',
+  
+  // Function splitting strategy
+  splitting: {
+    // Split each Server Component into a separate function
+    perComponent: true,
     
-    await callServerFn(addTodo, { text: newTodoText });
-    setNewTodoText("");
-    refetch(); // Refetch to get the latest data
-  };
-
-  const handleDeleteTodo = async (id: string) => {
-    await callServerFn(deleteTodo, { id });
-    refetch();
-  };
-
-  // ... rendering
-}
-```
-
-## 📚 API Reference
-
-### `useServerFn<TResult>(serverFn, args, options?)`
-
-**Parameters:**
-- `serverFn`: Server function to call
-- `args`: Array of function arguments
-- `options?`: Optional configuration
-
-**Returns:**
-```typescript
-{
-  data: TResult | null;
-  loading: boolean;
-  error: Error | null;
-  refetch: () => Promise<void>;
-}
-```
-
-**Example:**
-```typescript
-const { data, loading, error, refetch } = useServerFn(getTodos, []);
-```
-
-### `callServerFn<TArgs, TResult>(serverFn, ...args)`
-
-**Parameters:**
-- `serverFn`: Server function to call
-- `...args`: Function arguments
-
-**Returns:**
-- `Promise<TResult>`: Server function execution result
-
-**Example:**
-```typescript
-const result = await callServerFn(addTodo, { text: "New todo" });
-```
-
-### `useQuery` / `useMutation`
-
-Advanced hooks for more granular control over queries and mutations.
-
-```typescript
-import { useQuery, useMutation } from 'swallowkit';
-
-// Query
-const { data, isLoading, error } = useQuery({
-  queryFn: getTodos,
-  queryKey: ['todos']
-});
-
-// Mutation
-const { mutate } = useMutation({
-  mutationFn: addTodo,
-  onSuccess: () => {
-    // Handle success
-  }
-});
+    // Split each Server Action into a separate function
+    perAction: true,
+  },
+  
+  // Azure Static Web Apps configuration
+  staticWebApp: {
+    appLocation: './',
+    apiLocation: './azure-functions',
+    outputLocation: '.next',
+  },
+  
+  // Database configuration
+  database: {
+    type: 'cosmosdb',
+    connectionString: process.env.COSMOS_DB_CONNECTION_STRING,
+  },
+};
 ```
 
 ## 🔧 Database Integration

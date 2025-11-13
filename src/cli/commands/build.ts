@@ -6,46 +6,107 @@ interface BuildOptions {
 }
 
 export async function buildCommand(options: BuildOptions) {
-  console.log("🔨 SwallowKit プロジェクトをビルド中...");
+  console.log("🔨 Building Next.js app and Azure Functions...");
 
-  const outputDir = path.join(process.cwd(), options.output);
+  const projectRoot = process.cwd();
+  const outputDir = path.join(projectRoot, options.output);
 
   try {
-    // 出力ディレクトリを作成
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
+    // Build Next.js app
+    console.log("\n📦 Building Next.js application...");
+    await buildNextJs(projectRoot);
+
+    // Build Azure Functions
+    const functionsDir = path.join(projectRoot, 'azure-functions');
+    if (fs.existsSync(functionsDir)) {
+      console.log("\n⚡ Building Azure Functions...");
+      await buildAzureFunctions(functionsDir);
+    } else {
+      console.log("\n⚠️  No Azure Functions found. Run 'swallowkit generate' first.");
     }
 
-    // Azure Static Web Apps用のファイル構造を作成
-    await buildForAzureStaticWebApps(outputDir);
-
-    console.log(`✅ ビルドが完了しました: ${outputDir}`);
-    console.log("\n📦 Azure Static Web Appsにデプロイする準備ができました！");
+    console.log(`\n✅ Build completed!`);
+    console.log("\n📝 Next steps:");
+    console.log("  1. swallowkit deploy (Deploy to Azure)");
+    console.log("  2. Or manually deploy:");
+    console.log("     - Next.js: .next/ directory");
+    console.log("     - Azure Functions: azure-functions/ directory");
   } catch (error) {
-    console.error("❌ ビルドに失敗しました:", error);
+    console.error("❌ Build failed:", error);
     process.exit(1);
   }
 }
 
-async function buildForAzureStaticWebApps(outputDir: string) {
-  // 1. フロントエンドアプリをビルド
-  console.log("📦 フロントエンドアプリをビルド中...");
-  await buildFrontend(outputDir);
+async function buildNextJs(projectRoot: string) {
+  const { spawn } = require('child_process');
+  
+  return new Promise<void>((resolve, reject) => {
+    const build = spawn('npm', ['run', 'build'], {
+      cwd: projectRoot,
+      stdio: 'inherit',
+      shell: true
+    });
 
-  // 2. Azure Functions用のAPIをビルド
-  console.log("⚡ Azure Functions APIをビルド中...");
-  await buildFunctions(outputDir);
+    build.on('close', (code: number) => {
+      if (code === 0) {
+        console.log('✅ Next.js build completed');
+        resolve();
+      } else {
+        reject(new Error(`Next.js build failed with code ${code}`));
+      }
+    });
+  });
+}
 
-  // 3. staticwebapp.config.json を生成
-  console.log("⚙️ Azure Static Web Apps設定を生成中...");
-  await generateStaticWebAppConfig(outputDir);
+async function buildAzureFunctions(functionsDir: string) {
+  const { spawn } = require('child_process');
+  
+  // Check if package.json exists
+  const packageJsonPath = path.join(functionsDir, 'package.json');
+  if (!fs.existsSync(packageJsonPath)) {
+    console.log('⚠️  No package.json found in azure-functions/');
+    return;
+  }
 
-  console.log("📁 ビルド構造:");
-  console.log("  dist/");
-  console.log("  ├── index.html          # フロントエンドアプリ");
-  console.log("  ├── assets/             # 静的アセット");
-  console.log("  ├── api/                # Azure Functions");
-  console.log("  └── staticwebapp.config.json # SWA設定");
+  // Install dependencies
+  console.log('📦 Installing Azure Functions dependencies...');
+  await new Promise<void>((resolve, reject) => {
+    const install = spawn('npm', ['install'], {
+      cwd: functionsDir,
+      stdio: 'inherit',
+      shell: true
+    });
+
+    install.on('close', (code: number) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`npm install failed with code ${code}`));
+      }
+    });
+  });
+
+  // Build TypeScript
+  const tsconfigPath = path.join(functionsDir, 'tsconfig.json');
+  if (fs.existsSync(tsconfigPath)) {
+    console.log('🔨 Compiling TypeScript...');
+    await new Promise<void>((resolve, reject) => {
+      const build = spawn('npm', ['run', 'build'], {
+        cwd: functionsDir,
+        stdio: 'inherit',
+        shell: true
+      });
+
+      build.on('close', (code: number) => {
+        if (code === 0) {
+          console.log('✅ Azure Functions build completed');
+          resolve();
+        } else {
+          reject(new Error(`Azure Functions build failed with code ${code}`));
+        }
+      });
+    });
+  }
 }
 
 async function buildFrontend(outputDir: string) {

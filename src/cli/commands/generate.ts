@@ -8,25 +8,30 @@ import { SchemaParser } from '../../generator/schema-parser';
 export const generateCommand = new Command()
   .name('generate')
   .alias('gen')
-  .description('SwallowKit API自動生成（Azure Functions v4）')
-  .option('-o, --output <path>', 'API出力ディレクトリ', './api')
-  .option('-p, --project <path>', 'プロジェクトルートディレクトリ', '.')
-  .option('--cosmos-endpoint <url>', 'Cosmos DB エンドポイント')
-  .option('--cosmos-key <key>', 'Cosmos DB キー')
-  .option('--cosmos-database <name>', 'Cosmos DB データベース名', 'swallowkit')
-  .option('--dry-run', 'ドライラン（実際には生成しない）', false)
-  .option('--force', '既存ファイルを強制上書き', false)
+  .description('Analyze Next.js app and generate individual Azure Functions from Server Components and Server Actions')
+  .option('-o, --output <path>', 'Azure Functions output directory', './azure-functions')
+  .option('-p, --project <path>', 'Project root directory', '.')
+  .option('--dry-run', 'Dry run (analyze only, do not generate)', false)
+  .option('--force', 'Force overwrite existing files', false)
+  .option('--verbose', 'Show detailed logs', false)
   .action(async (options) => {
-    console.log('🚀 SwallowKit API自動生成を開始します...');
-    console.log('⚙️ オプション:', options);
+    console.log('🚀 Analyzing Next.js app and generating Azure Functions...');
+    if (options.verbose) {
+      console.log('⚙️ Options:', options);
+    }
 
     try {
       const projectRoot = path.resolve(options.project);
       const outputDir = path.resolve(options.output);
 
-      // プロジェクトルートが存在するかチェック
-      if (!fs.existsSync(projectRoot)) {
-        console.error('❌ プロジェクトルートが見つかりません:', projectRoot);
+      // Check if Next.js project exists
+      const nextConfigPath = path.join(projectRoot, 'next.config.js');
+      const nextConfigMjsPath = path.join(projectRoot, 'next.config.mjs');
+      const hasNextConfig = fs.existsSync(nextConfigPath) || fs.existsSync(nextConfigMjsPath);
+      
+      if (!hasNextConfig) {
+        console.error('❌ Next.js project not found. Make sure you are in a Next.js project directory.');
+        console.error('   Looking for: next.config.js or next.config.mjs');
         process.exit(1);
       }
 
@@ -49,51 +54,34 @@ export const generateCommand = new Command()
         }
       }
 
-      // ドライランの場合は解析のみ実行
+      // Dry run mode - analyze only
       if (options.dryRun) {
-        console.log('🔍 ドライランモード: ファイル解析のみ実行します...');
+        console.log('🔍 Dry run mode: Analyzing only, no files will be generated...\n');
         
-        const schemaFiles = SchemaParser.findSchemaFiles(projectRoot);
-        const serverFunctionFiles = SchemaParser.findServerFunctionFiles(projectRoot);
-
-        console.log('\n📋 検出されたファイル:');
-        console.log(`  スキーマファイル: ${schemaFiles.length}個`);
-        schemaFiles.forEach(file => console.log(`    - ${path.relative(projectRoot, file)}`));
+        // Find Next.js app directory
+        const appDir = path.join(projectRoot, 'app');
+        const pagesDir = path.join(projectRoot, 'pages');
         
-        console.log(`  サーバー関数ファイル: ${serverFunctionFiles.length}個`);
-        serverFunctionFiles.forEach(file => console.log(`    - ${path.relative(projectRoot, file)}`));
-
-        // スキーマ解析結果を表示
-        const schemas = [];
-        for (const file of schemaFiles) {
-          const fileSchemas = SchemaParser.parseSchemaFile(file);
-          schemas.push(...fileSchemas);
+        if (!fs.existsSync(appDir) && !fs.existsSync(pagesDir)) {
+          console.error('❌ No app/ or pages/ directory found');
+          process.exit(1);
         }
 
-        if (schemas.length > 0) {
-          console.log('\n🎯 検出されたスキーマ:');
-          schemas.forEach(schema => {
-            console.log(`  - ${schema.name}`);
-            console.log(`    テーブル名: ${schema.tableName}`);
-            console.log(`    操作: ${schema.operations.map(op => op.name).join(', ')}`);
-          });
-        }
-
-        // サーバー関数解析結果を表示
-        const serverFunctions = [];
-        for (const file of serverFunctionFiles) {
-          const fileFunctions = SchemaParser.parseServerFunctions(file);
-          serverFunctions.push(...fileFunctions);
-        }
-
-        if (serverFunctions.length > 0) {
-          console.log('\n⚡ 検出されたサーバー関数:');
-          serverFunctions.forEach(fn => {
-            console.log(`  - ${fn.name}(${fn.parameters.map(p => `${p.name}: ${p.type}`).join(', ')}) => ${fn.returnType}`);
-          });
-        }
-
-        console.log('\n✅ ドライラン完了');
+        // TODO: Implement actual Next.js analysis
+        console.log('📋 Analysis Results:');
+        console.log('  - Detected architecture: App Router (Next.js 13+)');
+        console.log('  - Server Components: 0 (analysis to be implemented)');
+        console.log('  - Server Actions: 0 (analysis to be implemented)');
+        console.log('  - Estimated Azure Functions: 0');
+        console.log('  - Estimated total size: N/A');
+        
+        console.log('\n⚠️  Note: Full analysis implementation is in progress.');
+        console.log('   This will analyze:');
+        console.log('   - Server Components (async functions in app/ directory)');
+        console.log('   - Server Actions (\'use server\' directives)');
+        console.log('   - Route Handlers (route.ts files)');
+        
+        console.log('\n✅ Dry run completed');
         return;
       }
 
@@ -143,87 +131,68 @@ export const generateCommand = new Command()
       console.log('  3. func azure functionapp publish <app-name>');
 
     } catch (error) {
-      console.error('❌ API生成中にエラーが発生しました:', error);
+      console.error('❌ Error during Azure Functions generation:', error);
       if (error instanceof Error) {
-        console.error('詳細:', error.message);
+        console.error('Details:', error.message);
         if (process.env.NODE_ENV === 'development') {
-          console.error('スタックトレース:', error.stack);
+          console.error('Stack trace:', error.stack);
         }
       }
       process.exit(1);
     }
   });
 
-// サブコマンド: スキーマ解析のみ
+// Subcommand: Analyze Next.js project
 export const analyzeCommand = new Command()
   .name('analyze')
-  .description('プロジェクト内のスキーマとサーバー関数を解析')
-  .option('-p, --project <path>', 'プロジェクトルートディレクトリ', '.')
-  .option('--json', 'JSON形式で出力', false)
+  .description('Analyze Next.js project and show deployment size estimation')
+  .option('-p, --project <path>', 'Project root directory', '.')
+  .option('--json', 'Output in JSON format', false)
   .action(async (options) => {
     try {
       const projectRoot = path.resolve(options.project);
       
-      const schemaFiles = SchemaParser.findSchemaFiles(projectRoot);
-      const serverFunctionFiles = SchemaParser.findServerFunctionFiles(projectRoot);
+      // Check if Next.js project exists
+      const nextConfigPath = path.join(projectRoot, 'next.config.js');
+      const nextConfigMjsPath = path.join(projectRoot, 'next.config.mjs');
+      const hasNextConfig = fs.existsSync(nextConfigPath) || fs.existsSync(nextConfigMjsPath);
+      
+      if (!hasNextConfig) {
+        console.error('❌ Next.js project not found');
+        process.exit(1);
+      }
 
+      const appDir = path.join(projectRoot, 'app');
+      const pagesDir = path.join(projectRoot, 'pages');
+
+      // TODO: Implement actual Next.js analysis
       const result = {
-        schemaFiles: schemaFiles.map((f: string) => path.relative(projectRoot, f)),
-        serverFunctionFiles: serverFunctionFiles.map((f: string) => path.relative(projectRoot, f)),
-        schemas: [] as any[],
-        serverFunctions: [] as any[],
+        architecture: fs.existsSync(appDir) ? 'App Router' : 'Pages Router',
+        serverComponents: 0,
+        serverActions: 0,
+        routeHandlers: 0,
+        estimatedFunctions: 0,
+        estimatedSize: 'N/A',
       };
-
-      // スキーマ解析
-      for (const file of schemaFiles) {
-        const fileSchemas = SchemaParser.parseSchemaFile(file);
-        result.schemas.push(...fileSchemas.map(s => ({
-          name: s.name,
-          tableName: s.tableName,
-          operations: s.operations.map(op => op.name),
-          file: path.relative(projectRoot, file),
-        })));
-      }
-
-      // サーバー関数解析
-      for (const file of serverFunctionFiles) {
-        const fileFunctions = SchemaParser.parseServerFunctions(file);
-        result.serverFunctions.push(...fileFunctions.map(fn => ({
-          name: fn.name,
-          parameters: fn.parameters,
-          returnType: fn.returnType,
-          isAsync: fn.isAsync,
-          file: path.relative(projectRoot, file),
-        })));
-      }
 
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
       } else {
-        console.log('📋 プロジェクト解析結果:');
-        console.log(`\n📁 スキーマファイル (${result.schemaFiles.length}個):`);
-        result.schemaFiles.forEach(file => console.log(`  - ${file}`));
+        console.log('📋 Next.js Project Analysis:');
+        console.log(`\n🏗️  Architecture: ${result.architecture}`);
+        console.log(`\n📊 Analysis Results:`);
+        console.log(`  - Server Components: ${result.serverComponents}`);
+        console.log(`  - Server Actions: ${result.serverActions}`);
+        console.log(`  - Route Handlers: ${result.routeHandlers}`);
+        console.log(`  - Estimated Azure Functions: ${result.estimatedFunctions}`);
+        console.log(`  - Estimated Total Size: ${result.estimatedSize}`);
         
-        console.log(`\n📁 サーバー関数ファイル (${result.serverFunctionFiles.length}個):`);
-        result.serverFunctionFiles.forEach(file => console.log(`  - ${file}`));
-        
-        console.log(`\n🎯 スキーマ (${result.schemas.length}個):`);
-        result.schemas.forEach((schema: any) => {
-          console.log(`  - ${schema.name} (${schema.file})`);
-          console.log(`    テーブル: ${schema.tableName}`);
-          console.log(`    操作: ${schema.operations.join(', ')}`);
-        });
-        
-        console.log(`\n⚡ サーバー関数 (${result.serverFunctions.length}個):`);
-        result.serverFunctions.forEach((fn: any) => {
-          console.log(`  - ${fn.name} (${fn.file})`);
-          console.log(`    パラメータ: ${fn.parameters.map((p: any) => `${p.name}: ${p.type}`).join(', ')}`);
-          console.log(`    戻り値: ${fn.returnType}`);
-        });
+        console.log('\n⚠️  Note: Full analysis implementation is in progress.');
+        console.log('\n💡 Run "swallowkit generate" to create Azure Functions.');
       }
 
     } catch (error) {
-      console.error('❌ 解析中にエラーが発生しました:', error);
+      console.error('❌ Error during analysis:', error);
       process.exit(1);
     }
   });

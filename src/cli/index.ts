@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { initCommand, devCommand, buildCommand, generateCommand, analyzeCommand, setupCommand } from "./commands";
+import { initCommand, devCommand, buildCommand, generateCommand, analyzeCommand, setupCommand, deployCommand } from "./commands";
 
 const program = new Command();
 
 program
   .name("swallowkit")
-  .description("Azure Static Web Apps向けReact Hooksベースフレームワーク")
-  .version("0.1.0");
+  .description("Next.js framework optimized for Azure deployment - Automatically splits SSR into individual Azure Functions")
+  .version("0.2.0");
 
 // コマンドの登録
 program
@@ -34,5 +34,6 @@ program
 
 program.addCommand(generateCommand);
 program.addCommand(analyzeCommand);
+program.addCommand(deployCommand);
 
 program.parse();
