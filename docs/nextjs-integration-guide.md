@@ -26,18 +26,82 @@ npm install swallowkit
 
 ## 🚀 基本的な使い方
 
-### 1. Server Components (SSR) - データ取得
+### 1. Zod スキーマの定義 (推奨)
+
+まず、フロントエンド・バックエンド・データベース間で共有する型を Zod スキーマで定義します。
+
+```typescript
+// lib/schemas/todo.ts
+import { z } from 'zod';
+
+export const TodoSchema = z.object({
+  id: z.string(),
+  text: z.string().min(1, 'Todo text is required'),
+  completed: z.boolean().default(false),
+  createdAt: z.string().default(() => new Date().toISOString()),
+  updatedAt: z.string().default(() => new Date().toISOString()),
+});
+
+export type Todo = z.infer<typeof TodoSchema>;
+```
+
+### 2. リポジトリの作成
+
+Zod スキーマを使って型安全なリポジトリを作成します。
+
+```typescript
+// lib/server/todos.ts
+import { createRepository } from 'swallowkit';
+import { TodoSchema } from '../schemas/todo';
+
+const todoRepo = createRepository('todos', TodoSchema);
+
+export async function getTodos() {
+  return todoRepo.findAll();
+}
+
+export async function getTodoById(id: string) {
+  return todoRepo.findById(id);
+}
+
+export async function addTodo(text: string) {
+  return todoRepo.create({
+    id: crypto.randomUUID(),
+    text,
+    completed: false,
+  });
+}
+
+export async function updateTodo(id: string, updates: { text?: string; completed?: boolean }) {
+  const todo = await todoRepo.findById(id);
+  if (!todo) throw new Error('Todo not found');
+  
+  return todoRepo.update({
+    ...todo,
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export async function deleteTodo(id: string) {
+  return todoRepo.delete(id);
+}
+```
+
+### 3. Server Components (SSR) - データ取得
 
 Next.js の標準的な Server Components パターンをそのまま使用します。
 
 ```typescript
 // app/todos/page.tsx
-import { db } from '@/lib/database';
+import { getTodos } from '@/lib/server/todos';
+import { TodoList } from '@/components/TodoList';
+import { AddTodoForm } from '@/components/AddTodoForm';
 
 // これは Server Component です
 export default async function TodosPage() {
   // サーバーサイドで直接データ取得
-  const todos = await db.todos.findAll();
+  const todos = await getTodos();
   
   return (
     <div>
@@ -49,60 +113,84 @@ export default async function TodosPage() {
 }
 ```
 
-```typescript
-// lib/database.ts
-import { createRepository } from 'swallowkit';
+### 4. Server Actions - データ変更
 
-export const db = {
-  todos: createRepository('todos', {
-    // スキーマ定義
-  }),
-};
-```
-
-### 2. Server Actions - データ変更
-
-Next.js の標準的な Server Actions をそのまま使用します。
+Next.js の標準的な Server Actions をそのまま使用します。Zod スキーマで入力検証も行えます。
 
 ```typescript
 // app/todos/actions.ts
 'use server'
 
 import { revalidatePath } from 'next/cache';
-import { db } from '@/lib/database';
+import { addTodo, updateTodo, deleteTodo } from '@/lib/server/todos';
+import { TodoSchema } from '@/lib/schemas/todo';
 
 export async function addTodoAction(formData: FormData) {
-  const text = formData.get('text') as string;
-  
-  await db.todos.create({
-    text,
-    completed: false,
+  // Zod で入力検証
+  const result = TodoSchema.pick({ text: true }).safeParse({
+    text: formData.get('text'),
   });
   
+  if (!result.success) {
+    return { error: result.error.errors[0].message };
+  }
+  
+  await addTodo(result.data.text);
+  revalidatePath('/todos');
+  
+  return { success: true };
+}
+
+export async function toggleTodoAction(id: string, completed: boolean) {
+  await updateTodo(id, { completed });
   revalidatePath('/todos');
 }
 
 export async function deleteTodoAction(id: string) {
-  await db.todos.delete(id);
+  await deleteTodo(id);
   revalidatePath('/todos');
 }
 ```
 
-### 3. Client Components - フォーム
+### 5. Client Components - フォームと検証
 
-Client Components から Server Actions を呼び出します。
+Client Components から Server Actions を呼び出します。クライアント側でも同じ Zod スキーマで検証できます。
 
 ```typescript
 // components/AddTodoForm.tsx
 'use client'
 
 import { addTodoAction } from '@/app/todos/actions';
+import { TodoSchema } from '@/lib/schemas/todo';
 import { useFormStatus } from 'react-dom';
+import { useState } from 'react';
 
 export function AddTodoForm() {
+  const [error, setError] = useState('');
+  
+  const handleSubmit = async (formData: FormData) => {
+    // クライアント側でも Zod で検証
+    const result = TodoSchema.pick({ text: true }).safeParse({
+      text: formData.get('text'),
+    });
+    
+    if (!result.success) {
+      setError(result.error.errors[0].message);
+      return;
+    }
+    
+    setError('');
+    const response = await addTodoAction(formData);
+    
+    if (response?.error) {
+      setError(response.error);
+    }
+  };
+  
   return (
-    <form action={addTodoAction}>
+    <form action={handleSubmit}>
       <input name="text" required placeholder="New todo..." />
+      {error && <p className="error">{error}</p>}
       <SubmitButton />
     </form>
   );
@@ -118,7 +206,7 @@ function SubmitButton() {
 }
 ```
 
-### 4. 楽観的更新 (useOptimistic)
+### 6. 楽観的更新 (useOptimistic)
 
 Next.js の useOptimistic をそのまま使用できます。
 

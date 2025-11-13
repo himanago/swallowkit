@@ -1,42 +1,9 @@
 /**
- * SwallowKit - Azure Static Web Apps向けReact Hooksベースフレームワーク
- * メインエクスポート
+ * SwallowKit - Next.js framework optimized for Azure deployment
+ * Main exports
  */
 
-// フック
-export { useServerFn, useTypedServerFn, setRpcEndpoint, getRpcEndpoint, callServerFn } from "./hooks/useServerFn";
-export { 
-  useQuery, 
-  useSchemaQuery, 
-  useSchemaMutation,
-  type UseQueryOptions,
-  type UseQueryResult,
-} from "./hooks/useQuery";
-
-// ミューテーション・楽観的更新（Next.js統合）
-export { useMutation, type UseMutationOptions, type UseMutationResult } from "./hooks/useMutation";
-export { useOptimistic } from "./next/use-optimistic";
-
-// Next.js 統合（内部で使用、高度なユーザー向けに公開）
-export { revalidatePath, revalidateTag } from "./next/server-action-wrapper";
-
-// サーバー関数レジストリ
-export {
-  registerServerFunction,
-  registerServerFunctions,
-  defineServerFunction,
-  getServerFunctionName,
-  getServerFunctionDefinition,
-  getServerFunctionById,
-  getServerFunctionId,
-  isServerFunctionRegistered,
-  getRegisteredFunctions,
-  clearServerFunctionRegistry,
-  autoRegisterServerFunctions,
-  getRegistryDebugInfo,
-} from "./hooks/server-function-registry";
-
-// 型定義
+// Type definitions
 export type {
   ServerFunction,
   ServerFunctionDefinition,
@@ -49,18 +16,10 @@ export type {
   SwallowKitConfig,
 } from "./types";
 
-// データベース
+// Configuration
+export { loadConfig, generateConfig, getFullConfig, validateConfig } from "./core/config";
+
+// Database - Zod-based schema sharing between frontend, backend, and Cosmos DB
 export { DatabaseClient, getDatabaseClient } from "./database/client";
 export { SchemaRepository, createRepository, TodoSchema, TodoRepository } from "./database/repository";
 export type { Todo } from "./database/repository";
-
-// 設定
-export { loadConfig, generateConfig, getFullConfig, validateConfig } from "./core/config";
-
-// API自動生成
-export { ApiGenerator } from "./generator/api-generator";
-export { SchemaParser } from "./generator/schema-parser";
-export { RpcHandler, defaultRpcHandler } from "./api/rpc-handler";
-
-// スキーマ例
-export * from "./schemas/example";

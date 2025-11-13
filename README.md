@@ -10,6 +10,7 @@ SwallowKit enables you to build Next.js applications following standard React Se
 
 - **Next.js Standard Approach**: Build with standard Next.js SSR, Server Components, and Server Actions
 - **Automatic Function Splitting**: CLI command splits SSR components/actions into individual Azure Functions
+- **Zod Schema Sharing**: Share type-safe schemas between frontend, backend, and Cosmos DB
 - **Azure Static Web Apps Optimization**: Overcomes 250MB deployment size limit
 - **Independent Azure Functions**: Deploy backend functions separately from SWA
 - **Cosmos DB Integration**: Built-in Cosmos DB support with automatic setup
@@ -290,35 +291,200 @@ module.exports = {
 
 ## 🔧 Database Integration
 
-### Cosmos DB Client
+SwallowKit's **Zod Schema Sharing** is a killer feature that enables type-safe data flow across your entire stack:
+
+### Why Zod Schema Sharing?
+
+1. **Single Source of Truth**: Define your data schema once with Zod
+2. **Frontend Validation**: Use the same schema for client-side form validation
+3. **Backend Validation**: Automatically validate Server Actions input
+4. **Database Schema**: Type-safe Cosmos DB operations with runtime validation
+5. **No Code Duplication**: Share schemas between client, server, and database
+
+### Basic Usage
 
 ```typescript
-import { getDatabaseClient } from 'swallowkit';
+// lib/schemas/todo.ts - Shared schema definition
+import { z } from 'zod';
 
-const client = getDatabaseClient();
-// Use Cosmos DB client
+export const TodoSchema = z.object({
+  id: z.string(),
+  text: z.string().min(1, 'Todo text is required'),
+  completed: z.boolean().default(false),
+  createdAt: z.string().default(() => new Date().toISOString()),
+});
+
+export type Todo = z.infer<typeof TodoSchema>;
 ```
 
-### Schema-based Repository
+```typescript
+// lib/server/todos.ts - Server-side repository
+import { createRepository } from 'swallowkit';
+import { TodoSchema } from '../schemas/todo';
+
+const todoRepo = createRepository('todos', TodoSchema);
+
+export async function getTodos() {
+  return todoRepo.findAll(); // Type-safe, validated
+}
+
+export async function addTodo(text: string) {
+  return todoRepo.create({
+    id: crypto.randomUUID(),
+    text,
+    completed: false,
+  }); // Validated by Zod before saving to Cosmos DB
+}
+```
+
+```typescript
+// app/actions.ts - Server Actions with validation
+'use server'
+
+import { TodoSchema } from '@/lib/schemas/todo';
+import { addTodo } from '@/lib/server/todos';
+import { revalidatePath } from 'next/cache';
+
+export async function addTodoAction(formData: FormData) {
+  // Validate input using the same schema
+  const result = TodoSchema.pick({ text: true }).safeParse({
+    text: formData.get('text'),
+  });
+  
+  if (!result.success) {
+    return { error: result.error.message };
+  }
+  
+  await addTodo(result.data.text);
+  revalidatePath('/');
+}
+```
+
+```typescript
+// components/AddTodoForm.tsx - Client-side validation
+'use client'
+
+import { TodoSchema } from '@/lib/schemas/todo';
+import { addTodoAction } from '@/app/actions';
+import { useState } from 'react';
+
+export function AddTodoForm() {
+  const [error, setError] = useState('');
+  
+  const handleSubmit = async (formData: FormData) => {
+    // Client-side validation using the same schema
+    const result = TodoSchema.pick({ text: true }).safeParse({
+      text: formData.get('text'),
+    });
+    
+    if (!result.success) {
+      setError(result.error.errors[0].message);
+      return;
+    }
+    
+    setError('');
+    await addTodoAction(formData);
+  };
+  
+  return (
+    <form action={handleSubmit}>
+      <input name="text" required />
+      {error && <p className="error">{error}</p>}
+      <button>Add</button>
+    </form>
+  );
+}
+```
+
+### Repository API
 
 ```typescript
 import { createRepository } from 'swallowkit';
 import { z } from 'zod';
 
-const TodoSchema = z.object({
+const UserSchema = z.object({
   id: z.string(),
-  text: z.string(),
-  completed: z.boolean()
+  name: z.string(),
+  email: z.string().email(),
 });
 
-const todoRepo = createRepository(TodoSchema, 'todos');
+const userRepo = createRepository('users', UserSchema);
 
-// CRUD operations
-await todoRepo.create({ id: '1', text: 'Task', completed: false });
-await todoRepo.findById('1');
-await todoRepo.update('1', { completed: true });
-await todoRepo.delete('1');
+// Create (with validation)
+await userRepo.create({
+  id: '1',
+  name: 'John',
+  email: 'john@example.com'
+});
+
+// Find by ID
+const user = await userRepo.findById('1');
+
+// Find all
+const users = await userRepo.findAll();
+
+// Update (with validation)
+await userRepo.update({
+  id: '1',
+  name: 'John Doe',
+  email: 'john@example.com'
+});
+
+// Delete
+await userRepo.delete('1');
+
+// Custom queries
+const activeUsers = await userRepo.findWhere('c.isActive = true');
 ```
+
+### Advanced: Custom Repository
+
+```typescript
+import { SchemaRepository } from 'swallowkit';
+import { z } from 'zod';
+
+const UserSchema = z.object({
+  id: z.string(),
+  email: z.string().email(),
+  isActive: z.boolean(),
+});
+
+class UserRepository extends SchemaRepository<z.infer<typeof UserSchema>> {
+  constructor() {
+    super('users', UserSchema);
+  }
+  
+  async findActiveUsers() {
+    return this.findWhere('c.isActive = true');
+  }
+  
+  async findByEmail(email: string) {
+    const users = await this.findWhere('c.email = @email', [email]);
+    return users[0] || null;
+  }
+}
+
+export const userRepo = new UserRepository();
+```
+
+### Cosmos DB Client
+
+For advanced use cases, you can use the Cosmos DB client directly:
+
+```typescript
+import { getDatabaseClient } from 'swallowkit';
+
+const client = getDatabaseClient();
+
+// Direct operations
+await client.createDocument('users', { id: '1', name: 'John' });
+await client.getDocument('users', '1');
+await client.updateDocument('users', { id: '1', name: 'John Doe' });
+await client.deleteDocument('users', '1');
+await client.query('users', 'SELECT * FROM c WHERE c.isActive = true');
+```
+
+## 🔧 Configuration
 
 ## 🤝 Contributing
 

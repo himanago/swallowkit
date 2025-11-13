@@ -1,9 +1,6 @@
 import { Command } from 'commander';
 import * as path from 'path';
 import * as fs from 'fs';
-import { spawn } from 'child_process';
-import { ApiGenerator } from '../../generator/api-generator';
-import { SchemaParser } from '../../generator/schema-parser';
 
 export const generateCommand = new Command()
   .name('generate')
@@ -35,7 +32,7 @@ export const generateCommand = new Command()
         process.exit(1);
       }
 
-      // 出力ディレクトリが既に存在し、forceオプションがない場合は確認
+      // Check if output directory already exists
       if (fs.existsSync(outputDir) && !options.force && !options.dryRun) {
         const readline = require('readline');
         const rl = readline.createInterface({
@@ -44,12 +41,12 @@ export const generateCommand = new Command()
         });
 
         const answer = await new Promise<string>((resolve) => {
-          rl.question(`📁 出力ディレクトリ "${outputDir}" は既に存在します。上書きしますか？ (y/N): `, resolve);
+          rl.question(`📁 Output directory "${outputDir}" already exists. Overwrite? (y/N): `, resolve);
         });
         rl.close();
 
         if (answer.toLowerCase() !== 'y' && answer.toLowerCase() !== 'yes') {
-          console.log('⏹️ 生成をキャンセルしました');
+          console.log('⏹️ Generation cancelled');
           process.exit(0);
         }
       }
@@ -85,50 +82,108 @@ export const generateCommand = new Command()
         return;
       }
 
-      // API生成を実行
-      const generator = new ApiGenerator({
-        projectRoot,
-        outputDir,
-        cosmosDbEndpoint: options.cosmosEndpoint,
-        cosmosDbKey: options.cosmosKey,
-        cosmosDbDatabase: options.cosmosDatabase,
-      });
+      // Generate Azure Functions structure
+      console.log('\n📦 Generating Azure Functions...');
+      
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
 
-      await generator.generate();
-
-      console.log('\n🎉 API生成が完了しました!');
-      console.log(`📁 出力ディレクトリ: ${outputDir}`);
-
-      // APIの依存関係を自動インストール
-      console.log('\n� API依存関係をインストール中...');
-      const npmInstall = spawn('npm', ['install'], {
-        cwd: outputDir,
-        stdio: 'inherit',
-        shell: true,
-      });
-
-      await new Promise<void>((resolve, reject) => {
-        npmInstall.on('close', (code) => {
-          if (code === 0) {
-            console.log('✅ API依存関係のインストール完了');
-            resolve();
-          } else {
-            console.error('❌ API依存関係のインストールに失敗しました');
-            reject(new Error(`npm install failed with code ${code}`));
+      // Create host.json for Azure Functions v4
+      const hostJson = {
+        version: '2.0',
+        logging: {
+          applicationInsights: {
+            samplingSettings: {
+              isEnabled: true,
+              maxTelemetryItemsPerSecond: 20
+            }
           }
-        });
-      });
+        },
+        extensionBundle: {
+          id: 'Microsoft.Azure.Functions.ExtensionBundle',
+          version: '[4.*, 5.0.0)'
+        }
+      };
 
-      console.log('\n📝 次のステップ:');
-      console.log('  1. swallowkit dev (統合開発環境を起動)');
-      console.log('  または');
-      console.log(`  1. cd ${path.relative(process.cwd(), outputDir)}`);
-      console.log('  2. npm run build');
-      console.log('  3. npm start (ローカル開発)');
-      console.log('\n💡 Azure にデプロイするには:');
-      console.log('  1. Azure Functions Core Tools をインストール');
-      console.log('  2. az login でログイン');
-      console.log('  3. func azure functionapp publish <app-name>');
+      fs.writeFileSync(
+        path.join(outputDir, 'host.json'),
+        JSON.stringify(hostJson, null, 2)
+      );
+
+      // Create package.json for Azure Functions
+      const packageJson = {
+        name: 'azure-functions',
+        version: '1.0.0',
+        description: 'Generated Azure Functions from Next.js app',
+        scripts: {
+          start: 'func start',
+          build: 'tsc',
+          'build:production': 'npm run build'
+        },
+        dependencies: {
+          '@azure/functions': '^4.0.0'
+        },
+        devDependencies: {
+          '@types/node': '^20.0.0',
+          'typescript': '^5.0.0',
+          'azure-functions-core-tools': '^4.0.0'
+        }
+      };
+
+      fs.writeFileSync(
+        path.join(outputDir, 'package.json'),
+        JSON.stringify(packageJson, null, 2)
+      );
+
+      // Create tsconfig.json
+      const tsconfigJson = {
+        compilerOptions: {
+          target: 'ES2020',
+          module: 'commonjs',
+          outDir: './dist',
+          rootDir: './',
+          strict: true,
+          esModuleInterop: true,
+          skipLibCheck: true,
+          forceConsistentCasingInFileNames: true
+        },
+        include: ['**/*.ts'],
+        exclude: ['node_modules', 'dist']
+      };
+
+      fs.writeFileSync(
+        path.join(outputDir, 'tsconfig.json'),
+        JSON.stringify(tsconfigJson, null, 2)
+      );
+
+      // Create .funcignore
+      const funcignore = `*.js.map
+*.ts
+.git*
+.vscode
+local.settings.json
+test
+tsconfig.json
+.DS_Store
+node_modules
+`;
+
+      fs.writeFileSync(
+        path.join(outputDir, '.funcignore'),
+        funcignore
+      );
+
+      console.log('\n🎉 Azure Functions generation completed!');
+      console.log(`📁 Output directory: ${outputDir}`);
+      console.log('\n⚠️  Note: Full Next.js analysis and function generation is in progress.');
+      console.log('   Currently generated: Basic Azure Functions v4 structure');
+      
+      console.log('\n📝 Next steps:');
+      console.log('  1. swallowkit build (Build Next.js app and Azure Functions)');
+      console.log('  2. swallowkit deploy (Deploy to Azure)');
+      console.log('\n💡 For local development:');
+      console.log('  1. swallowkit dev (Start integrated development server)');
 
     } catch (error) {
       console.error('❌ Error during Azure Functions generation:', error);
