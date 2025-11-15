@@ -34,21 +34,9 @@ export const generateCommand = new Command()
 
       // Check if output directory already exists
       if (fs.existsSync(outputDir) && !options.force && !options.dryRun) {
-        const readline = require('readline');
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout,
-        });
-
-        const answer = await new Promise<string>((resolve) => {
-          rl.question(`📁 Output directory "${outputDir}" already exists. Overwrite? (y/N): `, resolve);
-        });
-        rl.close();
-
-        if (answer.toLowerCase() !== 'y' && answer.toLowerCase() !== 'yes') {
-          console.log('⏹️ Generation cancelled');
-          process.exit(0);
-        }
+        console.log(`📁 Output directory "${outputDir}" already exists.`);
+        console.log('🔄 Cleaning and regenerating...');
+        fs.rmSync(outputDir, { recursive: true, force: true });
       }
 
       // Dry run mode - analyze only
@@ -89,6 +77,18 @@ export const generateCommand = new Command()
         fs.mkdirSync(outputDir, { recursive: true });
       }
 
+      // Server Actions を検出
+      console.log('🔍 Server Actions を検出中...');
+      const appDir = path.join(projectRoot, 'app');
+      const serverActions = findServerActions(appDir);
+      
+      console.log(`✅ ${serverActions.length} 個の Server Actions を検出しました`);
+      if (serverActions.length > 0) {
+        serverActions.forEach(action => {
+          console.log(`   - ${action.name} (${action.file})`);
+        });
+      }
+
       // Create host.json for Azure Functions v4
       const hostJson = {
         version: '2.0',
@@ -119,7 +119,8 @@ export const generateCommand = new Command()
         scripts: {
           start: 'func start',
           build: 'tsc',
-          'build:production': 'npm run build'
+          'build:production': 'npm run build',
+          'watch': 'tsc --watch'
         },
         dependencies: {
           '@azure/functions': '^4.0.0'
@@ -142,13 +143,13 @@ export const generateCommand = new Command()
           target: 'ES2020',
           module: 'commonjs',
           outDir: './dist',
-          rootDir: './',
+          rootDir: './src',
           strict: true,
           esModuleInterop: true,
           skipLibCheck: true,
           forceConsistentCasingInFileNames: true
         },
-        include: ['**/*.ts'],
+        include: ['src/**/*.ts'],
         exclude: ['node_modules', 'dist']
       };
 
@@ -174,6 +175,30 @@ node_modules
         funcignore
       );
 
+      // Create local.settings.json
+      const localSettings = {
+        IsEncrypted: false,
+        Values: {
+          AzureWebJobsStorage: '',
+          FUNCTIONS_WORKER_RUNTIME: 'node',
+          AzureWebJobsFeatureFlags: 'EnableWorkerIndexing'
+        }
+      };
+
+      fs.writeFileSync(
+        path.join(outputDir, 'local.settings.json'),
+        JSON.stringify(localSettings, null, 2)
+      );
+
+      // Server Actions から Azure Functions を生成
+      if (serverActions.length > 0) {
+        console.log('\n🔨 Azure Functions を生成中...');
+        for (const action of serverActions) {
+          generateAzureFunction(outputDir, action, projectRoot);
+          console.log(`   ✅ ${action.name} → src/functions/${action.name}.ts`);
+        }
+      }
+
       console.log('\n🎉 Azure Functions generation completed!');
       console.log(`📁 Output directory: ${outputDir}`);
       console.log('\n⚠️  Note: Full Next.js analysis and function generation is in progress.');
@@ -196,6 +221,290 @@ node_modules
       process.exit(1);
     }
   });
+
+// Server Actions を検出する関数
+interface ServerAction {
+  name: string;
+  file: string;
+  relativePath: string;
+  functionBody: string;
+  params: string[]; // 関数のパラメータ
+}
+
+function findServerActions(appDir: string): ServerAction[] {
+  const actions: ServerAction[] = [];
+  
+  if (!fs.existsSync(appDir)) {
+    return actions;
+  }
+
+  function scanDirectory(dir: string) {
+    const files = fs.readdirSync(dir, { withFileTypes: true });
+    
+    for (const file of files) {
+      const fullPath = path.join(dir, file.name);
+      
+      if (file.isDirectory()) {
+        scanDirectory(fullPath);
+      } else if (file.name.endsWith('.ts') || file.name.endsWith('.tsx')) {
+        const content = fs.readFileSync(fullPath, 'utf-8');
+        
+        // 'use server' ディレクティブを含むファイルを検出
+        if (content.includes("'use server'") || content.includes('"use server"')) {
+          // export されている関数を抽出
+          const functionRegex = /export\s+async\s+function\s+(\w+)\s*\(([^)]*)\)\s*{/g;
+          let match;
+          
+          while ((match = functionRegex.exec(content)) !== null) {
+            const functionName = match[1];
+            const paramsStr = match[2];
+            const relativePath = path.relative(appDir, fullPath);
+            
+            // パラメータを解析
+            const params = paramsStr
+              .split(',')
+              .map(p => p.trim())
+              .filter(p => p.length > 0)
+              .map(p => p.split(':')[0].trim());
+            
+            actions.push({
+              name: functionName,
+              file: fullPath,
+              relativePath,
+              functionBody: content,
+              params
+            });
+          }
+        }
+      }
+    }
+  }
+
+  scanDirectory(appDir);
+  return actions;
+}
+
+// Azure Function を生成する関数
+function generateAzureFunction(outputDir: string, action: ServerAction, projectRoot: string) {
+  const srcDir = path.join(outputDir, 'src');
+  const functionsDir = path.join(srcDir, 'functions');
+  
+  if (!fs.existsSync(functionsDir)) {
+    fs.mkdirSync(functionsDir, { recursive: true });
+  }
+
+  // Server Action の実装を抽出
+  const actionImpl = extractServerActionImplementation(action);
+  
+  // 依存するモジュールを検出してコピー
+  const dependencies = detectDependencies(action, projectRoot);
+  copyDependencies(dependencies, outputDir, projectRoot);
+
+  const functionCode = `import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
+${generateImportsForDependencies(dependencies)}
+
+export async function ${action.name}(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+    context.log(\`Http function processed request for url "\${request.url}"\`);
+
+    try {
+        ${generateFunctionBody(action, actionImpl)}
+        
+        return {
+            status: 200,
+            jsonBody: {
+                success: true
+            }
+        };
+    } catch (error) {
+        context.error('Error executing ${action.name}:', error);
+        return {
+            status: 500,
+            jsonBody: {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            }
+        };
+    }
+};
+
+app.http('${action.name}', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    handler: ${action.name}
+});
+`;
+
+  fs.writeFileSync(
+    path.join(functionsDir, `${action.name}.ts`),
+    functionCode
+  );
+}
+
+// Server Action の実装コードを抽出
+function extractServerActionImplementation(action: ServerAction): string {
+  const content = action.functionBody;
+  
+  // 関数の開始位置を見つける
+  const functionStart = content.indexOf(`export async function ${action.name}`);
+  if (functionStart === -1) {
+    return '// Could not find function';
+  }
+  
+  // 関数本体の開始位置（最初の {）を見つける
+  const bodyStart = content.indexOf('{', functionStart);
+  if (bodyStart === -1) {
+    return '// Could not find function body';
+  }
+  
+  // 対応する閉じ括弧を見つける
+  let braceCount = 1;
+  let bodyEnd = bodyStart + 1;
+  
+  while (bodyEnd < content.length && braceCount > 0) {
+    if (content[bodyEnd] === '{') {
+      braceCount++;
+    } else if (content[bodyEnd] === '}') {
+      braceCount--;
+    }
+    bodyEnd++;
+  }
+  
+  if (braceCount !== 0) {
+    return '// Could not find closing brace';
+  }
+  
+  // 関数本体を抽出（{ と } を除く）
+  const body = content.substring(bodyStart + 1, bodyEnd - 1).trim();
+  return body;
+}
+
+// 依存モジュールを検出
+function detectDependencies(action: ServerAction, projectRoot: string): Array<{from: string, imports: string[]}> {
+  const dependencies: Array<{from: string, imports: string[]}> = [];
+  const content = action.functionBody;
+  
+  // import 文を検出
+  const importRegex = /import\s+{([^}]+)}\s+from\s+['"]([^'"]+)['"]/g;
+  let match;
+  
+  while ((match = importRegex.exec(content)) !== null) {
+    const imports = match[1].split(',').map(i => i.trim());
+    const from = match[2];
+    
+    // @/ は Next.js のエイリアス（プロジェクトルート）
+    if (from.startsWith('@/')) {
+      const relativePath = from.replace('@/', '');
+      dependencies.push({ from: relativePath, imports });
+    }
+  }
+  
+  return dependencies;
+}
+
+// 依存ファイルを Functions プロジェクトにコピー
+function copyDependencies(dependencies: Array<{from: string, imports: string[]}>, outputDir: string, projectRoot: string) {
+  for (const dep of dependencies) {
+    const sourcePath = path.join(projectRoot, dep.from + '.ts');
+    const sourcePathTsx = path.join(projectRoot, dep.from + '.tsx');
+    
+    let actualSourcePath = sourcePath;
+    if (!fs.existsSync(sourcePath) && fs.existsSync(sourcePathTsx)) {
+      actualSourcePath = sourcePathTsx;
+    }
+    
+    if (fs.existsSync(actualSourcePath)) {
+      const targetPath = path.join(outputDir, 'src', dep.from + '.ts');
+      const targetDir = path.dirname(targetPath);
+      
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+      
+      fs.copyFileSync(actualSourcePath, targetPath);
+    }
+  }
+}
+
+// 依存モジュールの import 文を生成
+function generateImportsForDependencies(dependencies: Array<{from: string, imports: string[]}>) {
+  return dependencies
+    .map(dep => `import { ${dep.imports.join(', ')} } from '../${dep.from}';`)
+    .join('\n');
+}
+
+// Azure Function の本体を生成
+function generateFunctionBody(action: ServerAction, actionImpl: string): string {
+  // Next.js 固有の関数を削除
+  let processedImpl = actionImpl
+    .replace(/revalidatePath\([^)]*\)/g, '// revalidatePath removed (Next.js specific)')
+    .replace(/import\s+{[^}]*revalidatePath[^}]*}\s+from\s+['"][^'"]+['"]/g, '');
+  
+  // FormData のパラメータを抽出
+  if (actionImpl.includes('formData.get') || action.params.includes('formData')) {
+    const params = extractFormDataParams(actionImpl);
+    
+    // 早期 return とバリデーションロジックを削除（バリデーションは後で追加）
+    processedImpl = processedImpl.replace(
+      /if\s*\([^)]+\)\s*{\s*return\s*\n?\s*}/g,
+      ''
+    );
+    
+    // FormData.get() の呼び出しを変数参照に置き換え
+    params.forEach(p => {
+      processedImpl = processedImpl.replace(
+        new RegExp(`const\\s+${p}\\s*=\\s*formData\\.get\\(['"]${p}['"]\\)\\s*as\\s*string`, 'g'),
+        ''
+      );
+      processedImpl = processedImpl.replace(
+        new RegExp(`formData\\.get\\(['"]${p}['"]\\)\\s*as\\s*string`, 'g'),
+        p
+      );
+    });
+    
+    return `
+        // FormData から値を取得
+        const formData = await request.formData();
+        ${params.map(p => `const ${p} = formData.get('${p}') as string;`).join('\n        ')}
+        
+        // バリデーション
+        ${params.map(p => `if (!${p} || ${p}.trim().length === 0) {
+          return {
+            status: 400,
+            jsonBody: { success: false, error: '${p} is required' }
+          };
+        }`).join('\n        ')}
+        
+        // 元の Server Action のロジックを実行
+        ${processedImpl.trim()}`;
+  } else if (action.params.length > 0) {
+    // パラメータがある場合（id など）
+    const paramsList = action.params.join(', ');
+    return `
+        const { ${paramsList} } = (await request.json()) as { ${paramsList}: string };
+        
+        // 元の Server Action のロジックを実行
+        ${processedImpl}`;
+  }
+  
+  return `
+        // 元の Server Action のロジックを実行
+        ${processedImpl}`;
+}
+
+// FormData のパラメータを抽出
+function extractFormDataParams(code: string): string[] {
+  const params: string[] = [];
+  const regex = /formData\.get\(['"](\w+)['"]\)/g;
+  let match;
+  
+  while ((match = regex.exec(code)) !== null) {
+    if (!params.includes(match[1])) {
+      params.push(match[1]);
+    }
+  }
+  
+  return params;
+}
 
 // Subcommand: Analyze Next.js project
 export const analyzeCommand = new Command()

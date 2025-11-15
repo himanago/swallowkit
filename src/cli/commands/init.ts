@@ -31,8 +31,9 @@ export async function initCommand(options: InitOptions) {
     console.log(`  cd ${options.name}`);
     console.log("  npm install");
     console.log("  npm run dev");
-    console.log("\n💡 To generate Azure Functions:");
+    console.log("\n💡 Azure Functions と統合するには:");
     console.log("  npx swallowkit generate");
+    console.log("  npx swallowkit dev");
   } catch (error) {
     console.error("❌ Project creation failed:", error);
     // Clean up on failure
@@ -62,7 +63,7 @@ async function createNextJsProject(projectDir: string, options: InitOptions) {
       "next": "^14.0.0",
       "react": "^18.0.0",
       "react-dom": "^18.0.0",
-      "swallowkit": "^0.2.0"
+      "@azure/cosmos": "^4.0.0"
     },
     devDependencies: {
       "@types/node": "^20.0.0",
@@ -140,7 +141,8 @@ module.exports = nextConfig
     },
     database: {
       type: 'cosmosdb',
-      connectionString: process.env.COSMOS_DB_CONNECTION_STRING || '',
+      endpoint: process.env.COSMOS_DB_ENDPOINT || 'https://localhost:8081',
+      key: process.env.COSMOS_DB_KEY || 'C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==',
     }
   };
 
@@ -288,8 +290,20 @@ body {
   const pageTsx = `import { AddTodoForm } from '@/components/AddTodoForm'
 import { getTodos } from '@/lib/server/todos'
 
+// Force dynamic rendering (disable static generation)
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export default async function Home() {
-  const todos = await getTodos()
+  let todos = []
+  let error = null
+  
+  try {
+    todos = await getTodos()
+  } catch (e) {
+    error = e instanceof Error ? e.message : 'Failed to fetch todos'
+    console.error('Error fetching todos:', e)
+  }
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-between p-24">
@@ -304,6 +318,12 @@ export default async function Home() {
 
         <div className="space-y-4">
           <h2 className="text-2xl font-semibold mb-4">Todos</h2>
+          {error && (
+            <div className="p-4 bg-red-50 dark:bg-red-900 rounded-lg mb-4">
+              <p className="text-red-600 dark:text-red-300">⚠️ Error: {error}</p>
+              <p className="text-sm text-red-500 dark:text-red-400 mt-2">Make sure Cosmos DB Emulator is running</p>
+            </div>
+          )}
           {todos.length === 0 ? (
             <p className="text-gray-500">No todos yet. Add one above!</p>
           ) : (
@@ -325,6 +345,7 @@ export default async function Home() {
         <div className="mt-8 p-4 bg-blue-50 dark:bg-blue-900 rounded-lg">
           <h3 className="font-semibold mb-2">🚀 Next Steps:</h3>
           <ol className="list-decimal list-inside space-y-1 text-sm">
+            <li>Make sure Cosmos DB Emulator is running (Docker or Windows)</li>
             <li>Run <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">npx swallowkit generate</code> to create Azure Functions</li>
             <li>Run <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">npx swallowkit deploy</code> to deploy to Azure</li>
           </ol>
@@ -347,25 +368,21 @@ export async function addTodoAction(formData: FormData) {
   const text = formData.get('text') as string
   
   if (!text || text.trim().length === 0) {
-    return { error: 'Todo text is required' }
+    return
   }
 
   await addTodoDb(text)
   revalidatePath('/')
-  
-  return { success: true }
 }
 
 export async function toggleTodoAction(id: string) {
   await toggleTodoDb(id)
   revalidatePath('/')
-  return { success: true }
 }
 
 export async function deleteTodoAction(id: string) {
   await deleteTodoDb(id)
   revalidatePath('/')
-  return { success: true }
 }
 `;
 
@@ -422,6 +439,8 @@ export function AddTodoForm() {
   const todosTsx = `// Server-side functions for Todo operations
 // These will be converted to Azure Functions by SwallowKit
 
+import { CosmosClient } from '@azure/cosmos'
+
 export interface Todo {
   id: string
   text: string
@@ -429,29 +448,55 @@ export interface Todo {
   createdAt: Date
 }
 
-// In-memory storage for demo (replace with Cosmos DB in production)
-let todos: Todo[] = [
-  {
-    id: '1',
-    text: 'Welcome to SwallowKit!',
-    completed: false,
-    createdAt: new Date(),
-  },
-  {
-    id: '2',
-    text: 'Run npx swallowkit generate',
-    completed: false,
-    createdAt: new Date(),
-  },
-]
+// Cosmos DB client setup
+const endpoint = process.env.COSMOS_DB_ENDPOINT || 'https://localhost:8081'
+const key = process.env.COSMOS_DB_KEY || 'C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=='
+const databaseId = 'TodosDB'
+const containerId = 'Todos'
+
+let client: CosmosClient
+let container: any
+
+async function initCosmosDB() {
+  if (!client) {
+    // Disable SSL validation for local emulator
+    if (endpoint.includes('localhost')) {
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+    }
+    
+    client = new CosmosClient({
+      endpoint,
+      key,
+      connectionPolicy: {
+        enableEndpointDiscovery: false, // Important for emulator
+      },
+    })
+    
+    // Create database if it doesn't exist
+    const { database } = await client.databases.createIfNotExists({ id: databaseId })
+    
+    // Create container if it doesn't exist
+    const { container: newContainer } = await database.containers.createIfNotExists({
+      id: containerId,
+      partitionKey: { paths: ['/id'] },
+    })
+    
+    container = newContainer
+  }
+  return container
+}
 
 export async function getTodos(): Promise<Todo[]> {
-  // Simulate database delay
-  await new Promise(resolve => setTimeout(resolve, 100))
-  return todos
+  const container = await initCosmosDB()
+  const { resources } = await container.items.readAll().fetchAll()
+  return resources.map((item: any) => ({
+    ...item,
+    createdAt: new Date(item.createdAt),
+  }))
 }
 
 export async function addTodo(text: string): Promise<Todo> {
+  const container = await initCosmosDB()
   const newTodo: Todo = {
     id: Date.now().toString(),
     text,
@@ -459,22 +504,34 @@ export async function addTodo(text: string): Promise<Todo> {
     createdAt: new Date(),
   }
   
-  todos.push(newTodo)
+  await container.items.create(newTodo)
   return newTodo
 }
 
 export async function toggleTodo(id: string): Promise<Todo | null> {
-  const todo = todos.find(t => t.id === id)
-  if (todo) {
-    todo.completed = !todo.completed
+  const container = await initCosmosDB()
+  try {
+    const { resource: todo } = await container.item(id, id).read()
+    if (todo) {
+      todo.completed = !todo.completed
+      await container.item(id, id).replace(todo)
+      return { ...todo, createdAt: new Date(todo.createdAt) }
+    }
+  } catch (error) {
+    console.error('Error toggling todo:', error)
   }
-  return todo || null
+  return null
 }
 
 export async function deleteTodo(id: string): Promise<boolean> {
-  const initialLength = todos.length
-  todos = todos.filter(t => t.id !== id)
-  return todos.length < initialLength
+  const container = await initCosmosDB()
+  try {
+    await container.item(id, id).delete()
+    return true
+  } catch (error) {
+    console.error('Error deleting todo:', error)
+    return false
+  }
 }
 `;
 
@@ -483,18 +540,55 @@ export async function deleteTodo(id: string): Promise<boolean> {
   // Create README.md
   const readme = `# ${options.name}
 
-A Next.js application built with SwallowKit, optimized for Azure deployment.
+A Next.js application built with SwallowKit, optimized for Azure deployment with Cosmos DB.
 
 ## 🚀 Getting Started
+
+### Prerequisites
+
+**Cosmos DB Emulator** (for local development):
+
+#### Option 1: Docker (Recommended for Linux/Mac/Codespaces)
+\`\`\`bash
+docker run -d \\
+  --name cosmos-emulator \\
+  -p 8081:8081 \\
+  -p 10250-10255:10250-10255 \\
+  -e AZURE_COSMOS_EMULATOR_PARTITION_COUNT=10 \\
+  -e AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE=true \\
+  mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
+\`\`\`
+
+#### Option 2: Windows
+Download from: https://aka.ms/cosmosdb-emulator
 
 ### Development
 
 \`\`\`bash
 npm install
+
+# Option 1: Next.js のみ（Functions 生成前）
 npm run dev
+
+# Option 2: SWA CLI で統合環境（Functions 生成後）
+npx swallowkit dev
 \`\`\`
 
-Open [http://localhost:3000](http://localhost:3000) to see your app.
+\`swallowkit dev\` コマンドは、Next.js と Azure Functions を統合した開発環境を起動します。
+本番環境と同じ \`/api/*\` ルーティングで動作確認できます。
+
+Open [http://localhost:4280](http://localhost:4280) to see your app with SWA CLI.
+Or [http://localhost:3000](http://localhost:3000) for Next.js only.
+
+### Environment Variables
+
+Copy \`.env.example\` to \`.env.local\`:
+
+\`\`\`bash
+cp .env.example .env.local
+\`\`\`
+
+The default configuration works with Cosmos DB Emulator on localhost:8081.
 
 ### Generate Azure Functions
 
@@ -529,7 +623,7 @@ ${options.name}/
 │   └── AddTodoForm.tsx     # Client component
 ├── lib/
 │   └── server/
-│       └── todos.ts        # Server functions
+│       └── todos.ts        # Server functions (Cosmos DB)
 ├── azure-functions/        # Generated by SwallowKit
 ├── next.config.js
 ├── swallowkit.config.js
@@ -539,6 +633,7 @@ ${options.name}/
 ## 🏗️ Architecture
 
 - **Development**: Standard Next.js with Server Components and Server Actions
+- **Database**: Azure Cosmos DB (local emulator for development)
 - **Production**: SwallowKit splits SSR components into individual Azure Functions
 - **Deployment**: Azure Static Web Apps (frontend) + Azure Functions (backend)
 
@@ -546,6 +641,7 @@ ${options.name}/
 
 - [SwallowKit Documentation](https://github.com/himanago/swallowkit)
 - [Next.js Documentation](https://nextjs.org/docs)
+- [Azure Cosmos DB](https://docs.microsoft.com/azure/cosmos-db/)
 - [Azure Static Web Apps](https://docs.microsoft.com/azure/static-web-apps/)
 `;
 
@@ -553,7 +649,13 @@ ${options.name}/
 
   // Create .env.example
   const envExample = `# Azure Cosmos DB
-COSMOS_DB_CONNECTION_STRING=your-connection-string-here
+# For local development with emulator (default)
+COSMOS_DB_ENDPOINT=https://localhost:8081
+COSMOS_DB_KEY=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==
+
+# For production (replace with your actual values)
+# COSMOS_DB_ENDPOINT=https://your-account.documents.azure.com:443/
+# COSMOS_DB_KEY=your-primary-key
 
 # Azure Configuration
 AZURE_RESOURCE_GROUP=your-resource-group
@@ -562,6 +664,37 @@ AZURE_FUNCTIONS_NAME=your-functions-app-name
 `;
 
   fs.writeFileSync(path.join(projectDir, ".env.example"), envExample);
+
+  // Create staticwebapp.config.json for Azure Static Web Apps
+  const swaConfig = {
+    navigationFallback: {
+      rewrite: "/index.html"
+    },
+    routes: [
+      {
+        route: "/api/*",
+        allowedRoles: ["anonymous"]
+      }
+    ],
+    responseOverrides: {
+      "404": {
+        rewrite: "/404.html"
+      }
+    },
+    globalHeaders: {
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      "X-XSS-Protection": "1; mode=block"
+    },
+    mimeTypes: {
+      ".json": "application/json"
+    }
+  };
+
+  fs.writeFileSync(
+    path.join(projectDir, "staticwebapp.config.json"),
+    JSON.stringify(swaConfig, null, 2)
+  );
 
   console.log("\n✅ Project structure created");
 }
