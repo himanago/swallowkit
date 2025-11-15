@@ -116,11 +116,13 @@ export const generateCommand = new Command()
         name: 'azure-functions',
         version: '1.0.0',
         description: 'Generated Azure Functions from Next.js app',
+        main: 'dist/functions/*.js',
         scripts: {
           start: 'func start',
           build: 'tsc',
           'build:production': 'npm run build',
-          'watch': 'tsc --watch'
+          'watch': 'tsc --watch',
+          prestart: 'npm run build'
         },
         dependencies: {
           '@azure/functions': '^4.0.0'
@@ -181,7 +183,10 @@ node_modules
         Values: {
           AzureWebJobsStorage: '',
           FUNCTIONS_WORKER_RUNTIME: 'node',
-          AzureWebJobsFeatureFlags: 'EnableWorkerIndexing'
+          AzureWebJobsFeatureFlags: 'EnableWorkerIndexing',
+          COSMOS_DB_ENDPOINT: 'https://localhost:8081',
+          COSMOS_DB_KEY: 'C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==',
+          NODE_TLS_REJECT_UNAUTHORIZED: '0'
         }
       };
 
@@ -443,9 +448,15 @@ function generateFunctionBody(action: ServerAction, actionImpl: string): string 
   if (actionImpl.includes('formData.get') || action.params.includes('formData')) {
     const params = extractFormDataParams(actionImpl);
     
-    // 早期 return とバリデーションロジックを削除（バリデーションは後で追加）
+    // 早期 return を削除（改行を含む）
     processedImpl = processedImpl.replace(
-      /if\s*\([^)]+\)\s*{\s*return\s*\n?\s*}/g,
+      /if\s*\([^)]+\)\s*{\s*return\s*[\n\s]*}/g,
+      ''
+    );
+    
+    // 単独の return 文も削除
+    processedImpl = processedImpl.replace(
+      /^\s*return\s*$/gm,
       ''
     );
     

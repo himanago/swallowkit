@@ -9,6 +9,7 @@ interface DevOptions {
   host?: string;
   open?: boolean;
   verbose?: boolean;
+  build?: boolean;
 }
 
 /**
@@ -84,6 +85,7 @@ export const devCommand = new Command()
   .option('--host <host>', 'ホスト名', 'localhost')
   .option('--open', 'ブラウザを自動で開く', false)
   .option('--verbose', '詳細ログを表示', false)
+  .option('--build', 'ビルド済みの静的ファイルを使用（本番環境に近い動作確認）', false)
   .action(async (options: DevOptions) => {
     console.log('🚀 SwallowKit 開発環境を起動中...');
     if (options.verbose) {
@@ -225,35 +227,53 @@ async function startDevEnvironment(options: DevOptions) {
     await initializeCosmosDB();
 
     console.log('');
-    console.log('🚀 Next.js 開発サーバーを起動中...');
     
-    // 7. Next.js 開発サーバーを起動
-    const nextProcess = spawn('npm', ['run', 'dev', '--', '--port', nextPort], {
-      cwd: process.cwd(),
-      shell: true,
-      stdio: options.verbose ? 'inherit' : 'pipe',
-    });
+    // 7. ビルドモードの場合は静的ファイルを使用
+    let outputDir = '';
+    if (options.build) {
+      console.log('🔨 プロジェクトをビルド中...');
+      const { buildCommand } = require('./build');
+      await buildCommand({ output: 'dist' });
+      outputDir = path.join(process.cwd(), '.swallowkit', 'build', 'out');
+      
+      if (!fs.existsSync(outputDir)) {
+        console.error('❌ ビルド成果物が見つかりません:', outputDir);
+        process.exit(1);
+      }
+      
+      console.log('✅ ビルド完了。静的ファイルを使用します');
+      console.log(`📁 ${outputDir}`);
+    } else {
+      console.log('🚀 Next.js 開発サーバーを起動中...');
+      
+      // Next.js 開発サーバーを起動
+      const nextProcess = spawn('npm', ['run', 'dev', '--', '--port', nextPort], {
+        cwd: process.cwd(),
+        shell: true,
+        stdio: options.verbose ? 'inherit' : 'pipe',
+      });
 
-    processes.push(nextProcess);
+      processes.push(nextProcess);
 
-    nextProcess.on('error', (error) => {
-      console.error('❌ Next.js 起動エラー:', error.message);
-      process.exit(1);
-    });
+      nextProcess.on('error', (error) => {
+        console.error('❌ Next.js 起動エラー:', error.message);
+        process.exit(1);
+      });
 
-    // Next.js の起動を待つ
-    console.log(`   待機中... (http://localhost:${nextPort})`);
-    await waitForServer('localhost', parseInt(nextPort), 30000);
-    console.log('✅ Next.js 開発サーバー起動完了');
+      // Next.js の起動を待つ
+      console.log(`   待機中... (http://localhost:${nextPort})`);
+      await waitForServer('localhost', parseInt(nextPort), 30000);
+      console.log('✅ Next.js 開発サーバー起動完了');
+    }
 
     console.log('');
     console.log('🚀 SWA CLI で統合開発環境を起動中...');
     console.log('');
 
-    // 8. SWA CLI で起動（Next.js 開発サーバーをプロキシ）
+    // 8. SWA CLI で起動
     const swaArgs = [
       'start',
-      `http://localhost:${nextPort}`,
+      options.build ? outputDir : `http://localhost:${nextPort}`,
       '--api-location', './azure-functions',
       '--port', port,
       '--api-port', apiPort,
