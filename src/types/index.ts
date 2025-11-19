@@ -59,7 +59,6 @@ export interface RPCResponse<T = any> {
 // CLI設定の型
 export interface SwallowKitConfig {
   database?: {
-    type?: "cosmos" | "mock";
     connectionString?: string;
     databaseName?: string;
   };

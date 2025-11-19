@@ -1,8 +1,8 @@
 # SwallowKit
 
-A Next.js framework for building full-stack applications optimized for Azure deployment.
+An integration kit that enables React/Next.js developers to deploy full-stack applications directly to Azure serverless, without worrying about Static Web Apps size limits or runtime constraints.
 
-SwallowKit enables you to build Next.js applications following standard React Server Components and Server Actions patterns, then automatically split them into individual Azure Functions to overcome Azure Static Web Apps' 250MB size limit.
+SwallowKit transforms typical Next.js server behavior into Azure Functions and automatically generates predictable API endpoints. It includes a simple data layer with Zod schema validation, designed for Cosmos DB. SwallowKit maintains the Next.js development experience while aiming for practical and stable operations on Azure.
 
 > **Note**: This project is in early development. APIs may change in future versions.
 

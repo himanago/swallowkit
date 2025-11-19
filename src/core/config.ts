@@ -6,9 +6,7 @@ import { SwallowKitConfig } from "../types";
  * デフォルト設定
  */
 const DEFAULT_CONFIG: SwallowKitConfig = {
-  database: {
-    type: "mock",
-  },
+  database: {},
   api: {
     endpoint: "/api/_swallowkit",
     cors: {
@@ -90,7 +88,6 @@ export function generateConfig(outputPath: string = "swallowkit.config.json"): v
   const config = {
     $schema: "https://swallowkit.dev/schema.json",
     database: {
-      type: "cosmos",
       connectionString: "your-cosmos-connection-string",
       databaseName: "SwallowKitDB",
     },
@@ -117,13 +114,6 @@ export function loadConfigFromEnv(): Partial<SwallowKitConfig> {
   const config: Partial<SwallowKitConfig> = {};
 
   // データベース設定
-  if (process.env.SWALLOWKIT_DB_TYPE) {
-    config.database = {
-      ...config.database,
-      type: process.env.SWALLOWKIT_DB_TYPE as "cosmos" | "mock",
-    };
-  }
-
   if (process.env.SWALLOWKIT_DB_CONNECTION_STRING) {
     config.database = {
       ...config.database,
@@ -166,10 +156,8 @@ export function validateConfig(config: SwallowKitConfig): { valid: boolean; erro
   const errors: string[] = [];
 
   // データベース設定の検証
-  if (config.database?.type === "cosmos") {
-    if (!config.database.connectionString) {
-      errors.push("Cosmos DB connection string is required when type is 'cosmos'");
-    }
+  if (config.database && !config.database.connectionString) {
+    errors.push("Cosmos DB connection string is required");
   }
 
   // API設定の検証

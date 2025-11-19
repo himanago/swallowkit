@@ -18,11 +18,15 @@ program
   .action(setupCommand);
 
 program
-  .command("init")
+  .command("init [project-name]")
   .description("新しいSwallowKitプロジェクトを初期化")
-  .option("--name <name>", "プロジェクト名", "swallowkit-app")
-  .option("--template <template>", "テンプレート", "basic")
-  .action(initCommand);
+  .option("--template <template>", "テンプレート", "default")
+  .action((projectName, options) => {
+    initCommand({
+      name: projectName || "swallowkit-app",
+      template: options.template,
+    });
+  });
 
 program.addCommand(devCommand);
 

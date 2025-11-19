@@ -125,7 +125,10 @@ export const generateCommand = new Command()
           prestart: 'npm run build'
         },
         dependencies: {
-          '@azure/functions': '^4.0.0'
+          '@azure/functions': '^4.0.0',
+          '@azure/cosmos': '^4.0.0',
+          'zod': '^3.25.0',
+          'swallowkit': 'file:../..'
         },
         devDependencies: {
           '@types/node': '^20.0.0',
@@ -149,7 +152,11 @@ export const generateCommand = new Command()
           strict: true,
           esModuleInterop: true,
           skipLibCheck: true,
-          forceConsistentCasingInFileNames: true
+          forceConsistentCasingInFileNames: true,
+          baseUrl: './src',
+          paths: {
+            '@/*': ['./*']
+          }
         },
         include: ['src/**/*.ts'],
         exclude: ['node_modules', 'dist']
@@ -194,6 +201,39 @@ node_modules
         path.join(outputDir, 'local.settings.json'),
         JSON.stringify(localSettings, null, 2)
       );
+
+      // SwallowKit のソースコードを Azure Functions にコピー
+      console.log('\n📦 SwallowKit のソースコードをコピー中...');
+      // __dirname は dist/cli/commands を指すので、src は ../../../src
+      const swallowkitSrcDir = path.join(__dirname, '../../../src');
+      const targetSrcDir = path.join(outputDir, 'src');
+      
+      // 必要なファイルをコピー
+      const filesToCopy = [
+        'index.ts',
+        'core/config.ts',
+        'database/client.ts',
+        'database/base-model.ts',
+        'database/runtime-check.ts',
+        'database/repository.ts',
+        'types/index.ts'
+      ];
+      
+      for (const file of filesToCopy) {
+        const sourcePath = path.join(swallowkitSrcDir, file);
+        const targetPath = path.join(targetSrcDir, file);
+        const targetDir = path.dirname(targetPath);
+        
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+        
+        if (fs.existsSync(sourcePath)) {
+          fs.copyFileSync(sourcePath, targetPath);
+        } else {
+          console.warn(`⚠️  Warning: Could not find ${sourcePath}`);
+        }
+      }
 
       // Server Actions から Azure Functions を生成
       if (serverActions.length > 0) {
@@ -425,7 +465,24 @@ function copyDependencies(dependencies: Array<{from: string, imports: string[]}>
         fs.mkdirSync(targetDir, { recursive: true });
       }
       
-      fs.copyFileSync(actualSourcePath, targetPath);
+      // ファイルをコピーして、swallowkit のインポートを書き換え
+      let content = fs.readFileSync(actualSourcePath, 'utf-8');
+      
+      // swallowkit からのインポートを相対パスに書き換え
+      // dep.from = 'lib/models/todo' の場合、targetPath = outputDir/src/lib/models/todo.ts
+      // index.ts は outputDir/src/index.ts にある
+      // したがって相対パス = ../../index
+      const relativePathToIndex = path.relative(
+        path.dirname(targetPath),
+        path.join(outputDir, 'src', 'index')
+      ).replace(/\\/g, '/');
+      
+      content = content.replace(
+        /import\s*{([^}]+)}\s*from\s*['"]swallowkit['"]/g,
+        `import {$1} from '${relativePathToIndex}'`
+      );
+      
+      fs.writeFileSync(targetPath, content);
     }
   }
 }
@@ -443,6 +500,19 @@ function generateFunctionBody(action: ServerAction, actionImpl: string): string 
   let processedImpl = actionImpl
     .replace(/revalidatePath\([^)]*\)/g, '// revalidatePath removed (Next.js specific)')
     .replace(/import\s+{[^}]*revalidatePath[^}]*}\s+from\s+['"][^'"]+['"]/g, '');
+  
+  // Server Action の return 文を Azure Functions の形式に変換
+  // return { error: "..." } → return { status: 400, jsonBody: { success: false, error: "..." } }
+  processedImpl = processedImpl.replace(
+    /return\s*{\s*error:\s*([^}]+)\s*}/g,
+    'return { status: 400, jsonBody: { success: false, error: $1 } }'
+  );
+  
+  // return { success: true } → return { status: 200, jsonBody: { success: true } }
+  processedImpl = processedImpl.replace(
+    /return\s*{\s*success:\s*true\s*}/g,
+    'return { status: 200, jsonBody: { success: true } }'
+  );
   
   // FormData のパラメータを抽出
   if (actionImpl.includes('formData.get') || action.params.includes('formData')) {
@@ -490,8 +560,9 @@ function generateFunctionBody(action: ServerAction, actionImpl: string): string 
   } else if (action.params.length > 0) {
     // パラメータがある場合（id など）
     const paramsList = action.params.join(', ');
+    const paramsType = action.params.map(p => `${p}: string`).join(', ');
     return `
-        const { ${paramsList} } = (await request.json()) as { ${paramsList}: string };
+        const { ${paramsList} } = (await request.json()) as { ${paramsType} };
         
         // 元の Server Action のロジックを実行
         ${processedImpl}`;
