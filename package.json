@@ -1,6 +1,6 @@
 {
   "name": "swallowkit",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-beta.1",
   "description": "A React framework for building full-stack Azure Static Web Apps with ease.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

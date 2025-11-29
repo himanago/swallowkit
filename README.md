@@ -122,8 +122,7 @@ my-app/
 │       └── todos.ts          # Todo CRUD operations
 ├── functions/                # Azure Functions Project
 │   ├── src/
-│   │   └── functions/
-│   │       └── greet.ts      # Example HTTP trigger
+│   │   └── greet.ts          # Example HTTP trigger
 │   ├── host.json
 │   ├── local.settings.json
 │   └── package.json
@@ -671,6 +670,41 @@ export async function GET() {
   return Response.json(validated);
 }
 ```
+
+## 🗺️ Roadmap
+
+SwallowKit is currently in beta. The following features are planned for future releases:
+
+### Planned Features
+
+- **`swallowkit build` command**: Build Next.js app in standalone mode for Azure Static Web Apps deployment
+- **`swallowkit deploy` command**: Automated deployment to Azure Static Web Apps with Azure Functions
+- **`swallowkit setup` command**: One-click installation of Azure CLI, SWA CLI, and development tools
+- **Cosmos DB Integration**: 
+  - Built-in Cosmos DB client with automatic connection management
+  - `BaseModel` and `SchemaRepository` for type-safe database operations
+  - Automatic Cosmos DB Emulator detection and setup
+  - Database initialization and migration support
+- **Advanced CLI Features**:
+  - `swallowkit generate` command for scaffolding components, schemas, and API routes
+  - Interactive project setup with customizable templates
+  - Environment configuration wizard
+- **Enhanced Developer Experience**:
+  - Hot reload for Azure Functions during development
+  - Integrated debugging support for Next.js + Functions
+  - Better error messages and troubleshooting guides
+- **Production Features**:
+  - Environment-specific configuration management
+  - Automated testing setup for Zod schemas
+  - Performance monitoring integration with Application Insights
+  - CI/CD pipeline templates for GitHub Actions and Azure DevOps
+
+### Current Limitations (beta.1)
+
+- `build`, `deploy`, and `setup` commands are not yet implemented
+- Cosmos DB integration is included in the codebase but not connected to the init workflow
+- Schema generation and advanced scaffolding features are planned
+- Azure deployment requires manual configuration of Static Web Apps and Functions
 
 ## 🤝 Contributing
 
