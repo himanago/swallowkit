@@ -5,72 +5,34 @@ import * as fs from 'fs';
 
 interface DevOptions {
   port?: string;
-  apiPort?: string;
+  functionsPort?: string;
   host?: string;
   open?: boolean;
   verbose?: boolean;
-}
-
-/**
- * Cosmos DB のデータベースとコンテナを初期化
- */
-async function initializeCosmosDB() {
-  try {
-    // @azure/cosmosをdynamic importで読み込み
-    const { CosmosClient, PartitionKeyKind } = await import('@azure/cosmos');
-    
-    const client = new CosmosClient({
-      endpoint: 'http://localhost:8081',
-      key: 'C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=='
-    });
-    
-    const databaseId = 'swallowkit-db';
-    const containerId = 'todos';
-    
-    console.log('📦 Cosmos DB のセットアップ中...');
-    
-    // データベース作成
-    const { database } = await client.databases.createIfNotExists({ id: databaseId });
-    
-    // コンテナ作成
-    await database.containers.createIfNotExists({
-      id: containerId,
-      partitionKey: { 
-        paths: ['/id'],
-        kind: PartitionKeyKind.Hash
-      }
-    });
-    
-    console.log('✅ Cosmos DB セットアップ完了');
-  } catch (error: any) {
-    if (error.code === 409) {
-      // 既に存在する場合は無視
-      console.log('✅ Cosmos DB は既にセットアップ済みです');
-    } else {
-      console.warn('⚠️  Cosmos DB セットアップでエラーが発生しましたが、続行します:', error.message);
-    }
-  }
+  noFunctions?: boolean;
 }
 
 export const devCommand = new Command()
   .name('dev')
-  .description('SwallowKit 開発サーバーを起動（SWA CLI統合）')
-  .option('-p, --port <port>', 'フロントエンドポート', '4280')
-  .option('--api-port <port>', 'Azure Functions APIポート', '7071')
+  .description('SwallowKit 開発サーバーを起動（Cosmos DB + Next.js + Azure Functions）')
+  .option('-p, --port <port>', 'Next.js ポート', '3000')
+  .option('-f, --functions-port <port>', 'Azure Functions ポート', '7071')
   .option('--host <host>', 'ホスト名', 'localhost')
   .option('--open', 'ブラウザを自動で開く', false)
   .option('--verbose', '詳細ログを表示', false)
-  .action(async (options: DevOptions) => {
+  .option('--no-functions', 'Azure Functions の起動をスキップ', false)
+  .action(async (options: DevOptions & { functionsPort?: string; noFunctions?: boolean }) => {
     console.log('🚀 SwallowKit 開発環境を起動中...');
-    console.log('⚙️  オプション:', options);
+    if (options.verbose) {
+      console.log('⚙️  オプション:', options);
+    }
 
     await startDevEnvironment(options);
   });
 
 async function startDevEnvironment(options: DevOptions) {
-  const port = options.port || '4280';
-  const apiPort = options.apiPort || '7071';
-  const apiDir = path.join(process.cwd(), 'api');
+  const port = options.port || '3000';
+  const functionsPort = options.functionsPort || '7071';
   
   // プロセスを管理する配列
   const processes: ChildProcess[] = [];
@@ -87,166 +49,159 @@ async function startDevEnvironment(options: DevOptions) {
   });
 
   try {
-    // 1. APIディレクトリの存在確認
-    if (!fs.existsSync(apiDir)) {
-      console.log('⚠️  APIディレクトリが見つかりません。');
-      console.log('💡 まず `swallowkit generate` を実行してAPIを生成してください。');
+    // 1. Next.js プロジェクトの確認
+    const packageJsonPath = path.join(process.cwd(), 'package.json');
+    const nextConfigPathJs = path.join(process.cwd(), 'next.config.js');
+    const nextConfigPathTs = path.join(process.cwd(), 'next.config.ts');
+    const nextConfigPathMjs = path.join(process.cwd(), 'next.config.mjs');
+    
+    if (!fs.existsSync(packageJsonPath)) {
+      console.log('❌ package.json が見つかりません。');
+      console.log('💡 Next.js プロジェクトのルートディレクトリで実行してください。');
       process.exit(1);
     }
 
-    // 2. APIの依存関係がインストールされているか確認
-    const apiNodeModules = path.join(apiDir, 'node_modules');
-    if (!fs.existsSync(apiNodeModules)) {
+    if (!fs.existsSync(nextConfigPathJs) && !fs.existsSync(nextConfigPathTs) && !fs.existsSync(nextConfigPathMjs)) {
+      console.log('⚠️  next.config ファイルが見つかりません。Next.js プロジェクトですか？');
+    }
+
+    // 2. Azure Functions が存在するかチェック
+    const functionsDir = path.join(process.cwd(), 'functions');
+    const hasFunctions = fs.existsSync(functionsDir) && 
+                        fs.existsSync(path.join(functionsDir, 'package.json'));
+
+    if (hasFunctions && !options.noFunctions) {
       console.log('');
-      console.log('📦 API依存関係をインストール中...');
-      const npmInstall = spawn('npm', ['install'], {
-        cwd: apiDir,
-        stdio: 'inherit',
+      console.log('🚀 Azure Functions を起動中...');
+      
+      // functionsディレクトリで npm install が実行されているか確認
+      const functionsNodeModules = path.join(functionsDir, 'node_modules');
+      if (!fs.existsSync(functionsNodeModules)) {
+        console.log('📦 Azure Functions の依存関係をインストール中...');
+        const npmInstall = spawn('npm', ['install'], {
+          cwd: functionsDir,
+          shell: true,
+          stdio: 'inherit',
+        });
+        
+        await new Promise<void>((resolve, reject) => {
+          npmInstall.on('close', (code) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`npm install failed with code ${code}`));
+            }
+          });
+          npmInstall.on('error', reject);
+        });
+      }
+
+      // Azure Functions を起動
+      const funcProcess = spawn('npm', ['start'], {
+        cwd: functionsDir,
         shell: true,
+        stdio: options.verbose ? 'inherit' : 'pipe',
+        env: { ...process.env, FUNCTIONS_PORT: functionsPort }
       });
 
-      await new Promise<void>((resolve, reject) => {
-        npmInstall.on('close', (code) => {
-          if (code === 0) {
-            console.log('✅ API依存関係のインストール完了');
-            resolve();
-          } else {
-            console.error('❌ API依存関係のインストールに失敗しました');
-            reject(new Error(`npm install failed with code ${code}`));
+      // Functions の出力を整形して表示
+      if (!options.verbose && funcProcess.stdout) {
+        funcProcess.stdout.on('data', (data) => {
+          const output = data.toString();
+          // 重要なメッセージのみ表示
+          if (output.includes('Worker process started') || 
+              output.includes('Host started') ||
+              output.includes('Functions:') ||
+              output.includes('For detailed output')) {
+            process.stdout.write(`[Functions] ${output}`);
           }
         });
+      }
+
+      if (funcProcess.stderr) {
+        funcProcess.stderr.on('data', (data) => {
+          console.error(`[Functions Error] ${data}`);
+        });
+      }
+
+      processes.push(funcProcess);
+
+      funcProcess.on('error', (error) => {
+        console.error('⚠️  Azure Functions 起動エラー:', error.message);
+        console.log('💡 Azure Functions Core Tools がインストールされているか確認してください');
+        console.log('   npm install -g azure-functions-core-tools@4');
       });
-    }
 
-    // 3. SWA CLIがインストールされているか確認
-    const swaCliInstalled = await checkSWACLI();
-    
-    if (!swaCliInstalled) {
-      console.log('⚠️  Azure Static Web Apps CLI (SWA CLI) がインストールされていません。');
-      console.log('📦 インストールコマンド: npm install -g @azure/static-web-apps-cli');
-      console.log('');
-      console.log('💡 または、個別に起動することもできます:');
-      console.log('   1. フロントエンド: npm run dev (Vite)');
-      console.log('   2. バックエンド: cd api && npm start');
-      process.exit(1);
-    }
-
-    // 4. Cosmos DB Emulatorが起動しているか確認
-    console.log('🔍 Cosmos DB Emulator の起動を確認中...');
-    const cosmosEmulatorRunning = await checkCosmosDBEmulator();
-    
-    if (!cosmosEmulatorRunning) {
-      console.log('⚠️  Cosmos DB Emulator が起動していません。');
-      console.log('');
-      console.log('📦 Cosmos DB Emulator をインストール:');
-      console.log('   https://docs.microsoft.com/azure/cosmos-db/local-emulator');
-      console.log('');
-      console.log('🚀 起動後、以下のエンドポイントで接続できることを確認:');
-      console.log('   https://localhost:8081');
-      console.log('');
-      console.log('💡 Cosmos DB Emulator は SwallowKit の必須コンポーネントです。');
-      process.exit(1);
-    }
-    console.log('✅ Cosmos DB Emulator が起動しています');
-    
-    // 5. Cosmos DB のデータベース/コンテナをセットアップ
-    await initializeCosmosDB();
-
-    console.log('');
-    console.log('📦 Azure Functions APIをビルド中...');
-    
-    // 5. Azure Functions APIをビルド
-    const buildProcess = spawn('npm', ['run', 'build'], {
-      cwd: apiDir,
-      shell: true,
-      stdio: options.verbose ? 'inherit' : 'pipe',
-    });
-
-    await new Promise<void>((resolve, reject) => {
-      buildProcess.on('close', (code) => {
-        if (code === 0) {
-          console.log('✅ APIビルド完了');
-          resolve();
-        } else {
-          reject(new Error(`APIビルドに失敗しました (終了コード: ${code})`));
+      funcProcess.on('close', (code) => {
+        if (code !== 0) {
+          console.log(`\n⏹️  Azure Functions が終了しました (終了コード: ${code})`);
         }
       });
-    });
+
+      console.log(`✅ Azure Functions が起動しました (ポート: ${functionsPort})`);
+    } else if (!hasFunctions) {
+      console.log('');
+      console.log('ℹ️  functions/ ディレクトリが見つかりません。Next.js のみ起動します。');
+    } else if (options.noFunctions) {
+      console.log('');
+      console.log('ℹ️  --no-functions が指定されているため、Azure Functions はスキップします。');
+    }
 
     console.log('');
-    console.log('🚀 Vite 開発サーバーを起動中...');
+    console.log('🚀 Next.js 開発サーバーを起動中...');
+
+    // 5. Next.js 開発サーバーを起動
+    const nextArgs = ['next', 'dev', '--port', port];
     
-    // 6. Vite開発サーバーを起動
-    const vitePort = '5173';
-    const viteProcess = spawn('npx', ['vite', '--port', vitePort, '--host'], {
-      cwd: process.cwd(),
-      shell: true,
-      stdio: options.verbose ? 'inherit' : 'pipe',
-    });
-
-    processes.push(viteProcess);
-
-    viteProcess.on('error', (error) => {
-      console.error('❌ Vite起動エラー:', error.message);
-      console.log('💡 Viteがインストールされているか確認してください: npm install -D vite @vitejs/plugin-react');
-      process.exit(1);
-    });
-
-    // Viteの起動を待つ（簡易版）
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    console.log('✅ Vite開発サーバー起動完了');
-
-    console.log('');
-    console.log('🚀 SWA CLI で統合開発環境を起動中...');
-    console.log('');
-
-    // 7. SWA CLI で起動（Vite開発サーバーをプロキシ）
-    const swaArgs = [
-      'start',
-      `http://localhost:${vitePort}`,
-      '--api-location', './api',
-      '--port', port,
-      '--api-port', apiPort,
-      '--devserver-timeout', '120000',
-    ];
-
     if (options.open) {
-      swaArgs.push('--open');
+      // Next.js 14+ では --open オプションが非推奨になったため、手動でブラウザを開く
+      setTimeout(() => {
+        const url = `http://${options.host || 'localhost'}:${port}`;
+        console.log(`\n🌐 ブラウザを開いています: ${url}`);
+        
+        const start = process.platform === 'darwin' ? 'open' :
+                      process.platform === 'win32' ? 'start' : 'xdg-open';
+        spawn(start, [url], { shell: true });
+      }, 3000);
     }
 
-    if (options.verbose) {
-      swaArgs.push('--verbose');
-    }
-
-    const swaProcess = spawn('swa', swaArgs, {
+    const nextProcess = spawn('npx', nextArgs, {
       cwd: process.cwd(),
       shell: true,
-      stdio: 'inherit',
+      stdio: options.verbose ? 'inherit' : 'inherit',
     });
 
-    processes.push(swaProcess);
+    processes.push(nextProcess);
 
-    swaProcess.on('error', (error) => {
-      console.error('❌ SWA CLI起動エラー:', error.message);
+    nextProcess.on('error', (error) => {
+      console.error('❌ Next.js 起動エラー:', error.message);
       process.exit(1);
     });
 
-    swaProcess.on('close', (code) => {
+    nextProcess.on('close', (code) => {
       if (code !== 0) {
-        console.log(`\n⏹️  SWA CLI が終了しました (終了コード: ${code})`);
+        console.log(`\n⏹️  Next.js が終了しました (終了コード: ${code})`);
       }
+      // Next.js が終了したら全プロセスを終了
+      processes.forEach((proc) => {
+        if (proc && !proc.killed) {
+          proc.kill();
+        }
+      });
       process.exit(code || 0);
     });
 
     console.log('');
     console.log('✅ SwallowKit 開発環境が起動しました！');
     console.log('');
-    console.log(`📱 フロントエンド: http://${options.host || 'localhost'}:${port}`);
-    console.log(`⚡ バックエンドAPI: http://${options.host || 'localhost'}:${port}/api/*`);
-    console.log(`🔧 Azure Functions: http://${options.host || 'localhost'}:${apiPort}`);
+    console.log(`📱 Next.js: http://${options.host || 'localhost'}:${port}`);
+    if (hasFunctions && !options.noFunctions) {
+      console.log(`⚡ Azure Functions: http://${options.host || 'localhost'}:${functionsPort}`);
+    }
     console.log('');
-    console.log('💡 SWA CLIがフロントエンドとバックエンドを統合しています');
-    console.log('💡 /api/* へのリクエストは自動的にAzure Functionsにルーティングされます');
+    if (hasFunctions && !options.noFunctions) {
+      console.log('💡 Azure Functions と Next.js BFF が連携しています');
+    }
     console.log('');
     console.log('🛑 停止するには Ctrl+C を押してください');
     console.log('');
@@ -260,59 +215,4 @@ async function startDevEnvironment(options: DevOptions) {
     });
     process.exit(1);
   }
-}
-
-async function checkSWACLI(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const checkProcess = spawn('swa', ['--version'], {
-      shell: true,
-      stdio: 'pipe',
-    });
-
-    checkProcess.on('close', (code) => {
-      resolve(code === 0);
-    });
-
-    checkProcess.on('error', () => {
-      resolve(false);
-    });
-  });
-}
-
-async function checkCosmosDBEmulator(): Promise<boolean> {
-  // HTTPSで試行
-  const httpsResult = await tryCosmosConnection(true);
-  if (httpsResult) return true;
-  
-  // HTTPで試行（Docker版など）
-  return await tryCosmosConnection(false);
-}
-
-async function tryCosmosConnection(useHttps: boolean): Promise<boolean> {
-  return new Promise((resolve) => {
-    const protocol = useHttps ? require('https') : require('http');
-    const options = {
-      hostname: 'localhost',
-      port: 8081,
-      path: '/',
-      method: 'GET',
-      rejectUnauthorized: false, // Emulatorの自己署名証明書を許可
-      timeout: 3000,
-    };
-
-    const req = protocol.request(options, (res: any) => {
-      resolve(res.statusCode === 200 || res.statusCode === 401); // 401もEmulatorが起動している証拠
-    });
-
-    req.on('error', () => {
-      resolve(false);
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      resolve(false);
-    });
-
-    req.end();
-  });
 }

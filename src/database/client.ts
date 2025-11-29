@@ -1,5 +1,6 @@
 import { CosmosClient, Database, Container } from "@azure/cosmos";
 import { SwallowKitConfig } from "../types/index.js";
+import { ensureServerSide } from "./runtime-check.js";
 
 /**
  * Cosmos DB クライアントの管理
@@ -15,10 +16,7 @@ export class DatabaseClient {
    * データベースに接続
    */
   async connect(): Promise<void> {
-    if (this.config.database?.type === "mock") {
-      console.log("🔧 モックデータベースを使用中");
-      return;
-    }
+    ensureServerSide('Database connection');
 
     if (!this.config.database?.connectionString) {
       throw new Error("Cosmos DB connection string が設定されていません");
@@ -39,9 +37,7 @@ export class DatabaseClient {
    * コンテナを取得
    */
   async getContainer(containerName: string): Promise<Container> {
-    if (this.config.database?.type === "mock") {
-      throw new Error("モックモードではコンテナ操作は利用できません");
-    }
+    ensureServerSide('Get container');
 
     if (!this.database) {
       await this.connect();
@@ -62,9 +58,7 @@ export class DatabaseClient {
    * ドキュメントを作成
    */
   async createDocument<T extends Record<string, any>>(containerName: string, document: T): Promise<T> {
-    if (this.config.database?.type === "mock") {
-      return this.mockOperation("create", document);
-    }
+    ensureServerSide('Create document');
 
     const container = await this.getContainer(containerName);
     const { resource } = await container.items.create(document as any);
@@ -75,9 +69,7 @@ export class DatabaseClient {
    * ドキュメントを取得
    */
   async getDocument<T extends Record<string, any>>(containerName: string, id: string): Promise<T | null> {
-    if (this.config.database?.type === "mock") {
-      return this.mockOperation("get", { id });
-    }
+    ensureServerSide('Get document');
 
     const container = await this.getContainer(containerName);
     
@@ -96,9 +88,7 @@ export class DatabaseClient {
    * ドキュメントを更新
    */
   async updateDocument<T extends Record<string, any>>(containerName: string, document: T): Promise<T> {
-    if (this.config.database?.type === "mock") {
-      return this.mockOperation("update", document);
-    }
+    ensureServerSide('Update document');
 
     const container = await this.getContainer(containerName);
     const { resource } = await container.items.upsert(document as any);
@@ -109,10 +99,7 @@ export class DatabaseClient {
    * ドキュメントを削除
    */
   async deleteDocument(containerName: string, id: string): Promise<void> {
-    if (this.config.database?.type === "mock") {
-      this.mockOperation("delete", { id });
-      return;
-    }
+    ensureServerSide('Delete document');
 
     const container = await this.getContainer(containerName);
     await container.item(id, id).delete();
@@ -122,9 +109,7 @@ export class DatabaseClient {
    * クエリを実行
    */
   async query<T>(containerName: string, query: string, parameters?: any[]): Promise<T[]> {
-    if (this.config.database?.type === "mock") {
-      return this.mockOperation("query", { query, parameters });
-    }
+    ensureServerSide('Query');
 
     const container = await this.getContainer(containerName);
     const { resources } = await container.items.query<T>({
@@ -133,26 +118,6 @@ export class DatabaseClient {
     }).fetchAll();
     
     return resources;
-  }
-
-  /**
-   * モック操作（開発時用）
-   */
-  private mockOperation<T>(operation: string, data: any): T {
-    console.log(`🔧 モック ${operation} 操作:`, data);
-    
-    // 簡単なモックデータを返す
-    switch (operation) {
-      case "create":
-      case "update":
-        return { ...data, id: data.id || Date.now().toString() } as T;
-      case "get":
-        return { id: data.id, mockData: true } as T;
-      case "query":
-        return [{ id: "mock1", mockData: true }, { id: "mock2", mockData: true }] as T;
-      default:
-        return data;
-    }
   }
 }
 
@@ -164,10 +129,10 @@ let globalDatabaseClient: DatabaseClient | null = null;
 export function getDatabaseClient(config?: SwallowKitConfig): DatabaseClient {
   if (!globalDatabaseClient) {
     if (!config) {
-      // デフォルト設定
-      config = {
-        database: { type: "mock" },
-      };
+      throw new Error(
+        "DatabaseClient is not initialized. " +
+        "Please provide a config or initialize it first."
+      );
     }
     globalDatabaseClient = new DatabaseClient(config);
   }

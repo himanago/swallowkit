@@ -6,184 +6,159 @@ interface BuildOptions {
 }
 
 export async function buildCommand(options: BuildOptions) {
-  console.log("🔨 SwallowKit プロジェクトをビルド中...");
+  console.log("🔨 Building Next.js app for Azure Static Web Apps...");
 
-  const outputDir = path.join(process.cwd(), options.output);
+  const projectRoot = process.cwd();
+  const outputDir = path.join(projectRoot, options.output);
 
   try {
-    // 出力ディレクトリを作成
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
+    // 1. Next.js の設定を確認・更新
+    console.log("\n⚙️  Configuring Next.js for Azure deployment...");
+    await ensureNextJsConfig(projectRoot);
 
-    // Azure Static Web Apps用のファイル構造を作成
-    await buildForAzureStaticWebApps(outputDir);
+    // 2. Next.js をビルド (standalone モード)
+    console.log("\n📦 Building Next.js application...");
+    await buildNextJs(projectRoot);
 
-    console.log(`✅ ビルドが完了しました: ${outputDir}`);
-    console.log("\n📦 Azure Static Web Appsにデプロイする準備ができました！");
+    // 3. ビルド成果物を出力ディレクトリにコピー
+    console.log("\n📦 Preparing deployment artifacts...");
+    await copyBuildArtifacts(projectRoot, outputDir);
+
+    console.log(`\n✅ Build completed!`);
+    console.log(`📁 Output directory: ${outputDir}`);
+    console.log(`📁 Standalone output: ${path.join(projectRoot, '.next/standalone')}`);
+    console.log("\n📝 Next steps:");
+    console.log("  1. swallowkit deploy (Deploy to Azure Static Web Apps)");
   } catch (error) {
-    console.error("❌ ビルドに失敗しました:", error);
+    console.error("❌ Build failed:", error);
+    if (error instanceof Error) {
+      console.error("Details:", error.message);
+    }
     process.exit(1);
   }
 }
 
-async function buildForAzureStaticWebApps(outputDir: string) {
-  // 1. フロントエンドアプリをビルド
-  console.log("📦 フロントエンドアプリをビルド中...");
-  await buildFrontend(outputDir);
-
-  // 2. Azure Functions用のAPIをビルド
-  console.log("⚡ Azure Functions APIをビルド中...");
-  await buildFunctions(outputDir);
-
-  // 3. staticwebapp.config.json を生成
-  console.log("⚙️ Azure Static Web Apps設定を生成中...");
-  await generateStaticWebAppConfig(outputDir);
-
-  console.log("📁 ビルド構造:");
-  console.log("  dist/");
-  console.log("  ├── index.html          # フロントエンドアプリ");
-  console.log("  ├── assets/             # 静的アセット");
-  console.log("  ├── api/                # Azure Functions");
-  console.log("  └── staticwebapp.config.json # SWA設定");
-}
-
-async function buildFrontend(outputDir: string) {
-  // 実際の実装ではViteやWebpackを使用
-  const indexHtml = `<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SwallowKit App</title>
-</head>
-<body>
-  <div id="root"></div>
-  <script>
-    // ビルドされたアプリのエントリーポイント
-    console.log("SwallowKit アプリが読み込まれました");
-  </script>
-</body>
-</html>`;
-
-  fs.writeFileSync(path.join(outputDir, "index.html"), indexHtml);
-}
-
-async function buildFunctions(outputDir: string) {
-  const apiDir = path.join(outputDir, "api");
-  fs.mkdirSync(apiDir, { recursive: true });
-
-  // SwallowKit RPC エンドポイント用のAzure Function
-  const functionJson = {
-    bindings: [
-      {
-        authLevel: "anonymous",
-        type: "httpTrigger",
-        direction: "in",
-        name: "req",
-        methods: ["post"],
-        route: "_swallowkit",
-      },
-      {
-        type: "http",
-        direction: "out",
-        name: "res",
-      },
-    ],
-  };
-
-  const swallowkitDir = path.join(apiDir, "_swallowkit");
-  fs.mkdirSync(swallowkitDir, { recursive: true });
-
-  fs.writeFileSync(
-    path.join(swallowkitDir, "function.json"),
-    JSON.stringify(functionJson, null, 2)
-  );
-
-  // Azure Function のコード
-  const functionCode = `const { app } = require('@azure/functions');
-
-app.http('_swallowkit', {
-  methods: ['POST'],
-  authLevel: 'anonymous',
-  route: '_swallowkit',
-  handler: async (request, context) => {
-    try {
-      const { fnName, args } = await request.json();
-      
-      // サーバー関数を実行
-      const serverFns = require('../serverFns');
-      const fn = serverFns[fnName];
-      
-      if (!fn || typeof fn !== 'function') {
-        return {
-          status: 400,
-          jsonBody: {
-            success: false,
-            error: \`Function \${fnName} not found\`
-          }
-        };
-      }
-      
-      const result = await fn(...args);
-      
-      return {
-        status: 200,
-        jsonBody: {
-          success: true,
-          data: result
-        }
-      };
-    } catch (error) {
-      return {
-        status: 500,
-        jsonBody: {
-          success: false,
-          error: error.message
-        }
-      };
-    }
+// Next.js の設定を確認・更新 (standalone モード有効化)
+async function ensureNextJsConfig(projectRoot: string) {
+  const nextConfigPath = path.join(projectRoot, 'next.config.js');
+  const nextConfigMjsPath = path.join(projectRoot, 'next.config.mjs');
+  
+  let configPath = nextConfigPath;
+  let isEsm = false;
+  
+  if (!fs.existsSync(nextConfigPath) && fs.existsSync(nextConfigMjsPath)) {
+    configPath = nextConfigMjsPath;
+    isEsm = true;
   }
-});
+
+  // 既存の設定を読み込む
+  let configContent = '';
+  if (fs.existsSync(configPath)) {
+    configContent = fs.readFileSync(configPath, 'utf-8');
+  }
+
+  // standalone モードが設定されているか確認
+  if (configContent.includes("output: 'standalone'") || configContent.includes('output: "standalone"')) {
+    console.log('✅ Next.js standalone mode is already configured');
+    return;
+  }
+
+  // standalone モードを追加
+  const newConfig = isEsm 
+    ? `/** @type {import('next').NextConfig} */
+const nextConfig = {
+  output: 'standalone',
+  // その他の設定はここに追加
+};
+
+export default nextConfig;
+`
+    : `/** @type {import('next').NextConfig} */
+const nextConfig = {
+  output: 'standalone',
+  // その他の設定はここに追加
+};
+
+module.exports = nextConfig;
 `;
 
-  fs.writeFileSync(path.join(swallowkitDir, "index.js"), functionCode);
-
-  // package.json for Azure Functions
-  const apiPackageJson = {
-    name: "swallowkit-api",
-    version: "1.0.0",
-    dependencies: {
-      "@azure/functions": "^4.0.0",
-    },
-  };
-
-  fs.writeFileSync(
-    path.join(apiDir, "package.json"),
-    JSON.stringify(apiPackageJson, null, 2)
-  );
+  fs.writeFileSync(configPath, newConfig, 'utf-8');
+  console.log('✅ Next.js configured for standalone mode');
 }
 
-async function generateStaticWebAppConfig(outputDir: string) {
-  const config = {
-    routes: [
-      {
-        route: "/api/*",
-        allowedRoles: ["anonymous"],
-      },
-      {
-        route: "/*",
-        serve: "/index.html",
-        statusCode: 200,
-      },
-    ],
-    navigationFallback: {
-      rewrite: "/index.html",
-    },
-  };
+async function buildNextJs(projectRoot: string) {
+  const { spawn } = require('child_process');
+  
+  return new Promise<void>((resolve, reject) => {
+    const build = spawn('npm', ['run', 'build'], {
+      cwd: projectRoot,
+      stdio: 'inherit',
+      shell: true
+    });
 
-  fs.writeFileSync(
-    path.join(outputDir, "staticwebapp.config.json"),
-    JSON.stringify(config, null, 2)
-  );
+    build.on('close', (code: number) => {
+      if (code === 0) {
+        console.log('✅ Next.js build completed');
+        resolve();
+      } else {
+        reject(new Error(`Next.js build failed with code ${code}`));
+      }
+    });
+  });
+}
+
+// ビルド成果物を出力ディレクトリにコピー
+async function copyBuildArtifacts(projectRoot: string, outputDir: string) {
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  const standaloneDir = path.join(projectRoot, '.next/standalone');
+  const staticDir = path.join(projectRoot, '.next/static');
+  const publicDir = path.join(projectRoot, 'public');
+
+  if (!fs.existsSync(standaloneDir)) {
+    console.warn('⚠️  Standalone output not found. Make sure output: "standalone" is set in next.config.js');
+    return;
+  }
+
+  // standalone ディレクトリの内容をコピー
+  console.log('📦 Copying standalone output...');
+  const { execSync } = require('child_process');
+  
+  try {
+    // Windows の場合は xcopy、それ以外は cp を使用
+    if (process.platform === 'win32') {
+      execSync(`xcopy "${standaloneDir}" "${outputDir}" /E /I /Y /Q`, { stdio: 'inherit' });
+    } else {
+      execSync(`cp -r "${standaloneDir}/." "${outputDir}/"`, { stdio: 'inherit' });
+    }
+    
+    // .next/static をコピー
+    if (fs.existsSync(staticDir)) {
+      const targetStaticDir = path.join(outputDir, '.next/static');
+      fs.mkdirSync(path.dirname(targetStaticDir), { recursive: true });
+      
+      if (process.platform === 'win32') {
+        execSync(`xcopy "${staticDir}" "${targetStaticDir}" /E /I /Y /Q`, { stdio: 'inherit' });
+      } else {
+        execSync(`cp -r "${staticDir}" "${targetStaticDir}"`, { stdio: 'inherit' });
+      }
+    }
+
+    // public ディレクトリをコピー
+    if (fs.existsSync(publicDir)) {
+      const targetPublicDir = path.join(outputDir, 'public');
+      
+      if (process.platform === 'win32') {
+        execSync(`xcopy "${publicDir}" "${targetPublicDir}" /E /I /Y /Q`, { stdio: 'inherit' });
+      } else {
+        execSync(`cp -r "${publicDir}" "${targetPublicDir}"`, { stdio: 'inherit' });
+      }
+    }
+
+    console.log('✅ Build artifacts copied successfully');
+  } catch (error) {
+    throw new Error(`Failed to copy build artifacts: ${error}`);
+  }
 }
