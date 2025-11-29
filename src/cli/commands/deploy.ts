@@ -5,7 +5,6 @@ import * as fs from 'fs';
 
 interface DeployOptions {
   swaName?: string;
-  functionsName?: string;
   resourceGroup?: string;
   location?: string;
   skipBuild?: boolean;
@@ -13,9 +12,8 @@ interface DeployOptions {
 
 export const deployCommand = new Command()
   .name('deploy')
-  .description('Deploy to Azure Static Web Apps and Azure Functions')
+  .description('Deploy to Azure Static Web Apps')
   .option('--swa-name <name>', 'Azure Static Web Apps resource name')
-  .option('--functions-name <name>', 'Azure Functions resource name')
   .option('--resource-group <name>', 'Azure resource group name')
   .option('--location <location>', 'Azure region', 'japaneast')
   .option('--skip-build', 'Skip build step', false)
@@ -41,20 +39,17 @@ export const deployCommand = new Command()
       if (options.swaName && options.resourceGroup) {
         await deploySwa(options, projectRoot);
       } else {
-        console.log('⚠️  Skipping Static Web Apps deployment (missing --swa-name or --resource-group)');
-      }
-
-      // Deploy Azure Functions
-      if (options.functionsName && options.resourceGroup) {
-        await deployFunctions(options, projectRoot);
-      } else {
-        console.log('⚠️  Skipping Azure Functions deployment (missing --functions-name or --resource-group)');
+        console.log('⚠️  Missing required options: --swa-name and --resource-group');
+        console.log('\n📝 Usage:');
+        console.log('  swallowkit deploy --swa-name <name> --resource-group <group>');
+        process.exit(1);
       }
 
       console.log('\n🎉 Deployment completed!');
       console.log('\n📝 Next steps:');
       console.log('  1. Visit Azure Portal to verify deployment');
-      console.log('  2. Check application logs if needed');
+      console.log('  2. Configure environment variables for backend connection');
+      console.log('  3. Check application logs if needed');
 
     } catch (error) {
       console.error('❌ Deployment failed:', error);
@@ -142,15 +137,12 @@ async function deploySwa(options: DeployOptions, projectRoot: string) {
 
   // Deploy using SWA CLI
   const appLocation = './';
-  const outputLocation = '.next';
-  const apiLocation = './azure-functions';
+  const outputLocation = 'dist'; // standalone build output
 
   const deployArgs = [
     'deploy',
-    appLocation,
     '--app-location', appLocation,
     '--output-location', outputLocation,
-    '--api-location', apiLocation,
     '--resource-group', options.resourceGroup!,
     '--app-name', options.swaName!,
   ];
@@ -168,45 +160,6 @@ async function deploySwa(options: DeployOptions, projectRoot: string) {
         resolve();
       } else {
         reject(new Error(`SWA deployment failed with code ${code}`));
-      }
-    });
-  });
-}
-
-async function deployFunctions(options: DeployOptions, projectRoot: string) {
-  console.log('\n⚡ Deploying Azure Functions...');
-  console.log(`   Function App: ${options.functionsName}`);
-  console.log(`   Resource Group: ${options.resourceGroup}\n`);
-
-  const functionsDir = path.join(projectRoot, 'azure-functions');
-
-  if (!fs.existsSync(functionsDir)) {
-    console.log('⚠️  No azure-functions/ directory found. Skipping...');
-    return;
-  }
-
-  // Deploy using Azure Functions Core Tools
-  const deployArgs = [
-    'azure',
-    'functionapp',
-    'publish',
-    options.functionsName!,
-    '--typescript'
-  ];
-
-  return new Promise<void>((resolve, reject) => {
-    const deploy = spawn('func', deployArgs, {
-      cwd: functionsDir,
-      stdio: 'inherit',
-      shell: true
-    });
-
-    deploy.on('close', (code) => {
-      if (code === 0) {
-        console.log('\n✅ Azure Functions deployment completed');
-        resolve();
-      } else {
-        reject(new Error(`Functions deployment failed with code ${code}`));
       }
     });
   });

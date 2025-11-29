@@ -5,14 +5,9 @@
 
 // Type definitions
 export type {
-  ServerFunction,
-  ServerFunctionDefinition,
-  ServerFnFactory,
   UseServerFnOptions,
   UseServerFnResult,
   ServerFnMode,
-  RPCRequest,
-  RPCResponse,
   SwallowKitConfig,
 } from "./types";
 

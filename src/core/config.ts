@@ -14,9 +14,6 @@ const DEFAULT_CONFIG: SwallowKitConfig = {
       credentials: true,
     },
   },
-  functions: {
-    outputDir: "api",
-  },
 };
 
 /**
@@ -74,10 +71,6 @@ function mergeConfig(defaultConfig: SwallowKitConfig, userConfig: Partial<Swallo
         ...userConfig.api?.cors,
       },
     },
-    functions: {
-      ...defaultConfig.functions,
-      ...userConfig.functions,
-    },
   };
 }
 
@@ -97,9 +90,6 @@ export function generateConfig(outputPath: string = "swallowkit.config.json"): v
         origin: ["http://localhost:3000"],
         credentials: true,
       },
-    },
-    functions: {
-      outputDir: "api",
     },
   };
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { initCommand, devCommand, buildCommand, generateCommand, analyzeCommand, setupCommand, deployCommand } from "./commands";
+import { initCommand, devCommand, buildCommand, setupCommand, deployCommand } from "./commands";
 
 const program = new Command();
 
@@ -36,8 +36,6 @@ program
   .option("--output <dir>", "出力ディレクトリ", "dist")
   .action(buildCommand);
 
-program.addCommand(generateCommand);
-program.addCommand(analyzeCommand);
 program.addCommand(deployCommand);
 
 program.parse();

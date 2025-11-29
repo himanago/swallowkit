@@ -1,22 +1,21 @@
 # SwallowKit
 
-An integration kit that enables React/Next.js developers to deploy full-stack applications directly to Azure serverless, without worrying about Static Web Apps size limits or runtime constraints.
+A type-safe, schema-driven development toolkit for Next.js applications on Azure, featuring seamless Zod schema sharing between frontend, backend, and Cosmos DB.
 
-SwallowKit transforms typical Next.js server behavior into Azure Functions and automatically generates predictable API endpoints. It includes a simple data layer with Zod schema validation, designed for Cosmos DB. SwallowKit maintains the Next.js development experience while aiming for practical and stable operations on Azure.
+SwallowKit enables developers to build full-stack Next.js applications with external Azure Functions backends while maintaining end-to-end type safety through shared Zod schemas. Deploy your Next.js app to Azure Static Web Apps using standalone mode, and connect to independent Azure Functions for backend operations—all with consistent type definitions and validation.
 
-> **Note**: This project is in early development. APIs may change in future versions.
+> **Note**: This project is in active development. APIs may change in future versions.
 
 ## 🚀 Features
 
-- **Next.js Standard Approach**: Build with standard Next.js SSR, Server Components, and Server Actions
-- **Automatic Function Splitting**: CLI command splits SSR components/actions into individual Azure Functions
-- **Zod Schema Sharing**: Share type-safe schemas between frontend, backend, and Cosmos DB
-- **Azure Static Web Apps Optimization**: Overcomes 250MB deployment size limit
-- **Independent Azure Functions**: Deploy backend functions separately from SWA
-- **Cosmos DB Integration**: Built-in Cosmos DB support with automatic setup
-- **Type-Safe**: Full TypeScript support with end-to-end type safety
-- **Azure Optimized**: Designed for Azure Static Web Apps + Azure Functions v4
-- **Developer Experience**: Simple CLI commands for build and deployment
+- **Zod Schema Sharing**: Share type-safe schemas across frontend, backend, and database layers
+- **Type-Safe Cosmos DB**: Built-in Cosmos DB integration with automatic validation
+- **Next.js Standalone Deployment**: Deploy to Azure Static Web Apps with standalone mode
+- **External Backend Support**: Connect to independent Azure Functions backends
+- **Repository Pattern**: Simple, type-safe data access with BaseModel and SchemaRepository
+- **Full TypeScript**: End-to-end type safety from client to database
+- **Azure Optimized**: Designed specifically for Azure Static Web Apps + Azure Functions + Cosmos DB
+- **Developer Experience**: Simple CLI commands for development and deployment
 
 ## 📋 Prerequisites
 
@@ -28,10 +27,10 @@ SwallowKit transforms typical Next.js server behavior into Azure Functions and a
 ## 📦 Installation
 
 ```bash
-npm install swallowkit next react react-dom
+npm install swallowkit next react react-dom zod
 ```
 
-SwallowKit requires Next.js 14+ as a peer dependency, but you don't need to use Next.js APIs directly.
+SwallowKit requires Next.js 14+ and Zod as peer dependencies.
 
 ## 🛠️ Quick Start
 
@@ -43,268 +42,102 @@ cd my-app
 npm install
 ```
 
-### 2. Write Standard Next.js Code
+This creates a complete full-stack project with:
+- Next.js app with App Router, TypeScript, and Tailwind CSS
+- Azure Functions project with HTTP triggers
+- BFF (Backend For Frontend) API routes
+- Example Todo app with Cosmos DB integration
+- Greet function demonstrating BFF → Azure Functions pattern
 
-Build your application using standard Next.js patterns:
+### 2. Install Azure Functions Core Tools
 
-```typescript
-// app/page.tsx - Server Component
-import { getTodos } from '@/lib/server/todos';
-
-export default async function TodoPage() {
-  const todos = await getTodos();
-  
-  return (
-    <div>
-      <h1>Todos</h1>
-      <ul>
-        {todos.map((todo) => (
-          <li key={todo.id}>{todo.text}</li>
-        ))}
-      </ul>
-      <AddTodoForm />
-    </div>
-  );
-}
-```
-
-```typescript
-// app/actions.ts - Server Actions
-'use server'
-
-import { revalidatePath } from 'next/cache';
-import { addTodo } from '@/lib/server/todos';
-
-export async function addTodoAction(formData: FormData) {
-  const text = formData.get('text') as string;
-  await addTodo(text);
-  revalidatePath('/');
-}
-```
-
-```typescript
-// components/AddTodoForm.tsx - Client Component
-'use client'
-
-import { addTodoAction } from '@/app/actions';
-import { useFormStatus } from 'react-dom';
-
-export function AddTodoForm() {
-  return (
-    <form action={addTodoAction}>
-      <input name="text" required />
-      <SubmitButton />
-    </form>
-  );
-}
-
-function SubmitButton() {
-  const { pending } = useFormStatus();
-  return <button disabled={pending}>Add</button>;
-}
-```
-
-### 3. Build and Deploy with SwallowKit CLI
+To run Azure Functions locally, install the Azure Functions Core Tools:
 
 ```bash
-# Generate individual Azure Functions from your Next.js app
-npx swallowkit generate
-
-# Build for production
-npx swallowkit build
-
-# Deploy to Azure
-npx swallowkit deploy
+npm install -g azure-functions-core-tools@4
 ```
 
-The `generate` command automatically:
-- Analyzes your Next.js app
-- Identifies Server Components and Server Actions
-- Splits them into individual Azure Functions
-- Generates Azure Functions v4 compatible code
-- Creates deployment configuration
-
-## 🏗️ Architecture
-
-### Development Flow
-
-1. **Develop** with standard Next.js (SSR, RSC, Server Actions)
-2. **Generate** individual Azure Functions with SwallowKit CLI
-3. **Deploy** to Azure Static Web Apps + Azure Functions
-
-### Why This Approach?
-
-**Problem**: Azure Static Web Apps has a 250MB deployment size limit. Next.js apps with SSR often exceed this limit because the backend bundle is not optimized.
-
-**Solution**: SwallowKit splits your SSR components and Server Actions into individual, optimized Azure Functions:
-
-```
-Next.js App Structure          →    Generated Azure Functions
-├── app/
-│   ├── page.tsx (SSR)        →    ├── functions/
-│   ├── todos/                     │   ├── page-root/
-│   │   └── page.tsx (SSR)    →    │   │   └── index.ts
-│   └── actions.ts            →    │   ├── page-todos/
-│                                  │   │   └── index.ts
-│                                  │   └── actions-addTodo/
-│                                  │       └── index.ts
-│                                  └── static/ (Client Components)
-```
-
-Each function is:
-- **Independently deployable** to Azure Functions
-- **Optimized and tree-shaken** for size
-- **Can scale independently**
-- **Not limited by SWA's 250MB constraint**
-
-## 🎯 Usage Patterns
-
-### Server Components (SSR)
-
-```typescript
-// app/users/page.tsx
-import { getUsers } from '@/lib/server/users';
-
-export default async function UsersPage() {
-  const users = await getUsers();
-  return <UserList users={users} />;
-}
-```
-
-### Server Actions
-
-```typescript
-// app/users/actions.ts
-'use server'
-
-export async function createUser(formData: FormData) {
-  const name = formData.get('name') as string;
-  // ... create user
-  revalidatePath('/users');
-}
-```
-
-### Client Components with Server Actions
-
-```typescript
-// components/CreateUserForm.tsx
-'use client'
-
-import { createUser } from '@/app/users/actions';
-
-export function CreateUserForm() {
-  return (
-    <form action={createUser}>
-      <input name="name" required />
-      <button>Create</button>
-    </form>
-  );
-}
-```
-
-## 📚 CLI Commands
-
-### `swallowkit init [project-name]`
-
-Initialize a new SwallowKit project with Next.js template.
-
+Or via chocolatey (Windows):
 ```bash
-npx swallowkit init my-app
+choco install azure-functions-core-tools
 ```
 
-### `swallowkit generate`
+### 3. Start Development Environment
 
-Analyze your Next.js app and generate individual Azure Functions.
+The init command creates two projects:
+- **Next.js app** (frontend + BFF API routes)
+- **Azure Functions** (backend services in `functions/` directory)
 
-```bash
-npx swallowkit generate
-```
-
-Options:
-- `--output-dir <dir>`: Output directory for generated functions (default: `./azure-functions`)
-- `--config <file>`: Custom configuration file
-
-### `swallowkit build`
-
-Build the Next.js app and Azure Functions for production.
-
-```bash
-npx swallowkit build
-```
-
-### `swallowkit deploy`
-
-Deploy to Azure Static Web Apps and Azure Functions.
-
-```bash
-npx swallowkit deploy
-```
-
-Options:
-- `--swa-name <name>`: Azure Static Web Apps resource name
-- `--functions-name <name>`: Azure Functions resource name
-- `--resource-group <name>`: Azure resource group
-
-### `swallowkit dev`
-
-Start development server.
+Start both servers with a single command:
 
 ```bash
 npx swallowkit dev
 ```
 
-## 🔧 Configuration
+This will:
+- ✅ Check and setup Cosmos DB Emulator
+- ✅ Start Azure Functions (automatically installs dependencies if needed)
+- ✅ Start Next.js development server
 
-Create `swallowkit.config.js` in your project root:
+The demo app will be available at:
+- Next.js: http://localhost:3000
+- Azure Functions: http://localhost:7071
 
-```javascript
-module.exports = {
-  // Output directory for generated Azure Functions
-  outputDir: './azure-functions',
-  
-  // Azure Functions runtime version
-  functionsVersion: 'v4',
-  
-  // Function splitting strategy
-  splitting: {
-    // Split each Server Component into a separate function
-    perComponent: true,
-    
-    // Split each Server Action into a separate function
-    perAction: true,
-  },
-  
-  // Azure Static Web Apps configuration
-  staticWebApp: {
-    appLocation: './',
-    apiLocation: './azure-functions',
-    outputLocation: '.next',
-  },
-  
-  // Database configuration
-  database: {
-    type: 'cosmosdb',
-    connectionString: process.env.COSMOS_DB_CONNECTION_STRING,
-  },
-};
+**Options:**
+```bash
+# Customize ports
+npx swallowkit dev --port 3001 --functions-port 7072
+
+# Skip Azure Functions (Next.js only)
+npx swallowkit dev --no-functions
+
+# Open browser automatically
+npx swallowkit dev --open
+
+# Verbose output
+npx swallowkit dev --verbose
 ```
 
-## 🔧 Database Integration
+### 4. Project Structure
 
-SwallowKit's **Zod Schema Sharing** is a killer feature that enables type-safe data flow across your entire stack:
+```
+my-app/
+├── app/                      # Next.js App Router
+│   ├── api/                  # BFF API Routes
+│   │   └── greet/            # Example: Calls Azure Functions
+│   │       └── route.ts
+│   └── page.tsx              # Homepage with demos
+├── components/               # React Components
+│   ├── AddTodoForm.tsx       # Todo form with Zod validation
+│   ├── TodoItem.tsx          # Todo item component
+│   └── GreetingDemo.tsx      # BFF → Functions demo
+├── lib/
+│   ├── database/             # Cosmos DB client & repository
+│   │   ├── base-model.ts     # BaseModel class
+│   │   ├── client.ts         # DatabaseClient
+│   │   └── repository.ts     # SchemaRepository
+│   ├── models/               # Zod schemas + models
+│   │   └── todo.ts           # Todo schema & model
+│   └── server/               # Server actions
+│       └── todos.ts          # Todo CRUD operations
+├── functions/                # Azure Functions Project
+│   ├── src/
+│   │   └── functions/
+│   │       └── greet.ts      # Example HTTP trigger
+│   ├── host.json
+│   ├── local.settings.json
+│   └── package.json
+├── .env.local                # Environment variables
+├── swallowkit.config.js      # SwallowKit configuration
+└── staticwebapp.config.json  # Azure SWA config
+```
 
-### Why Zod Schema Sharing?
+### 5. Define Shared Zod Schemas
 
-1. **Single Source of Truth**: Define your data schema once with Zod
-2. **Frontend Validation**: Use the same schema for client-side form validation
-3. **Backend Validation**: Automatically validate Server Actions input
-4. **Database Schema**: Type-safe Cosmos DB operations with runtime validation
-5. **No Code Duplication**: Share schemas between client, server, and database
-
-### Basic Usage
+Create type-safe schemas that will be used across your entire stack:
 
 ```typescript
-// lib/schemas/todo.ts - Shared schema definition
+// lib/schemas/todo.ts
 import { z } from 'zod';
 
 export const TodoSchema = z.object({
@@ -317,22 +150,261 @@ export const TodoSchema = z.object({
 export type Todo = z.infer<typeof TodoSchema>;
 ```
 
+### 5. Define Shared Zod Schemas
+
+Create type-safe schemas that will be used across your entire stack:
+
 ```typescript
-// lib/server/todos.ts - Server-side repository
-import { createRepository } from 'swallowkit';
-import { TodoSchema } from '../schemas/todo';
+// lib/models/todo.ts
+import { z } from 'zod';
+import { BaseModel } from '@/lib/database/base-model';
 
-const todoRepo = createRepository('todos', TodoSchema);
+export const todoSchema = z.object({
+  id: z.string(),
+  text: z.string().min(1, 'Todo text is required').max(200),
+  completed: z.boolean().default(false),
+  createdAt: z.string().default(() => new Date().toISOString()),
+});
 
-export async function getTodos() {
-  return todoRepo.findAll(); // Type-safe, validated
+export type TodoType = z.infer<typeof todoSchema>;
+
+export class Todo extends BaseModel<TodoType> {
+  constructor() {
+    super('AppDatabase', 'Todos', todoSchema);
+  }
+}
+```
+
+### 6. Use BFF Pattern for Azure Functions
+
+Next.js API routes act as a BFF (Backend For Frontend) layer that calls Azure Functions:
+
+```typescript
+// app/api/greet/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+
+const FUNCTIONS_BASE_URL = process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const name = searchParams.get('name') || 'World';
+
+  // Call Azure Functions backend
+  const response = await fetch(`${FUNCTIONS_BASE_URL}/api/greet?name=${encodeURIComponent(name)}`);
+  const data = await response.json();
+  
+  return NextResponse.json(data);
+}
+```
+
+```typescript
+// functions/src/functions/greet.ts
+import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
+import { z } from 'zod';
+
+const greetRequestSchema = z.object({
+  name: z.string().min(1).max(50),
+});
+
+export async function greet(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+  const name = request.query.get('name') || 'World';
+  const result = greetRequestSchema.safeParse({ name });
+  
+  if (!result.success) {
+    return { status: 400, jsonBody: { error: result.error.errors[0].message } };
+  }
+
+  return {
+    status: 200,
+    jsonBody: {
+      message: `Hello, ${result.data.name}! This message is from Azure Functions.`,
+      timestamp: new Date().toISOString()
+    }
+  };
 }
 
-export async function addTodo(text: string) {
-  return todoRepo.create({
+app.http('greet', {
+  methods: ['GET', 'POST'],
+  authLevel: 'anonymous',
+  handler: greet
+});
+```
+
+### 7. Use Schemas in Client Components
+
+```typescript
+// components/AddTodoForm.tsx
+'use client'
+
+import { useState } from 'react';
+import { addTodo } from '@/lib/server/todos';
+import { todoSchema } from '@/lib/models/todo';
+
+export function AddTodoForm() {
+  const [text, setText] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Client-side validation with Zod
+    const result = todoSchema.pick({ text: true }).safeParse({ text });
+    if (!result.success) {
+      alert(result.error.errors[0].message);
+      return;
+    }
+
+    await addTodo(text);
+    setText('');
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input value={text} onChange={(e) => setText(e.target.value)} />
+      <button type="submit">Add Todo</button>
+    </form>
+  );
+}
+```
+
+### 8. Develop and Deploy
+
+```bash
+# Start Next.js + Azure Functions + Cosmos DB with one command
+npx swallowkit dev
+
+# Build for production
+npx swallowkit build
+
+# Deploy to Azure
+npx swallowkit deploy --swa-name my-app --resource-group my-rg
+```
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Next.js App                          │
+│  ┌──────────────┐      ┌──────────────────────────┐    │
+│  │  Frontend    │      │  BFF API Routes          │    │
+│  │  Components  │─────▶│  /api/*                  │    │
+│  │  (Client)    │      │  (Next.js API Routes)    │    │
+│  └──────────────┘      └──────────┬───────────────┘    │
+│                                   │                      │
+│                                   │ HTTP                 │
+└───────────────────────────────────┼──────────────────────┘
+                                    │
+                    ┌───────────────▼─────────────────┐
+                    │   Azure Functions (External)    │
+                    │   - HTTP Triggers               │
+                    │   - Business Logic              │
+                    │   - Zod Validation              │
+                    └───────────────┬─────────────────┘
+                                    │
+                    ┌───────────────▼─────────────────┐
+                    │      Azure Cosmos DB            │
+                    │   - NoSQL Database              │
+                    │   - Schema Validation           │
+                    └─────────────────────────────────┘
+```
+
+**Key Patterns:**
+- **BFF (Backend For Frontend)**: Next.js API routes proxy requests to Azure Functions
+- **Shared Schemas**: Zod schemas used in frontend, BFF, Functions, and database
+- **Type Safety**: End-to-end TypeScript types derived from Zod schemas
+- **Standalone Deployment**: Next.js deployed as standalone to Azure Static Web Apps
+- **External Backend**: Azure Functions deployed independently
+
+### Development & Deployment Flow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Development                              │
+├─────────────────────────────────────────────────────────────┤
+│  Next.js App (localhost:3000)                               │
+│    ├─ Frontend Components                                    │
+│    ├─ BFF API Routes (/api/*)                               │
+│    └─ Server Actions (Cosmos DB)                            │
+│                                                               │
+│  Azure Functions (localhost:7071)                           │
+│    └─ HTTP Triggers (greet, etc.)                           │
+│                                                               │
+│  Cosmos DB Emulator (localhost:8081)                        │
+└─────────────────────────────────────────────────────────────┘
+
+                        ↓ swallowkit build
+
+┌─────────────────────────────────────────────────────────────┐
+│                     Production (Azure)                       │
+├─────────────────────────────────────────────────────────────┤
+│  Azure Static Web Apps                                       │
+│    └─ Next.js (standalone mode)                             │
+│         ├─ Server Components (SSR)                           │
+│         ├─ Client Components                                 │
+│         └─ BFF API Routes                                    │
+│                                                               │
+│  Azure Functions (separate deployment)                      │
+│    └─ Backend API (CRUD, business logic)                    │
+│                                                               │
+│  Azure Cosmos DB                                             │
+│    └─ Data storage with Zod validation                      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Why This Approach?
+
+**Problem**: Managing type consistency across frontend, backend, and database is error-prone and time-consuming.
+
+**Solution**: SwallowKit provides a unified Zod schema layer that ensures type safety and validation across your entire stack:
+
+```
+Zod Schema (Single Source of Truth)
+    ├─ Frontend: Client-side validation
+    ├─ Next.js: Server component validation
+    ├─ Backend: Azure Functions validation
+    └─ Database: Cosmos DB document validation
+```
+
+## 🎯 Core Feature: Zod Schema Sharing
+
+### Why Zod Schema Sharing?
+
+1. **Single Source of Truth**: Define your data schema once with Zod
+2. **Frontend Validation**: Use the same schema for client-side form validation
+3. **Backend Validation**: Automatically validate inputs in Server Actions and API routes
+4. **Database Schema**: Type-safe Cosmos DB operations with runtime validation
+5. **No Code Duplication**: Share schemas between client, server, and database
+
+### Basic Usage
+
+```typescript
+// lib/schemas/user.ts - Shared schema definition
+import { z } from 'zod';
+
+export const UserSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  email: z.string().email(),
+  createdAt: z.string().default(() => new Date().toISOString()),
+});
+
+export type User = z.infer<typeof UserSchema>;
+```
+
+```typescript
+// lib/server/users.ts - Server-side repository
+import { createRepository } from 'swallowkit';
+import { UserSchema } from '../schemas/user';
+
+const userRepo = createRepository('users', UserSchema);
+
+export async function getUsers() {
+  return userRepo.findAll(); // Type-safe, validated
+}
+
+export async function createUser(data: { name: string; email: string }) {
+  return userRepo.create({
     id: crypto.randomUUID(),
-    text,
-    completed: false,
+    ...data,
   }); // Validated by Zod before saving to Cosmos DB
 }
 ```
@@ -341,40 +413,42 @@ export async function addTodo(text: string) {
 // app/actions.ts - Server Actions with validation
 'use server'
 
-import { TodoSchema } from '@/lib/schemas/todo';
-import { addTodo } from '@/lib/server/todos';
+import { UserSchema } from '@/lib/schemas/user';
+import { createUser } from '@/lib/server/users';
 import { revalidatePath } from 'next/cache';
 
-export async function addTodoAction(formData: FormData) {
+export async function createUserAction(formData: FormData) {
   // Validate input using the same schema
-  const result = TodoSchema.pick({ text: true }).safeParse({
-    text: formData.get('text'),
+  const result = UserSchema.pick({ name: true, email: true }).safeParse({
+    name: formData.get('name'),
+    email: formData.get('email'),
   });
   
   if (!result.success) {
     return { error: result.error.message };
   }
   
-  await addTodo(result.data.text);
-  revalidatePath('/');
+  await createUser(result.data);
+  revalidatePath('/users');
 }
 ```
 
 ```typescript
-// components/AddTodoForm.tsx - Client-side validation
+// components/UserForm.tsx - Client-side validation
 'use client'
 
-import { TodoSchema } from '@/lib/schemas/todo';
-import { addTodoAction } from '@/app/actions';
+import { UserSchema } from '@/lib/schemas/user';
+import { createUserAction } from '@/app/actions';
 import { useState } from 'react';
 
-export function AddTodoForm() {
+export function UserForm() {
   const [error, setError] = useState('');
   
   const handleSubmit = async (formData: FormData) => {
     // Client-side validation using the same schema
-    const result = TodoSchema.pick({ text: true }).safeParse({
-      text: formData.get('text'),
+    const result = UserSchema.pick({ name: true, email: true }).safeParse({
+      name: formData.get('name'),
+      email: formData.get('email'),
     });
     
     if (!result.success) {
@@ -383,18 +457,21 @@ export function AddTodoForm() {
     }
     
     setError('');
-    await addTodoAction(formData);
+    await createUserAction(formData);
   };
   
   return (
     <form action={handleSubmit}>
-      <input name="text" required />
+      <input name="name" required />
+      <input name="email" type="email" required />
       {error && <p className="error">{error}</p>}
-      <button>Add</button>
+      <button>Create User</button>
     </form>
   );
 }
 ```
+
+## 🔧 Database Integration
 
 ### Repository API
 
@@ -484,11 +561,120 @@ await client.deleteDocument('users', '1');
 await client.query('users', 'SELECT * FROM c WHERE c.isActive = true');
 ```
 
+## 📚 CLI Commands
+
+### `swallowkit init [project-name]`
+
+Initialize a new SwallowKit project with Next.js template.
+
+```bash
+npx swallowkit init my-app
+```
+
+### `swallowkit dev`
+
+Start development server with Cosmos DB setup and Next.js.
+
+```bash
+npx swallowkit dev
+```
+
+Options:
+- `-p, --port <port>`: Next.js port (default: `3000`)
+- `--host <host>`: Host name (default: `localhost`)
+- `--open`: Open browser automatically
+- `--verbose`: Show detailed logs
+
+### `swallowkit build`
+
+Build the Next.js app for production using standalone mode.
+
+```bash
+npx swallowkit build
+```
+
+Options:
+- `--output <dir>`: Output directory (default: `dist`)
+
+### `swallowkit deploy`
+
+Deploy to Azure Static Web Apps.
+
+```bash
+npx swallowkit deploy --swa-name my-app --resource-group my-rg
+```
+
+Options:
+- `--swa-name <name>`: Azure Static Web Apps resource name (required)
+- `--resource-group <name>`: Azure resource group (required)
+- `--location <location>`: Azure region (default: `japaneast`)
+- `--skip-build`: Skip build step
+
+### `swallowkit setup`
+
+Install required tools (Azure CLI, SWA CLI, Cosmos DB Emulator).
+
+```bash
+npx swallowkit setup
+```
+
 ## 🔧 Configuration
+
+Create `swallowkit.config.js` in your project root:
+
+```javascript
+module.exports = {
+  database: {
+    connectionString: process.env.COSMOS_DB_CONNECTION_STRING,
+    databaseName: 'MyAppDB',
+  },
+  api: {
+    endpoint: '/api/_swallowkit',
+    cors: {
+      origin: ['http://localhost:3000'],
+      credentials: true,
+    },
+  },
+};
+```
+
+## 🚀 Connecting to External Azure Functions
+
+SwallowKit is designed to work with external Azure Functions backends. Your Next.js app acts as a BFF (Backend for Frontend), while independent Azure Functions handle business logic and data operations.
+
+### Backend Connection Pattern
+
+```typescript
+// lib/api/backend.ts
+const BACKEND_URL = process.env.BACKEND_API_URL || 'http://localhost:7071';
+
+export async function fetchFromBackend<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${BACKEND_URL}${endpoint}`, options);
+  if (!response.ok) {
+    throw new Error(`Backend API error: ${response.statusText}`);
+  }
+  return response.json();
+}
+```
+
+```typescript
+// app/api/todos/route.ts - Next.js API Route (BFF)
+import { fetchFromBackend } from '@/lib/api/backend';
+import { TodoSchema } from '@/lib/schemas/todo';
+
+export async function GET() {
+  const todos = await fetchFromBackend('/api/todos');
+  
+  // Validate response using shared schema
+  const validated = z.array(TodoSchema).parse(todos);
+  
+  return Response.json(validated);
+}
+```
 
 ## 🤝 Contributing
 
-This project is in early development. Feedback and suggestions are welcome!
+This project is in active development. Feedback and suggestions are welcome!
 
 ## 📄 License
 
@@ -499,6 +685,6 @@ MIT
 - [Azure Static Web Apps](https://azure.microsoft.com/services/app-service/static/)
 - [Azure Functions](https://azure.microsoft.com/services/functions/)
 - [Azure Cosmos DB](https://azure.microsoft.com/services/cosmos-db/)
-- [React](https://reactjs.org/)
+- [Next.js](https://nextjs.org/)
+- [Zod](https://zod.dev/)
 - [TypeScript](https://www.typescriptlang.org/)
-
