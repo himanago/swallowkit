@@ -1,5 +1,9 @@
 # SwallowKit
 
+[![npm version](https://img.shields.io/npm/v/swallowkit.svg)](https://www.npmjs.com/package/swallowkit)
+[![npm downloads](https://img.shields.io/npm/dm/swallowkit.svg)](https://www.npmjs.com/package/swallowkit)
+[![license](https://img.shields.io/npm/l/swallowkit.svg)](./LICENSE)
+
 A type-safe, schema-driven development toolkit for Next.js applications on Azure, featuring seamless Zod schema sharing between frontend, backend, and Cosmos DB.
 
 SwallowKit enables developers to build full-stack Next.js applications with external Azure Functions backends while maintaining end-to-end type safety through shared Zod schemas. Deploy your Next.js app to Azure Static Web Apps using standalone mode, and connect to independent Azure Functions for backend operations—all with consistent type definitions and validation.
@@ -9,6 +13,7 @@ SwallowKit enables developers to build full-stack Next.js applications with exte
 ## 🚀 Features
 
 - **Zod Schema Sharing**: Share type-safe schemas across frontend, backend, and database layers
+- **CRUD Code Generation**: Automatically generate Azure Functions and Next.js BFF code from Zod schemas
 - **Type-Safe Cosmos DB**: Built-in Cosmos DB integration with automatic validation
 - **Next.js Standalone Deployment**: Deploy to Azure Static Web Apps with standalone mode
 - **External Backend Support**: Connect to independent Azure Functions backends
@@ -17,7 +22,12 @@ SwallowKit enables developers to build full-stack Next.js applications with exte
 - **Azure Optimized**: Designed specifically for Azure Static Web Apps + Azure Functions + Cosmos DB
 - **Developer Experience**: Simple CLI commands for development and deployment
 
-## 📋 Prerequisites
+## � Documentation
+
+- **[Scaffold Guide](./docs/scaffold-guide.md)** - Generate CRUD operations from Zod schemas
+- **[Zod Schema Sharing Guide](./docs/zod-schema-sharing-guide.md)** - Share schemas between Next.js and Azure Functions
+
+## �📋 Prerequisites
 
 - Node.js 22.x
 - Azure Cosmos DB Emulator (for local development)
@@ -98,7 +108,19 @@ npx swallowkit dev --open
 npx swallowkit dev --verbose
 ```
 
-### 4. Project Structure
+### 4. Generate CRUD Operations from Zod Schemas
+
+Use the `scaffold` command to automatically generate complete CRUD operations:
+
+```bash
+npx swallowkit scaffold lib/models/product.ts
+```
+
+This generates Azure Functions, Next.js API routes, and type-safe UI components from your Zod schema.
+
+📚 **See the [Scaffold Guide](./docs/scaffold-guide.md) for detailed instructions and examples.**
+
+### 5. Project Structure
 
 ```
 my-app/
@@ -271,12 +293,49 @@ export function AddTodoForm() {
 # Start Next.js + Azure Functions + Cosmos DB with one command
 npx swallowkit dev
 
+# Generate CRUD operations for your models
+npx swallowkit scaffold product
+npx swallowkit scaffold order
+
 # Build for production
 npx swallowkit build
 
 # Deploy to Azure
 npx swallowkit deploy --swa-name my-app --resource-group my-rg
 ```
+
+### 9. Rapid CRUD Development with Scaffold
+
+SwallowKit can automatically generate all CRUD code for your models:
+
+```bash
+# 1. Create a Zod model
+# lib/models/product.ts
+import { z } from 'zod';
+
+export const productSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  price: z.number().positive(),
+});
+
+# 2. Generate CRUD operations
+npx swallowkit scaffold product
+
+# 3. Done! You now have:
+#    - Azure Functions with Cosmos DB bindings
+#    - Next.js BFF API routes
+#    - Full type safety with Zod validation
+```
+
+The generated code includes:
+- ✅ List all items (`GET /api/product`)
+- ✅ Get item by ID (`GET /api/product/{id}`)
+- ✅ Create item (`POST /api/product`)
+- ✅ Update item (`PUT /api/product/{id}`)
+- ✅ Delete item (`DELETE /api/product/{id}`)
+
+All with Azure best practices, Cosmos DB bindings, and Zod validation!
 
 ## 🏗️ Architecture
 
@@ -617,6 +676,79 @@ Install required tools (Azure CLI, SWA CLI, Cosmos DB Emulator).
 npx swallowkit setup
 ```
 
+### `swallowkit scaffold <model>`
+
+Generate CRUD operations (Create, Read, Update, Delete, List) for a Zod model.
+
+This command reads a Zod schema file and automatically generates:
+- Azure Functions with Cosmos DB bindings for all CRUD operations
+- Next.js BFF API routes that call the Azure Functions
+- Type-safe code using your shared Zod schema
+
+```bash
+# Generate CRUD for a model file
+npx swallowkit scaffold todo
+
+# Or specify the full path
+npx swallowkit scaffold lib/models/todo.ts
+```
+
+**Options:**
+- `--functions-dir <dir>`: Azure Functions directory (default: `functions`)
+- `--api-dir <dir>`: Next.js API routes directory (default: `app/api`)
+
+**Example:**
+
+1. Create a Zod model file:
+
+```typescript
+// lib/models/product.ts
+import { z } from 'zod';
+
+export const productSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1).max(100),
+  price: z.number().positive(),
+  description: z.string().optional(),
+  inStock: z.boolean().default(true),
+  createdAt: z.string().default(() => new Date().toISOString()),
+});
+
+export type ProductType = z.infer<typeof productSchema>;
+```
+
+2. Generate CRUD operations:
+
+```bash
+npx swallowkit scaffold product
+```
+
+3. This creates:
+   - `functions/src/functions/product.ts` - Azure Functions (GET, POST, PUT, DELETE)
+   - `app/api/product/route.ts` - Next.js BFF (GET all, POST)
+   - `app/api/product/[id]/route.ts` - Next.js BFF (GET by ID, PUT, DELETE)
+
+**Generated Azure Functions:**
+- `GET /api/product` - List all items (with Cosmos DB input binding)
+- `GET /api/product/{id}` - Get item by ID (with Cosmos DB input binding)
+- `POST /api/product` - Create new item (with Cosmos DB output binding)
+- `PUT /api/product/{id}` - Update item (with Cosmos DB output binding)
+- `DELETE /api/product/{id}` - Delete item (using Cosmos DB client)
+
+**Generated Next.js BFF Routes:**
+- `GET /api/product` - Proxy to Azure Functions
+- `POST /api/product` - Proxy to Azure Functions (with client-side validation)
+- `GET /api/product/[id]` - Proxy to Azure Functions
+- `PUT /api/product/[id]` - Proxy to Azure Functions (with client-side validation)
+- `DELETE /api/product/[id]` - Proxy to Azure Functions
+
+All generated code:
+- ✅ Uses Azure Functions input/output bindings for optimal performance
+- ✅ Follows Azure best practices
+- ✅ Validates data with your shared Zod schema
+- ✅ Maintains end-to-end type safety
+- ✅ Includes proper error handling
+
 ## 🔧 Configuration
 
 Create `swallowkit.config.js` in your project root:
@@ -675,6 +807,13 @@ export async function GET() {
 
 SwallowKit is currently in beta. The following features are planned for future releases:
 
+### ✅ Completed Features (v0.1.0-beta.2+)
+
+- **`swallowkit scaffold` command**: ✅ Generate CRUD operations from Zod models
+  - Automatically creates Azure Functions with Cosmos DB bindings
+  - Generates Next.js BFF API routes
+  - Maintains end-to-end type safety with Zod validation
+
 ### Planned Features
 
 - **`swallowkit build` command**: Build Next.js app in standalone mode for Azure Static Web Apps deployment
@@ -699,16 +838,12 @@ SwallowKit is currently in beta. The following features are planned for future r
   - Performance monitoring integration with Application Insights
   - CI/CD pipeline templates for GitHub Actions and Azure DevOps
 
-### Current Limitations (beta.1)
+### Current Limitations
 
 - `build`, `deploy`, and `setup` commands are not yet implemented
 - Cosmos DB integration is included in the codebase but not connected to the init workflow
-- Schema generation and advanced scaffolding features are planned
+- Advanced scaffolding features (components, schemas) are planned
 - Azure deployment requires manual configuration of Static Web Apps and Functions
-
-## 🤝 Contributing
-
-This project is in active development. Feedback and suggestions are welcome!
 
 ## 📄 License
 

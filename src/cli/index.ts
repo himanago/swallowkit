@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { initCommand, devCommand, buildCommand, setupCommand, deployCommand } from "./commands";
+import { initCommand, devCommand, buildCommand, setupCommand, deployCommand, scaffoldCommand } from "./commands";
 
 const program = new Command();
 
@@ -10,30 +10,47 @@ program
   .description("Next.js framework optimized for Azure deployment - Automatically splits SSR into individual Azure Functions")
   .version("0.2.0");
 
-// コマンドの登録
+// Register commands
 program
   .command("setup")
-  .description("必須ツール（Azure CLI, SWA CLI, Cosmos DB Emulator）をインストール")
-  .option("-y, --yes", "確認なしで自動インストール", false)
+  .description("Install required tools (Azure CLI, SWA CLI, Cosmos DB Emulator)")
+  .option("-y, --yes", "Auto-install without confirmation", false)
   .action(setupCommand);
 
 program
   .command("init [project-name]")
-  .description("新しいSwallowKitプロジェクトを初期化")
-  .option("--template <template>", "テンプレート", "default")
+  .description("Initialize a new SwallowKit project")
+  .option("--template <template>", "Template to use", "default")
+  .option("--next-version <version>", "Next.js version to install (e.g., 16.0.7, latest)", "latest")
   .action((projectName, options) => {
     initCommand({
       name: projectName || "swallowkit-app",
       template: options.template,
+      nextVersion: options.nextVersion,
     });
   });
 
 program.addCommand(devCommand);
 
 program
+  .command("scaffold <model>")
+  .description("Generate CRUD code for Azure Functions and Next.js BFF from Zod models")
+  .option("--functions-dir <dir>", "Azure Functions directory", "functions")
+  .option("--api-dir <dir>", "Next.js API routes directory", "app/api")
+  .option("--api-only", "Generate API only, skip UI components", false)
+  .action((model, options) => {
+    scaffoldCommand({
+      model,
+      functionsDir: options.functionsDir,
+      apiDir: options.apiDir,
+      apiOnly: options.apiOnly,
+    });
+  });
+
+program
   .command("build")
-  .description("プロダクション用にビルド")
-  .option("--output <dir>", "出力ディレクトリ", "dist")
+  .description("Build for production")
+  .option("--output <dir>", "Output directory", "dist")
   .action(buildCommand);
 
 program.addCommand(deployCommand);

@@ -5,37 +5,41 @@ import { spawn } from "child_process";
 interface InitOptions {
   name: string;
   template: string;
+  nextVersion?: string;
 }
 
 export async function initCommand(options: InitOptions) {
-  console.log(`噫 Initializing SwallowKit project: ${options.name}`);
-  console.log(`逃 Template: ${options.template}`);
+  console.log(`🚀 Initializing SwallowKit project: ${options.name}`);
+  console.log(`📋 Template: ${options.template}`);
 
   const projectDir = path.join(process.cwd(), options.name);
 
   try {
     // Check if directory already exists
     if (fs.existsSync(projectDir)) {
-      console.error(`笶・Directory "${options.name}" already exists.`);
+      console.error(`❌ Directory "${options.name}" already exists.`);
       process.exit(1);
     }
 
     // Create Next.js project with create-next-app
     await createNextJsProject(options.name);
 
+    // Upgrade Next.js to specified version (or latest) to avoid cached old versions
+    await upgradeNextJs(projectDir, options.nextVersion || 'latest');
+
     // Add SwallowKit specific files
     await addSwallowKitFiles(projectDir, options);
 
-    console.log(`\n笨・Project "${options.name}" created successfully!`);
-    console.log("\n統 Next steps:");
+    console.log(`\n✅ Project "${options.name}" created successfully!`);
+    console.log("\n📝 Next steps:");
     console.log(`  cd ${options.name}`);
     console.log("  npm install");
     console.log("  npx swallowkit dev  # Cosmos DB + Next.js");
-    console.log("\n庁 Build and deploy to Azure:");
+    console.log("\n☁️ Build and deploy to Azure:");
     console.log("  npx swallowkit build");
     console.log("  npx swallowkit deploy --swa-name <name> --resource-group <group>");
   } catch (error) {
-    console.error("笶・Project creation failed:", error);
+    console.error("❌ Project creation failed:", error);
     // Clean up on failure
     if (fs.existsSync(projectDir)) {
       fs.rmSync(projectDir, { recursive: true, force: true });
@@ -46,7 +50,7 @@ export async function initCommand(options: InitOptions) {
 
 async function createNextJsProject(projectName: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    console.log('\n逃 Creating Next.js project with create-next-app...\n');
+    console.log('\n📦 Creating Next.js project with create-next-app...\n');
     
     // Run create-next-app with recommended options for Azure
     const createNextApp = spawn(
@@ -69,32 +73,66 @@ async function createNextJsProject(projectName: string): Promise<void> {
       }
     );
 
-    createNextApp.on('close', (code) => {
+    createNextApp.on('close', (code: number | null) => {
       if (code !== 0) {
         reject(new Error(`create-next-app exited with code ${code}`));
       } else {
-        console.log('\n笨・Next.js project created\n');
+        console.log('\n✅ Next.js project created\n');
         resolve();
       }
     });
 
-    createNextApp.on('error', (error) => {
+    createNextApp.on('error', (error: Error) => {
+      reject(error);
+    });
+  });
+}
+
+async function upgradeNextJs(projectDir: string, version: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    console.log(`\n📦 Installing Next.js ${version} (to ensure latest security patches)...\n`);
+    
+    const npmInstall = spawn(
+      'npm',
+      [
+        'install',
+        `next@${version}`,
+        `react@latest`,
+        `react-dom@latest`,
+        '--save-exact'
+      ],
+      {
+        cwd: projectDir,
+        stdio: 'inherit',
+        shell: true,
+      }
+    );
+
+    npmInstall.on('close', (code: number | null) => {
+      if (code !== 0) {
+        reject(new Error(`npm install next@${version} exited with code ${code}`));
+      } else {
+        console.log(`\n✅ Next.js ${version} installed\n`);
+        resolve();
+      }
+    });
+
+    npmInstall.on('error', (error: Error) => {
       reject(error);
     });
   });
 }
 
 async function addSwallowKitFiles(projectDir: string, options: InitOptions) {
-  console.log('逃 Adding SwallowKit files...\n');
+  console.log('📦 Adding SwallowKit files...\n');
 
   // 1. Update package.json to add swallowkit and @azure/cosmos dependencies
   const packageJsonPath = path.join(projectDir, 'package.json');
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
   
-  // Fix Next.js version to 16.0.5 (current latest)
+  // Add SwallowKit dependencies (Next.js version already upgraded by upgradeNextJs)
   packageJson.dependencies = {
     ...packageJson.dependencies,
-    'next': '16.0.5',
     'swallowkit': 'latest',
     '@azure/cosmos': '^4.0.0',
     'zod': '^3.25.0',
@@ -220,11 +258,8 @@ FUNCTIONS_BASE_URL=http://localhost:7071
   // 15. Create BFF API route to call Azure Functions
   await createBffApiRoute(projectDir);
 
-  // 16. Create GreetingDemo component
-  await createGreetingDemo(projectDir);
-
-  // 17. Update app/page.tsx to include demos
-  await updateHomePage(projectDir);
+  // 16. Create home page
+  await createHomePage(projectDir);
 
   console.log('✅ Project structure created\n');
 }
@@ -248,12 +283,12 @@ async function createAzureFunctionsProject(projectDir: string) {
     },
     dependencies: {
       '@azure/functions': '^4.0.0',
+      '@azure/cosmos': '^4.0.0',
       'zod': '^3.25.0'
     },
     devDependencies: {
       '@types/node': '^20.0.0',
-      'typescript': '^5.0.0',
-      'azure-functions-core-tools': '^4.0.0'
+      'typescript': '^5.0.0'
     }
   };
   fs.writeFileSync(
@@ -317,12 +352,17 @@ tsconfig.json
   fs.writeFileSync(path.join(functionsDir, '.funcignore'), funcignore);
 
   // Create local.settings.json
+  const projectName = path.basename(projectDir);
+  const databaseName = `${projectName.charAt(0).toUpperCase() + projectName.slice(1)}Database`;
   const localSettings = {
     IsEncrypted: false,
     Values: {
       AzureWebJobsStorage: '',
       FUNCTIONS_WORKER_RUNTIME: 'node',
-      AzureWebJobsFeatureFlags: 'EnableWorkerIndexing'
+      AzureWebJobsFeatureFlags: 'EnableWorkerIndexing',
+      CosmosDBConnection: 'AccountEndpoint=http://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==',
+      COSMOS_DB_DATABASE_NAME: databaseName,
+      NODE_TLS_REJECT_UNAUTHORIZED: '0'
     }
   };
   fs.writeFileSync(
@@ -525,123 +565,57 @@ export async function POST(request: NextRequest) {
   console.log('✅ BFF API route created\n');
 }
 
-async function createGreetingDemo(projectDir: string) {
-  console.log('📦 Creating GreetingDemo component...\n');
+async function createHomePage(projectDir: string) {
+  console.log('📦 Creating home page...\n');
   
-  const componentsDir = path.join(projectDir, 'components');
-  
-  const greetingDemoContent = `'use client'
-
-import { useState } from 'react';
-
-export function GreetingDemo() {
-  const [name, setName] = useState('');
-  const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-    setMessage('');
-
-    try {
-      // Call BFF API route (which calls Azure Functions)
-      const response = await fetch(\`/api/greet?name=\${encodeURIComponent(name || 'World')}\`);
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch greeting');
-      }
-
-      const data = await response.json();
-      setMessage(data.message);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-8">
-      <h2 className="text-2xl font-bold mb-4 text-gray-800 dark:text-gray-200">
-        BFF → Azure Functions Demo
-      </h2>
-      <p className="text-gray-600 dark:text-gray-400 mb-4">
-        This demo shows the BFF (Backend For Frontend) pattern: Next.js API Route → Azure Functions
-      </p>
-      
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Enter your name"
-            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
-            disabled={loading}
-          />
-        </div>
-        
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {loading ? 'Loading...' : 'Call Azure Function'}
-        </button>
-      </form>
-
-      {message && (
-        <div className="mt-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-          <p className="text-green-800 dark:text-green-200">{message}</p>
-        </div>
-      )}
-
-      {error && (
-        <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-          <p className="text-red-800 dark:text-red-200">Error: {error}</p>
-        </div>
-      )}
-    </div>
-  );
-}
-`;
-  fs.writeFileSync(path.join(componentsDir, 'GreetingDemo.tsx'), greetingDemoContent);
-
-  console.log('✅ GreetingDemo component created\n');
-}
-
-async function updateHomePage(projectDir: string) {
-  console.log('📦 Updating app/page.tsx...\n');
-  
-  const pageContent = `import { GreetingDemo } from '@/components/GreetingDemo';
+  const pageContent = `import scaffoldConfig from '@/.swallowkit/scaffold.json';
 
 export default function Home() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-gray-900 dark:to-gray-800">
-      <div className="container mx-auto px-4 py-12 max-w-4xl">
-        <header className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-800 dark:text-white mb-4">
-            SwallowKit Demo
+      <div className="container mx-auto px-4 py-12">
+        <header className="text-center mb-16">
+          <h1 className="text-5xl font-bold text-gray-800 dark:text-white mb-4">
+            Welcome to SwallowKit
           </h1>
-          <p className="text-gray-600 dark:text-gray-400">
-            Full-stack TypeScript with Next.js (BFF) + Azure Functions + Zod
+          <p className="text-xl text-gray-600 dark:text-gray-400">
+            Full-stack TypeScript with Next.js + Azure Functions + Zod
           </p>
         </header>
 
-        {/* BFF → Azure Functions Demo */}
-        <section>
-          <GreetingDemo />
-        </section>
+        {/* Scaffolded Models Menu */}
+        {scaffoldConfig.models.length > 0 ? (
+          <section className="max-w-6xl mx-auto">
+            <h2 className="text-3xl font-bold mb-8 text-gray-900 dark:text-gray-100">Your Models</h2>
+            <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+              {scaffoldConfig.models.map((model) => (
+                <a
+                  key={model.name}
+                  href={model.path}
+                  className="block p-8 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-lg hover:border-blue-400 dark:hover:border-blue-600 transition-all"
+                >
+                  <h3 className="text-2xl font-semibold mb-2 text-gray-900 dark:text-gray-100">{model.label}</h3>
+                  <p className="text-gray-600 dark:text-gray-400">Manage {model.label.toLowerCase()}</p>
+                </a>
+              ))}
+            </div>
+          </section>
+        ) : (
+          <section className="max-w-2xl mx-auto text-center">
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-12 border border-gray-200 dark:border-gray-700">
+              <h2 className="text-2xl font-semibold mb-4 text-gray-900 dark:text-gray-100">Get Started</h2>
+              <p className="text-gray-600 dark:text-gray-400 mb-6">
+                Create your first model with Zod and generate CRUD operations automatically.
+              </p>
+              <code className="block bg-gray-100 dark:bg-gray-900 p-4 rounded text-left text-sm">
+                npx swallowkit scaffold lib/models/your-model.ts
+              </code>
+            </div>
+          </section>
+        )}
 
-        <footer className="mt-12 text-center text-gray-600 dark:text-gray-400 text-sm">
-          <p>Built with SwallowKit - Next.js BFF + Azure Functions</p>
-          <p className="mt-2 text-xs">
-            Frontend → BFF (Next.js API Routes) → Azure Functions → Response
-          </p>
+        <footer className="mt-16 text-center text-gray-600 dark:text-gray-400 text-sm">
+          <p>Built with SwallowKit</p>
         </footer>
       </div>
     </div>
@@ -651,5 +625,5 @@ export default function Home() {
   
   fs.writeFileSync(path.join(projectDir, 'app', 'page.tsx'), pageContent);
 
-  console.log('✅ app/page.tsx updated\n');
+  console.log('✅ Home page created\n');
 }
