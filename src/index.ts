@@ -17,5 +17,4 @@ export { loadConfig, generateConfig, getFullConfig, validateConfig } from "./cor
 // Database - Zod-based schema sharing between frontend, backend, and Cosmos DB
 export { DatabaseClient, getDatabaseClient } from "./database/client";
 export { SchemaRepository, createRepository, TodoSchema, TodoRepository } from "./database/repository";
-export { BaseModel } from "./database/base-model";
 export type { Todo } from "./database/repository";

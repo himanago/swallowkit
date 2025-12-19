@@ -1,8 +1,8 @@
 # Zod Schema Sharing Guide
 
-SwallowKit's core feature is **Zod Schema Sharing**, which enables type-safe, validated data flow across your entire stack—from frontend forms to backend APIs to database storage.
+SwallowKit's core feature is **Zod Schema Sharing**, which enables type-safe, validated data flow across your entire stack—from frontend to BFF layer to Azure Functions to database storage.
 
-> **Note**: This guide explains the concepts and benefits of Zod schema sharing. For practical implementation with SwallowKit's code generation, see the **[Scaffold Guide](./scaffold-guide.md)**.
+> **Note**: This guide explains the concepts and benefits of Zod schema sharing. For practical CRUD code generation, see the **[Scaffold Guide](./scaffold-guide.md)**.
 
 ## Why Zod Schema Sharing?
 
@@ -23,135 +23,94 @@ This leads to:
 
 ### The SwallowKit Solution
 
-Define your schema **once** with Zod, and use it everywhere:
+Define your schema **once** with Zod and use it everywhere:
 
 ```typescript
-// lib/schemas/user.ts - Single Source of Truth
+// lib/models/user.ts - Single Source of Truth
 import { z } from 'zod';
 
-export const UserSchema = z.object({
+export const userSchema = z.object({
   id: z.string(),
   name: z.string().min(1, 'Name is required'),
   email: z.string().email('Invalid email'),
   age: z.number().min(18, 'Must be 18 or older'),
+  createdAt: z.string().default(() => new Date().toISOString()),
 });
 
-export type User = z.infer<typeof UserSchema>;
+export type UserType = z.infer<typeof userSchema>;
 ```
 
 This single schema provides:
-- ✅ TypeScript types (`User`)
+- ✅ TypeScript types (`UserType`)
 - ✅ Runtime validation
+- ✅ Database integration (via scaffold)
 - ✅ Error messages
-- ✅ Transform functions
 - ✅ Default values
 
-💡 **Ready to use this in practice?** See how SwallowKit automatically generates CRUD operations from Zod schemas in the **[Scaffold Guide](./scaffold-guide.md)**.
+💡 **Practical usage**: For information on how SwallowKit automatically generates CRUD operations from Zod schemas, please see the **[Scaffold Guide](./scaffold-guide.md)**.
 
 ## Usage Across Layers
 
-### Layer 1: Client-Side Validation
+### Layer 1: Frontend with SwallowKit API Client
 
-Use the same schema in your React components for immediate user feedback:
+SwallowKit provides a simple HTTP client for calling backend APIs:
 
 ```typescript
-// components/UserForm.tsx
+// app/users/page.tsx
 'use client'
 
-import { UserSchema } from '@/lib/schemas/user';
-import { createUserAction } from '@/app/actions';
-import { useState } from 'react';
+import { api } from '@/lib/api/backend';
+import type { UserType } from '@/lib/models/user';
+import { useState, useEffect } from 'react';
 
-export function UserForm() {
-  const [errors, setErrors] = useState<Record<string, string>>({});
+export default function UsersPage() {
+  const [users, setUsers] = useState<UserType[]>([]);
+  const [error, setError] = useState('');
   
-  const handleSubmit = async (formData: FormData) => {
-    // Client-side validation
-    const result = UserSchema.safeParse({
-      id: crypto.randomUUID(),
-      name: formData.get('name'),
-      email: formData.get('email'),
-      age: Number(formData.get('age')),
-    });
-    
-    if (!result.success) {
-      // Display Zod errors to user
-      const fieldErrors: Record<string, string> = {};
-      result.error.errors.forEach((err) => {
-        if (err.path[0]) {
-          fieldErrors[err.path[0] as string] = err.message;
-        }
+  useEffect(() => {
+    // Fetch from BFF endpoint
+    api.get<UserType[]>('/api/users')
+      .then(setUsers)
+      .catch(err => setError(err.message));
+  }, []);
+  
+  const handleCreate = async (formData: FormData) => {
+    try {
+      // Validated by backend
+      const newUser = await api.post<UserType>('/api/users', {
+        id: crypto.randomUUID(),
+        name: formData.get('name') as string,
+        email: formData.get('email') as string,
+        age: Number(formData.get('age')),
       });
-      setErrors(fieldErrors);
-      return;
+      setUsers([...users, newUser]);
+    } catch (err: any) {
+      setError(err.message); // Backend validation error
     }
-    
-    setErrors({});
-    await createUserAction(formData);
   };
   
   return (
-    <form action={handleSubmit}>
-      <input name="name" />
-      {errors.name && <span>{errors.name}</span>}
-      
-      <input name="email" type="email" />
-      {errors.email && <span>{errors.email}</span>}
-      
-      <input name="age" type="number" />
-      {errors.age && <span>{errors.age}</span>}
-      
-      <button>Create User</button>
-    </form>
+    <div>
+      {error && <div className="error">{error}</div>}
+      {users.map(user => (
+        <div key={user.id}>{user.name} - {user.email}</div>
+      ))}
+    </div>
   );
 }
 ```
 
-### Layer 2: Next.js Server Actions
+💡 **Code generation**: The `scaffold` command can automatically generate complete UI components with form validation. Please see the **[Scaffold Guide](./scaffold-guide.md#generated-files)** for details.
 
-Validate server-side requests before processing:
+### Layer 2: Next.js BFF API Routes (Auto-Generated)
 
-```typescript
-// app/actions.ts
-'use server'
-
-import { UserSchema } from '@/lib/schemas/user';
-import { createUser } from '@/lib/server/users';
-import { revalidatePath } from 'next/cache';
-
-export async function createUserAction(formData: FormData) {
-  // Server-side validation (prevents malicious requests)
-  const result = UserSchema.safeParse({
-    id: crypto.randomUUID(),
-    name: formData.get('name'),
-    email: formData.get('email'),
-    age: Number(formData.get('age')),
-  });
-  
-  if (!result.success) {
-    return { 
-      error: true, 
-      message: result.error.errors[0].message 
-    };
-  }
-  
-  // Data is validated, create user
-  await createUser(result.data);
-  revalidatePath('/users');
-  
-  return { success: true };
-}
-```
-
-### Layer 3: SwallowKit Generated CRUD Operations
-
-SwallowKit's `scaffold` command automatically generates type-safe CRUD operations that validate against your Zod schemas:
+SwallowKit's `scaffold` command generates BFF API routes that validate requests:
 
 ```typescript
-// Generated by: npx swallowkit scaffold lib/models/user.ts
+// Generated by: npx swallowkit scaffold user
 // app/api/user/route.ts (Next.js BFF API)
 import { NextRequest, NextResponse } from 'next/server';
-import { UserSchema } from '@/lib/models/user';
+import { userSchema } from '@/lib/models/user';
 
 const FUNCTIONS_BASE_URL = process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
 
@@ -159,7 +118,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   
   // Validate with Zod schema before forwarding to Azure Functions
-  const result = UserSchema.safeParse(body);
+  const result = userSchema.safeParse(body);
   
   if (!result.success) {
     return NextResponse.json(
@@ -180,9 +139,7 @@ export async function POST(request: NextRequest) {
 }
 ```
 
-📚 **Learn more**: See the **[Scaffold Guide](./scaffold-guide.md)** for complete examples of generated CRUD code, including Azure Functions, API routes, and UI components.
-
-### Layer 4: Azure Functions with Cosmos DB
+📚 **Reference**: For complete examples of generated API routes, please see the **[Scaffold Guide](./scaffold-guide.md)**.
 
 Share the same schema in your independent backend:
 
@@ -226,7 +183,7 @@ app.http('createUser', {
 });
 ```
 
-📚 **See it in action**: The **[Scaffold Guide](./scaffold-guide.md)** shows complete examples of generated Azure Functions with Cosmos DB integration.
+📚 **Reference**: For examples of generated Azure Functions with full CRUD operations, please see the **[Scaffold Guide](./scaffold-guide.md)**.
 
 ## Advanced Patterns
 
@@ -236,41 +193,26 @@ Validate only specific fields for updates:
 
 ```typescript
 // Only validate name and email for profile updates
-const UpdateProfileSchema = UserSchema.pick({ 
+const updateProfileSchema = userSchema.pick({ 
   name: true, 
   email: true 
 });
-
-export async function updateProfile(userId: string, data: FormData) {
-  const result = UpdateProfileSchema.safeParse({
-    name: data.get('name'),
-    email: data.get('email'),
-  });
-  
-  if (!result.success) {
-    return { error: result.error.errors[0].message };
-  }
-  
-  await userRepo.update({ id: userId, ...result.data });
-}
-```
-
 ### Nested Schemas
 
 Compose complex data structures:
 
 ```typescript
-const AddressSchema = z.object({
+const addressSchema = z.object({
   street: z.string(),
   city: z.string(),
   postalCode: z.string(),
 });
 
-const UserWithAddressSchema = UserSchema.extend({
-  address: AddressSchema,
+const userWithAddressSchema = userSchema.extend({
+  address: addressSchema,
 });
 
-export type UserWithAddress = z.infer<typeof UserWithAddressSchema>;
+export type UserWithAddressType = z.infer<typeof userWithAddressSchema>;
 ```
 
 ### Custom Validation
@@ -278,7 +220,7 @@ export type UserWithAddress = z.infer<typeof UserWithAddressSchema>;
 Add business logic validation:
 
 ```typescript
-const ProductSchema = z.object({
+const productSchema = z.object({
   id: z.string(),
   name: z.string(),
   price: z.number().positive(),
@@ -298,7 +240,7 @@ const ProductSchema = z.object({
 Transform data during validation:
 
 ```typescript
-const UserInputSchema = z.object({
+const userInputSchema = z.object({
   name: z.string().trim().toLowerCase(), // Normalize name
   email: z.string().email().toLowerCase(), // Normalize email
   age: z.string().transform(Number), // Convert string to number
@@ -315,33 +257,35 @@ Follow SwallowKit's recommended structure for model files:
 // lib/models/user.ts
 import { z } from 'zod';
 
-// 1. Define the Zod schema
-export const UserSchema = z.object({
+// 1. Define the Zod schema (use camelCase with 'schema' suffix)
+export const userSchema = z.object({
   id: z.string(),
   name: z.string().min(1, 'Name is required'),
   email: z.string().email('Invalid email'),
   age: z.number().min(18, 'Must be 18 or older'),
-  createdAt: z.date().default(() => new Date()),
+  createdAt: z.string().default(() => new Date().toISOString()),
 });
 
-// 2. Export the TypeScript type
-export type User = z.infer<typeof UserSchema>;
+// 2. Export the TypeScript type (use PascalCase with 'Type' suffix)
+export type UserType = z.infer<typeof userSchema>;
 ```
 
-💡 **SwallowKit Convention**: Name your schema with `Schema` suffix (e.g., `UserSchema`, `ProductSchema`) for automatic detection by the `scaffold` command.
+💡 **SwallowKit Convention**: 
+- Schema name: `camelCase` + `schema` suffix (e.g., `userSchema`, `productSchema`)
+- Type name: `PascalCase` + `Type` suffix (e.g., `UserType`, `ProductType`)
 
 ### 2. Use safeParse() for Error Handling
 
 ```typescript
 // ✅ Good: Handle errors gracefully
-const result = UserSchema.safeParse(data);
+const result = userSchema.safeParse(data);
 if (!result.success) {
   console.error(result.error.errors);
   return { error: 'Validation failed' };
 }
 
 // ❌ Bad: Throws exception
-const user = UserSchema.parse(data); // Can throw!
+const user = userSchema.parse(data); // Can throw!
 ```
 
 ### 3. Validation Messages for Better UX
@@ -349,7 +293,7 @@ const user = UserSchema.parse(data); // Can throw!
 Provide clear, user-friendly error messages:
 
 ```typescript
-const ProductSchema = z.object({
+const productSchema = z.object({
   name: z.string().min(1, 'Product name is required'),
   price: z.number().positive('Price must be greater than 0'),
   category: z.enum(['electronics', 'clothing', 'books'], {
@@ -361,28 +305,27 @@ const ProductSchema = z.object({
 ### 4. Default Values and Optional Fields
 
 ```typescript
-const TodoSchema = z.object({
+const todoSchema = z.object({
   id: z.string(),
   title: z.string().min(1, 'Title is required'),
   completed: z.boolean().default(false), // Default value
   description: z.string().optional(), // Optional field
-  createdAt: z.date().default(() => new Date()),
+  createdAt: z.string().default(() => new Date().toISOString()),
 });
 ```
 
 SwallowKit's scaffold command automatically generates appropriate UI:
 - Optional fields are not marked as required in forms
 - Default values are pre-populated
-- Date fields get date pickers
 
-📚 **Learn more**: See **[Type-Appropriate UI Generation](./scaffold-guide.md#type-appropriate-ui-generation)** in the Scaffold Guide.
+📚 **Reference**: For more details on type-appropriate UI generation, please see the **[Scaffold Guide](./scaffold-guide.md#type-appropriate-ui-generation)**.
 
 ### 5. Foreign Key Naming Convention
 
 For automatic foreign key detection in SwallowKit:
 
 ```typescript
-const TodoSchema = z.object({
+const todoSchema = z.object({
   id: z.string(),
   categoryId: z.string().min(1, 'Category is required'), // Detected as FK to Category
   userId: z.string().min(1, 'User is required'), // Detected as FK to User
@@ -391,84 +334,7 @@ const TodoSchema = z.object({
 
 **Pattern**: `<ModelName>Id` → References `<ModelName>` model
 
-📚 **Learn more**: See **[Foreign Key Relationships](./scaffold-guide.md#foreign-key-relationships)** in the Scaffold Guide.
-
-## Comparison with Other Approaches
-
-### vs. Manual Type Definitions
-
-```typescript
-// ❌ Manual approach (error-prone)
-interface User {
-  id: string;
-  name: string;
-  email: string;
-}
-
-function validateUser(data: any): User {
-  if (!data.id || !data.name || !data.email) {
-    throw new Error('Invalid user');
-  }
-  if (!/\S+@\S+\.\S+/.test(data.email)) {
-    throw new Error('Invalid email');
-  }
-  return data;
-}
-
-// ✅ Zod approach (type-safe, declarative)
-const UserSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  email: z.string().email(),
-});
-
-type User = z.infer<typeof UserSchema>;
-```
-
-### vs. ORM Schemas
-
-```typescript
-// ❌ ORM-specific (locked to one library)
-// Prisma example
-model User {
-  id    String @id
-  name  String
-  email String @unique
-}
-
-// ✅ Zod (library-agnostic, portable)
-const UserSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  email: z.string().email(),
-});
-
-// Can be used with any database/ORM
-```
-
-## Migration Guide
-
-### From Existing TypeScript Types
-
-```typescript
-// Before
-interface User {
-  id: string;
-  name: string;
-  email: string;
-}
-
-// After
-const UserSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  email: z.string().email(),
-});
-
-type User = z.infer<typeof UserSchema>;
-```
-
-💡 **Next Step**: Once you've migrated to Zod, use SwallowKit's `scaffold` command to automatically generate CRUD operations. See the **[Scaffold Guide](./scaffold-guide.md)**.
+📚 **Reference**: For more details on foreign key relationships, please see the **[Scaffold Guide](./scaffold-guide.md#foreign-key-relationships)**.
 
 ## Summary
 

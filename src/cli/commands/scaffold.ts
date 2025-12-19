@@ -345,7 +345,7 @@ async function updateNavigationMenu(modelInfo: any): Promise<void> {
     // Check if menu component is already added
     if (!homePageContent.includes('scaffoldedModels')) {
       // Add import and menu section
-      const menuImport = `import scaffoldConfig from '@/.swallowkit/scaffold.json';\n`;
+      const menuImport = `import { scaffoldConfig } from '@/lib/scaffold-config';\n`;
       const menuSection = `
       {/* Scaffolded Models Menu */}
       {scaffoldConfig.models.length > 0 && (

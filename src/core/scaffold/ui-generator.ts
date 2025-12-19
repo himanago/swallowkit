@@ -334,7 +334,7 @@ ${model.fields.map(f => {
             href="/${modelKebab}"
             className="text-blue-600 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300"
           >
-            ↁEBack to list
+            &larr; Back to list
           </Link>
         </div>
       </div>
@@ -390,7 +390,8 @@ ${formFields.map(f => {
     // Array の場合は空文字列（カンマ区切りで入力するため）
     defaultValue = "''";
   } else if (f.type === 'number') {
-    defaultValue = '0';
+    // Number の場合も空文字列を許容（オプショナル対応）
+    defaultValue = "''";
   } else if (f.type === 'boolean') {
     defaultValue = 'false';
   } else {
@@ -400,6 +401,8 @@ ${formFields.map(f => {
   // initialData からの取得も型に応じて変換
   if (f.isArray) {
     return `    ${f.name}: initialData?.${f.name} ? (Array.isArray(initialData.${f.name}) ? initialData.${f.name}.join(', ') : '') : ${defaultValue},`;
+  } else if (f.type === 'number') {
+    return `    ${f.name}: initialData?.${f.name} !== undefined ? String(initialData.${f.name}) : ${defaultValue},`;
   }
   return `    ${f.name}: initialData?.${f.name} ?? ${defaultValue},`;
 }).join('\n')}
@@ -425,6 +428,13 @@ ${foreignKeyFields.map(f => `    // ${f.referencedModel} の一覧を取得
 ${formFields.filter(f => f.isArray).map(f => `      if (typeof submitData.${f.name} === 'string') {
         submitData.${f.name} = submitData.${f.name}.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
       }`).join('\n')}
+${formFields.filter(f => f.type === 'number').length > 0 ? `
+      // Number フィールドを変換（空文字列 → undefined、文字列 → 数値）
+${formFields.filter(f => f.type === 'number').map(f => `      if (submitData.${f.name} === '' || submitData.${f.name} === null) {
+        submitData.${f.name} = undefined;
+      } else if (typeof submitData.${f.name} === 'string') {
+        submitData.${f.name} = Number(submitData.${f.name});
+      }`).join('\n')}` : ''}
       
       // Validate input (excluding SwallowKit-managed fields)
       ${modelName}InputSchema.parse(submitData);
@@ -565,7 +575,7 @@ ${f.enumValues.map(v => `          <option value="${v}">${v}</option>`).join('\n
           id="${f.name}"
           name="${f.name}"
           value={formData.${f.name}}
-          onChange={(e) => setFormData({ ...formData, ${f.name}: Number(e.target.value) })}
+          onChange={(e) => setFormData({ ...formData, ${f.name}: e.target.value })}
           className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:focus:border-blue-400 dark:focus:ring-blue-400"
           ${!f.isOptional ? 'required' : ''}
         />

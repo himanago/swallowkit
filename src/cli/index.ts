@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { initCommand, devCommand, buildCommand, setupCommand, deployCommand, scaffoldCommand } from "./commands";
+import { initCommand, devCommand, buildCommand, deployCommand, scaffoldCommand, createModelCommand } from "./commands";
+import { provisionCommand } from "./commands/provision";
 
 const program = new Command();
 
@@ -11,12 +12,6 @@ program
   .version("0.2.0");
 
 // Register commands
-program
-  .command("setup")
-  .description("Install required tools (Azure CLI, SWA CLI, Cosmos DB Emulator)")
-  .option("-y, --yes", "Auto-install without confirmation", false)
-  .action(setupCommand);
-
 program
   .command("init [project-name]")
   .description("Initialize a new SwallowKit project")
@@ -31,6 +26,19 @@ program
   });
 
 program.addCommand(devCommand);
+
+program.addCommand(provisionCommand);
+
+program
+  .command("create-model <names...>")
+  .description("Create model template files with id, createdAt, and updatedAt fields")
+  .option("--models-dir <dir>", "Models directory", "lib/models")
+  .action((names, options) => {
+    createModelCommand({
+      names,
+      modelsDir: options.modelsDir,
+    });
+  });
 
 program
   .command("scaffold <model>")

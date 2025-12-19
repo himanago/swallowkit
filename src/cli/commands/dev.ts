@@ -13,6 +13,54 @@ interface DevOptions {
   noFunctions?: boolean;
 }
 
+/**
+ * Check if Azure Functions Core Tools is installed
+ */
+async function checkCoreTools(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const checkProcess = spawn('func', ['--version'], {
+      shell: true,
+      stdio: 'pipe',
+    });
+    
+    checkProcess.on('close', (code) => {
+      resolve(code === 0);
+    });
+    
+    checkProcess.on('error', () => {
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * Check if Cosmos DB Emulator is running by checking if port 8081 is open
+ */
+async function checkCosmosDBEmulator(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const net = require('net');
+    const socket = new net.Socket();
+    
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, 2000);
+    
+    socket.on('connect', () => {
+      clearTimeout(timeout);
+      socket.destroy();
+      resolve(true);
+    });
+    
+    socket.on('error', () => {
+      clearTimeout(timeout);
+      resolve(false);
+    });
+    
+    socket.connect(8081, 'localhost');
+  });
+}
+
 export const devCommand = new Command()
   .name('dev')
   .description('Start SwallowKit development server (Cosmos DB + Next.js + Azure Functions)')
@@ -175,37 +223,111 @@ async function startDevEnvironment(options: DevOptions) {
                         fs.existsSync(path.join(functionsDir, 'package.json'));
 
     if (hasFunctions && !options.noFunctions) {
-      // Initialize Cosmos DB before starting Functions
-      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-      const appName = packageJson.name || 'App';
-      const databaseName = `${appName.charAt(0).toUpperCase() + appName.slice(1)}Database`;
+      // Check if Azure Functions Core Tools is installed
+      const coreToolsInstalled = await checkCoreTools();
       
-      await initializeCosmosDB(databaseName);
-
-      console.log('');
-      console.log('🚀 Starting Azure Functions...');
-      
-      // Check if npm install has been run in functions directory
-      const functionsNodeModules = path.join(functionsDir, 'node_modules');
-      if (!fs.existsSync(functionsNodeModules)) {
-        console.log('📦 Installing Azure Functions dependencies...');
-        const npmInstall = spawn('npm', ['install'], {
-          cwd: functionsDir,
-          shell: true,
-          stdio: 'inherit',
+      if (!coreToolsInstalled) {
+        console.log('');
+        console.log('⚠️  Azure Functions Core Tools not found.');
+        console.log('');
+        
+        // Prompt user for installation
+        const readline = await import('readline');
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
         });
         
-        await new Promise<void>((resolve, reject) => {
-          npmInstall.on('close', (code) => {
-            if (code === 0) {
-              resolve();
-            } else {
-              reject(new Error(`npm install failed with code ${code}`));
-            }
-          });
-          npmInstall.on('error', reject);
+        const answer = await new Promise<string>((resolve) => {
+          rl.question('Would you like to install Azure Functions Core Tools? (y/n): ', resolve);
         });
+        rl.close();
+        
+        if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
+          console.log('📦 Installing Azure Functions Core Tools...');
+          console.log('   This may take a few minutes.');
+          
+          const installProcess = spawn('npm', ['install', '-g', 'azure-functions-core-tools@4'], {
+            shell: true,
+            stdio: 'inherit',
+          });
+          
+          await new Promise<void>((resolve, reject) => {
+            installProcess.on('close', (code) => {
+              if (code === 0) {
+                console.log('✅ Azure Functions Core Tools installed successfully.');
+                resolve();
+              } else {
+                console.error('❌ Installation failed.');
+                console.log('💡 Please install manually:');
+                console.log('   npm install -g azure-functions-core-tools@4');
+                reject(new Error(`Installation failed with code ${code}`));
+              }
+            });
+            installProcess.on('error', reject);
+          });
+        } else {
+          console.log('');
+          console.log('ℹ️  Skipping Azure Functions startup.');
+          console.log('💡 To install later:');
+          console.log('   npm install -g azure-functions-core-tools@4');
+          console.log('');
+          // Skip Azure Functions startup
+          options.noFunctions = true;
+        }
       }
+      
+      if (!options.noFunctions) {
+        // Check if Cosmos DB Emulator is running
+        const cosmosRunning = await checkCosmosDBEmulator();
+        
+        if (!cosmosRunning) {
+          console.log('');
+          console.log('❌ Cosmos DB Emulator is not running.');
+          console.log('');
+          console.log('💡 Please start Cosmos DB Emulator manually:');
+          console.log('   C:\\Program Files\\Azure Cosmos DB Emulator\\CosmosDB.Emulator.exe');
+          console.log('');
+          console.log('   Or search for "Azure Cosmos DB Emulator" in the Start menu.');
+          console.log('');
+          process.exit(1);
+        }
+        
+        // Initialize Cosmos DB before starting Functions
+        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+        const appName = packageJson.name || 'App';
+        const databaseName = `${appName.charAt(0).toUpperCase() + appName.slice(1)}Database`;
+        
+        await initializeCosmosDB(databaseName);
+
+        console.log('');
+        console.log('🚀 Starting Azure Functions...');
+        
+        // Check if npm install has been run in functions directory
+        const functionsNodeModules = path.join(functionsDir, 'node_modules');
+        if (!fs.existsSync(functionsNodeModules)) {
+          console.log('📦 Installing Azure Functions dependencies...');
+          const npmInstall = spawn('npm', ['install'], {
+            cwd: functionsDir,
+            shell: true,
+            stdio: 'inherit',
+          });
+          
+          await new Promise<void>((resolve, reject) => {
+            npmInstall.on('close', (code) => {
+              if (code === 0) {
+                resolve();
+              } else {
+                reject(new Error(`npm install failed with code ${code}`));
+              }
+            });
+            npmInstall.on('error', reject);
+          });
+        }
+      }
+    }
+
+    if (hasFunctions && !options.noFunctions) {
 
       // Azure Functions を起動
       const funcProcess = spawn('npm', ['start'], {

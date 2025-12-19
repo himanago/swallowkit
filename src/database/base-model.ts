@@ -3,26 +3,41 @@ import { getDatabaseClient } from "./client.js";
 import { ensureServerSide } from "./runtime-check.js";
 
 /**
- * BaseModel 抽象クラス
- * Cosmos DB ドキュメントのモデルを定義するための基底クラス
+ * @deprecated BaseModel is deprecated and will be removed in a future version.
+ * 
+ * Instead of using BaseModel, define your models as pure Zod schemas:
  * 
  * @example
  * ```typescript
- * export class User extends BaseModel {
- *   static schema = z.object({
- *     id: z.string(),
- *     email: z.string().email(),
- *     name: z.string(),
- *   });
- *   
- *   static container = "Users";
- *   static partitionKey = "/email";
- *   
- *   static async findByEmail(email: string) {
- *     const users = await this.find('c.email = @email', [email]);
- *     return users[0] || null;
- *   }
- * }
+ * // lib/models/user.ts
+ * import { z } from 'zod';
+ * 
+ * export const userSchema = z.object({
+ *   id: z.string(),
+ *   email: z.string().email(),
+ *   name: z.string(),
+ * });
+ * 
+ * export type UserType = z.infer<typeof userSchema>;
+ * ```
+ * 
+ * Then use the scaffold command to generate CRUD operations:
+ * ```bash
+ * npx swallowkit scaffold lib/models/user.ts
+ * ```
+ * 
+ * This will generate:
+ * - Azure Functions with Cosmos DB bindings
+ * - Next.js BFF API routes
+ * - Type-safe React components
+ * 
+ * Use the generated API from frontend:
+ * ```typescript
+ * import { api } from '@/lib/api/backend';
+ * import type { UserType } from '@/lib/models/user';
+ * 
+ * const users = await api.get<UserType[]>('/api/users');
+ * await api.post<UserType>('/api/users', { email: 'test@example.com', name: 'Test' });
  * ```
  */
 export abstract class BaseModel {
@@ -152,5 +167,18 @@ export abstract class BaseModel {
     
     // 各ドキュメントをZodスキーマでバリデーション
     return results.map((result) => this.schema.parse(result)) as T[];
+  }
+
+  /**
+   * Get the API resource name from container name
+   * Converts container name (e.g., "Todos", "Products") to resource path (e.g., "todos", "products")
+   * @returns Resource name in lowercase plural form
+   */
+  static getResourceName(): string {
+    if (!this.container) {
+      throw new Error(`${this.name} must define a static 'container' property`);
+    }
+    // Convert container name to lowercase (Todos -> todos, Products -> products)
+    return this.container.toLowerCase();
   }
 }

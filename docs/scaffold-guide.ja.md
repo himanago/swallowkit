@@ -1,22 +1,22 @@
-# SwallowKit Scaffold Guide
+# SwallowKit Scaffold ガイド
 
-## Overview
+## 概要
 
-SwallowKit Scaffold is a powerful code generation tool that automatically creates complete CRUD (Create, Read, Update, Delete) operations from your Zod schema definitions. It generates Azure Functions, Next.js API routes, and type-safe UI components with minimal configuration.
+SwallowKit Scaffold は、Zod スキーマ定義から完全な CRUD（Create, Read, Update, Delete）操作を自動生成する強力なコード生成ツールです。Azure Functions、Next.js API ルート、型安全な UI コンポーネントを最小限の設定で生成します。
 
-💡 **Reference**: For more information about schema sharing concepts and benefits, please see the **[Zod Schema Sharing Guide](./zod-schema-sharing-guide.md)**.
+💡 **参考情報**: スキーマ共有の概念やメリットについては、**[Zod スキーマ共有ガイド](./zod-schema-sharing-guide.ja.md)** もご参照ください。
 
-## Quick Start
+## クイックスタート
 
-### 1. Create Model Template
+### 1. モデルの雛形を作成
 
-Use the `create-model` command to generate a model template with `id`, `createdAt`, and `updatedAt` fields:
+`create-model` コマンドで、`id`、`createdAt`、`updatedAt` を含むモデルの雛形を生成します：
 
 ```bash
 npx swallowkit create-model product
 ```
 
-This generates `lib/models/product.ts`:
+これにより `lib/models/product.ts` が生成されます：
 
 ```typescript
 import { z } from 'zod';
@@ -32,15 +32,15 @@ export const productSchema = z.object({
 export type Product = z.infer<typeof productSchema>;
 ```
 
-💡 **Create multiple models at once**:
+💡 **複数のモデルを一度に作成**することもできます：
 
 ```bash
 npx swallowkit create-model user post comment
 ```
 
-### 2. Customize Your Model
+### 2. モデルをカスタマイズ
 
-Edit the generated file to add your required fields:
+生成されたファイルを編集して、必要なフィールドを追加します：
 
 ```typescript
 // lib/models/product.ts
@@ -48,8 +48,8 @@ import { z } from 'zod';
 
 export const productSchema = z.object({
   id: z.string(),
-  name: z.string().min(1, "Product name is required"),
-  price: z.number().min(0, "Price must be positive"),
+  name: z.string().min(1, "商品名は必須です"),
+  price: z.number().min(0, "価格は正の値である必要があります"),
   category: z.enum(["electronics", "clothing", "books", "other"]),
   isActive: z.boolean().default(true),
   description: z.string().optional(),
@@ -61,89 +61,89 @@ export const productSchema = z.object({
 export type Product = z.infer<typeof productSchema>;
 ```
 
-⚠️ **Important**: Always include `id`, `createdAt`, and `updatedAt` fields. These are automatically managed by the backend.
+⚠️ **重要**: `id`、`createdAt`、`updatedAt` フィールドは必ず含めてください。これらはバックエンドで自動管理されます。
 
-#### SwallowKit-Managed Fields Specification
+#### SwallowKit 管理フィールドの仕様
 
-These fields behave as follows:
+これらのフィールドは以下のように動作します：
 
-- **Model Definition**: Defined as `optional()` (not required)
-- **Frontend**: Not submitted from forms; automatically set by the backend
-- **Backend (Create)**:
-  - Values sent from client are ignored
-  - `id`: UUID is auto-generated (or uses client-provided value if sent)
-  - `createdAt`: Set to current timestamp
-  - `updatedAt`: Set to current timestamp
-- **Backend (Update)**:
-  - Values sent from client are ignored
-  - `createdAt`: Existing value is preserved (never changed)
-  - `updatedAt`: Updated to current timestamp
+- **モデル定義**: `optional()` として定義（必須ではない）
+- **フロントエンド**: フォームから送信されず、バックエンドで自動設定される
+- **バックエンド（作成時）**: 
+  - クライアントから送られた値は無視される
+  - `id`: UUID が自動生成される（クライアントから送られた場合はそれを使用）
+  - `createdAt`: 現在時刻が自動設定される
+  - `updatedAt`: 現在時刻が自動設定される
+- **バックエンド（更新時）**:
+  - クライアントから送られた値は無視される
+  - `createdAt`: 既存の値が保持される（変更されない）
+  - `updatedAt`: 現在時刻に更新される
 
-This ensures timestamp consistency and prevents clients from setting incorrect values.
+これにより、タイムスタンプの整合性が保証され、クライアント側で誤った値を設定する心配がありません。
 
-### 3. Run Scaffold Command
+### 3. Scaffold コマンドを実行
 
 ```bash
 npx swallowkit scaffold lib/models/product.ts
 ```
 
-### 4. Generated Files
+### 4. 生成されるファイル
 
-The scaffold command generates the following files:
+scaffold コマンドは以下のファイルを生成します：
 
-**Azure Functions (Backend):**
-- `functions/src/models/product.ts` - Model definition
+**Azure Functions（バックエンド）:**
+- `functions/src/models/product.ts` - モデル定義
 - `functions/src/product.ts` - CRUD Azure Functions
 
 **Next.js BFF API Routes:**
-- `app/api/product/route.ts` - GET (list) and POST (create) endpoints
-- `app/api/product/[id]/route.ts` - GET, PUT, DELETE endpoints for single item
+- `app/api/product/route.ts` - GET（一覧）と POST（作成）エンドポイント
+- `app/api/product/[id]/route.ts` - GET、PUT、DELETE エンドポイント（単一アイテム）
 
-**UI Components:**
-- `app/product/page.tsx` - List page with table view
-- `app/product/[id]/page.tsx` - Detail page
-- `app/product/new/page.tsx` - Create new item page
-- `app/product/[id]/edit/page.tsx` - Edit existing item page
-- `app/product/_components/ProductForm.tsx` - Reusable form component
+**UI コンポーネント:**
+- `app/product/page.tsx` - テーブルビューの一覧ページ
+- `app/product/[id]/page.tsx` - 詳細ページ
+- `app/product/new/page.tsx` - 新規作成ページ
+- `app/product/[id]/edit/page.tsx` - 編集ページ
+- `app/product/_components/ProductForm.tsx` - 再利用可能なフォームコンポーネント
 
-**Configuration:**
-- `.swallowkit/scaffold.json` - Navigation menu configuration
+**設定:**
+- `.swallowkit/scaffold.json` - ナビゲーションメニュー設定
 
-### 4. Access Your Application
+### 4. アプリケーションにアクセス
 
-Start the development server:
+開発サーバーを起動します：
 
 ```bash
 npx swallowkit dev
 ```
 
-Open http://localhost:3000 to see your application.
+http://localhost:3000 を開いてアプリケーションを確認できます。
 
 <!-- 画像: ホームページのスクリーンショット。scaffold.jsonに登録されたモデル（Product, Category, Todoなど）がカード形式で表示されている様子 -->
 
-## Type-Appropriate UI Generation
+## 型に応じた UI 生成
 
-SwallowKit automatically generates appropriate UI controls based on your Zod schema types:
+SwallowKit は、Zod スキーマの型に基づいて適切な UI コントロールを自動生成します：
 
-### Supported Field Types
+### サポートされているフィールドタイプ
 
-| Zod Type | Generated UI | Example |
+| Zod 型 | 生成される UI | 例 |
 |----------|-------------|---------|
-| `z.string()` | Text input | `<input type="text">` |
-| `z.number()` | Number input | `<input type="number">` |
-| `z.boolean()` | Checkbox | `<input type="checkbox">` |
-| `z.string()` (date format) | Text input | `<input type="text">` (ISO string) |
-| `z.enum()` | Select dropdown | `<select>` with options |
-| `z.array()` | Comma-separated text input | Tags: "tag1, tag2, tag3" |
-| Foreign Key | Dropdown with related data | See below |
+| `z.string()` | テキスト入力 | `<input type="text">` |
+| `z.number()` | 数値入力 | `<input type="number">` |
+| `z.boolean()` | チェックボックス | `<input type="checkbox">` |
+| `z.string()`（日付形式） | テキスト入力 | `<input type="text">` (ISO 文字列) |
+| `z.enum()` | セレクトドロップダウン | `<select>` とオプション |
+| `z.array()` | カンマ区切りテキスト入力 | タグ: "tag1, tag2, tag3" |
+| 外部キー | 関連データのドロップダウン | 下記参照 |
 
-### Boolean Fields
+### Boolean フィールド
 
 ```typescript
 isActive: z.boolean().default(true)
 ```
 
-Generates a checkbox:
+チェックボックスが生成されます：
 
 ```tsx
 <input
@@ -153,17 +153,17 @@ Generates a checkbox:
 />
 ```
 
-### Enum Fields
+### Enum フィールド
 
 ```typescript
 category: z.enum(["electronics", "clothing", "books", "other"])
 ```
 
-Generates a dropdown:
+ドロップダウンが生成されます：
 
 ```tsx
 <select value={formData.category} onChange={...}>
-  <option value="">Select an option</option>
+  <option value="">選択してください</option>
   <option value="electronics">electronics</option>
   <option value="clothing">clothing</option>
   <option value="books">books</option>
@@ -171,43 +171,43 @@ Generates a dropdown:
 </select>
 ```
 
-### Array Fields
+### 配列フィールド
 
 ```typescript
 tags: z.array(z.string()).optional()
 ```
 
-Generates a comma-separated input:
+カンマ区切り入力が生成されます：
 
 ```tsx
 <input
   type="text"
-  placeholder="e.g., item1, item2, item3"
+  placeholder="例: item1, item2, item3"
   value={formData.tags}
   onChange={...}
 />
 ```
 
-### Optional Fields
+### オプショナルフィールド
 
-Fields marked with `.optional()` are not required in forms, while others have the `required` attribute.
+`.optional()` でマークされたフィールドはフォームで必須ではなく、それ以外は `required` 属性が付きます。
 
-## Foreign Key Relationships
+## 外部キーリレーションシップ
 
-SwallowKit automatically detects foreign key relationships using a naming convention pattern.
+SwallowKit は、命名規約パターンを使用して外部キーリレーションシップを自動検出します。
 
-### Convention
+### 規約
 
-Any field ending with `Id` and having `string` type is treated as a foreign key:
+`Id` で終わり、`string` 型を持つフィールドは外部キーとして扱われます：
 
 ```typescript
-// Field name: categoryId -> References: Category model
-categoryId: z.string().min(1, "Category is required")
+// フィールド名: categoryId -> 参照先: Category モデル
+categoryId: z.string().min(1, "カテゴリは必須です")
 ```
 
-**Pattern:** `<ModelName>Id` → References `<ModelName>` model
+**パターン:** `<モデル名>Id` → `<モデル名>` モデルを参照
 
-### Example: Todo with Category Reference
+### 例: Category 参照を持つ Todo
 
 ```typescript
 // lib/models/category.ts
@@ -215,7 +215,7 @@ import { z } from 'zod';
 
 export const categorySchema = z.object({
   id: z.string(),
-  name: z.string().min(1, "Category name is required"),
+  name: z.string().min(1, "カテゴリ名は必須です"),
   color: z.enum(["red", "blue", "green", "yellow", "purple"]).optional(),
 });
 
@@ -226,8 +226,8 @@ import { z } from 'zod';
 
 export const todoSchema = z.object({
   id: z.string(),
-  title: z.string().min(1, "Title is required"),
-  categoryId: z.string().min(1, "Category is required"), // Foreign key
+  title: z.string().min(1, "タイトルは必須です"),
+  categoryId: z.string().min(1, "カテゴリは必須です"), // 外部キー
   completed: z.boolean().default(false),
   priority: z.enum(["low", "medium", "high"]).default("medium"),
 });
@@ -235,11 +235,11 @@ export const todoSchema = z.object({
 export type TodoType = z.infer<typeof todoSchema>;
 ```
 
-### Generated Foreign Key UI
+### 生成される外部キー UI
 
-When a foreign key is detected, SwallowKit generates:
+外部キーが検出されると、SwallowKit は以下を生成します：
 
-1. **Dropdown Select in Forms:**
+1. **フォーム内のドロップダウンセレクト:**
 
 ```tsx
 <select
@@ -249,7 +249,7 @@ When a foreign key is detected, SwallowKit generates:
   onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
   required
 >
-  <option value="">Select an option</option>
+  <option value="">選択してください</option>
   {categoryOptions.map((option) => (
     <option key={option.id} value={option.id}>
       {option.name}
@@ -258,7 +258,7 @@ When a foreign key is detected, SwallowKit generates:
 </select>
 ```
 
-2. **Data Fetching with useEffect:**
+2. **useEffect でのデータ取得:**
 
 ```tsx
 const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; name: string }>>([]);
@@ -279,41 +279,41 @@ useEffect(() => {
 
 <!-- 画像: Todoフォームのスクリーンショット。categoryIdフィールドがドロップダウンになっており、作成済みのCategoryが選択肢として表示されている様子 -->
 
-3. **Display Names in List Views:**
+3. **一覧ビューでの表示名:**
 
-Instead of showing raw IDs like `"abc123"`, the list view shows the referenced item's name:
+`"abc123"` のような生の ID を表示する代わりに、一覧ビューでは参照先アイテムの名前を表示します：
 
 | title | Category | completed |
 |-------|----------|-----------|
-| Buy groceries | Shopping | ☐ |
-| Fix bug | Work | ☑ |
+| 買い物リスト | ショッピング | ☐ |
+| バグ修正 | 仕事 | ☑ |
 
-<!-- 画像: Todo一覧画面のスクリーンショット。categoryIdカラムに「Category」というヘッダーがあり、値として実際のカテゴリー名（例: "Work", "Shopping"）が表示されている様子 -->
+<!-- 画像: Todo一覧画面のスクリーンショット。categoryIdカラムに「Category」というヘッダーがあり、値として実際のカテゴリー名（例: "仕事", "ショッピング"）が表示されている様子 -->
 
-4. **Display Names in Detail Views:**
+4. **詳細ビューでの表示名:**
 
 ```tsx
 <dt>Category</dt>
 <dd>{categoryMap[todo.categoryId] || todo.categoryId}</dd>
 ```
 
-Shows "Work" instead of the category ID.
+カテゴリ ID の代わりに「仕事」と表示されます。
 
 <!-- 画像: Todo詳細画面のスクリーンショット。Categoryフィールドに実際のカテゴリー名が表示されている様子 -->
 
-### ToString Convention
+### ToString 規約
 
-For foreign key display, SwallowKit uses the following priority to determine the display string:
+外部キーの表示には、SwallowKit は以下の優先順位で表示文字列を決定します：
 
-1. `item.name` (if exists)
-2. `item.title` (if exists)
-3. `item.id` (fallback)
+1. `item.name`（存在する場合）
+2. `item.title`（存在する場合）
+3. `item.id`（フォールバック）
 
-This means your referenced models should have either a `name` or `title` field for better UX.
+つまり、参照先モデルには UX 向上のために `name` または `title` フィールドを含めるべきです。
 
-## Generated Code Examples
+## 生成されるコード例
 
-### List Page (page.tsx)
+### 一覧ページ（page.tsx）
 
 ```tsx
 'use client';
@@ -343,7 +343,7 @@ export default function TodoListPage() {
         setLoading(false);
       });
 
-    // Fetch foreign key reference data
+    // 外部キー参照データを取得
     fetch('/api/category')
       .then(res => res.json())
       .then((data: any[]) => {
@@ -357,7 +357,7 @@ export default function TodoListPage() {
   }, []);
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this item?')) return;
+    if (!confirm('本当にこのアイテムを削除しますか？')) return;
 
     try {
       const res = await fetch(`/api/todo/${id}`, {
@@ -368,14 +368,14 @@ export default function TodoListPage() {
 
       setTodos(todos.filter((item) => item.id !== id));
     } catch (err: any) {
-      alert(`Error: ${err.message}`);
+      alert(`エラー: ${err.message}`);
     }
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="text-lg text-gray-900 dark:text-gray-100">Loading...</div>
+        <div className="text-lg text-gray-900 dark:text-gray-100">読み込み中...</div>
       </div>
     );
   }
@@ -383,7 +383,7 @@ export default function TodoListPage() {
   if (error) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="text-red-600 dark:text-red-400">Error: {error}</div>
+        <div className="text-red-600 dark:text-red-400">エラー: {error}</div>
       </div>
     );
   }
@@ -396,13 +396,13 @@ export default function TodoListPage() {
           href="/todo/new"
           className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white px-4 py-2 rounded"
         >
-          Create New
+          新規作成
         </Link>
       </div>
 
       {todos.length === 0 ? (
         <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-          No todos found. Create your first one!
+          Todo が見つかりません。最初の Todo を作成しましょう！
         </div>
       ) : (
         <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg overflow-hidden">
@@ -419,7 +419,7 @@ export default function TodoListPage() {
                   completed
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Actions
+                  操作
                 </th>
               </tr>
             </thead>
@@ -440,19 +440,19 @@ export default function TodoListPage() {
                       href={`/todo/${item.id}`}
                       className="text-blue-600 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300 mr-4"
                     >
-                      View
+                      表示
                     </Link>
                     <Link
                       href={`/todo/${item.id}/edit`}
                       className="text-green-600 dark:text-green-400 hover:text-green-900 dark:hover:text-green-300 mr-4"
                     >
-                      Edit
+                      編集
                     </Link>
                     <button
                       onClick={() => handleDelete(item.id)}
                       className="text-red-600 dark:text-red-400 hover:text-red-900 dark:hover:text-red-300"
                     >
-                      Delete
+                      削除
                     </button>
                   </td>
                 </tr>
@@ -466,7 +466,7 @@ export default function TodoListPage() {
 }
 ```
 
-### Form Component (TodoForm.tsx)
+### フォームコンポーネント（TodoForm.tsx）
 
 ```tsx
 'use client';
@@ -513,7 +513,7 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
     setErrors({});
 
     try {
-      // Validate with Zod
+      // Zod で検証
       const validatedData = todoSchema.parse({
         ...formData,
         id: initialData?.id || crypto.randomUUID(),
@@ -530,7 +530,7 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 
       if (!res.ok) {
         const error = await res.json();
-        throw new Error(error.message || 'Failed to save');
+        throw new Error(error.message || '保存に失敗しました');
       }
 
       router.push('/todo');
@@ -545,7 +545,7 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
         });
         setErrors(fieldErrors);
       } else {
-        alert(`Error: ${err.message}`);
+        alert(`エラー: ${err.message}`);
       }
       setLoading(false);
     }
@@ -583,7 +583,7 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
           className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:focus:border-blue-400 dark:focus:ring-blue-400"
           required
         >
-          <option value="">Select an option</option>
+          <option value="">選択してください</option>
           {categoryOptions.map((option) => (
             <option key={option.id} value={option.id}>{option.name}</option>
           ))}
@@ -621,7 +621,7 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
           onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
           className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:focus:border-blue-400 dark:focus:ring-blue-400"
         >
-          <option value="">Select an option</option>
+          <option value="">選択してください</option>
           <option value="low">low</option>
           <option value="medium">medium</option>
           <option value="high">high</option>
@@ -637,14 +637,14 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
           disabled={loading}
           className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white px-6 py-2 rounded disabled:opacity-50"
         >
-          {loading ? 'Saving...' : isEdit ? 'Update' : 'Create'}
+          {loading ? '保存中...' : isEdit ? '更新' : '作成'}
         </button>
         <button
           type="button"
           onClick={() => router.back()}
           className="bg-gray-600 hover:bg-gray-700 dark:bg-gray-500 dark:hover:bg-gray-600 text-white px-6 py-2 rounded"
         >
-          Cancel
+          キャンセル
         </button>
       </div>
     </form>
@@ -652,94 +652,94 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 }
 ```
 
-## Best Practices
+## ベストプラクティス
 
-### 1. Model Naming Conventions
+### 1. モデルの命名規約
 
-- Schema names: `camelCase` + `schema` suffix: `productSchema`, `categorySchema`, `todoSchema`
-- Type names: `PascalCase` + `Type` suffix: `ProductType`, `CategoryType`, `TodoType`
-- Class names: `PascalCase`: `Product`, `Category`, `Todo`
-- Export the schema and type:
+- スキーマ名: `camelCase` + `schema` サフィックス: `productSchema`, `categorySchema`, `todoSchema`
+- 型名: `PascalCase` + `Type` サフィックス: `ProductType`, `CategoryType`, `TodoType`
+- クラス名: `PascalCase`: `Product`, `Category`, `Todo`
+- スキーマと型をエクスポート：
   ```typescript
   export const productSchema = z.object({...});
   export type ProductType = z.infer<typeof productSchema>;
   ```
 
-### 2. Foreign Key Naming
+### 2. 外部キーの命名
 
-- Always end foreign key fields with `Id`: `categoryId`, `userId`, `orderId`
-- Use `z.string()` type for foreign keys (Cosmos DB uses string IDs)
-- Add validation messages:
+- 外部キーフィールドは常に `Id` で終わらせる: `categoryId`, `userId`, `orderId`
+- 外部キーには `z.string()` 型を使用（Cosmos DB は文字列 ID を使用）
+- 検証メッセージを追加：
   ```typescript
-  categoryId: z.string().min(1, "Category is required")
+  categoryId: z.string().min(1, "カテゴリは必須です")
   ```
 
-### 3. Display String Fields
+### 3. 表示文字列フィールド
 
-- Include either `name` or `title` field in your models for better foreign key display
-- Example:
+- 外部キーの表示を改善するため、モデルに `name` または `title` フィールドを含める
+- 例：
   ```typescript
   export const categorySchema = z.object({
     id: z.string(),
-    name: z.string().min(1, "Name is required"), // Used for display
-    // ...other fields
+    name: z.string().min(1, "名前は必須です"), // 表示に使用
+    // ...その他のフィールド
   });
   
   export type CategoryType = z.infer<typeof categorySchema>;
   ```
 
-### 4. Optional vs Required Fields
+### 4. オプショナル vs 必須フィールド
 
-- Use `.optional()` for fields that can be empty
-- Add `.default()` for fields with default values
-- Provide helpful validation messages:
+- 空にできるフィールドには `.optional()` を使用
+- デフォルト値を持つフィールドには `.default()` を追加
+- 役立つ検証メッセージを提供：
   ```typescript
-  name: z.string().min(1, "Name is required"),
+  name: z.string().min(1, "名前は必須です"),
   description: z.string().optional(),
   isActive: z.boolean().default(true),
   ```
 
-### 5. Enum Values
+### 5. Enum 値
 
-- Use meaningful enum values that can be displayed directly:
+- 直接表示できる意味のある enum 値を使用：
   ```typescript
-  // Good
+  // 良い例
   priority: z.enum(["low", "medium", "high"])
   
-  // Better with display-friendly values
+  // より良い例（表示に適した値）
   status: z.enum(["pending", "in_progress", "completed", "cancelled"])
   ```
 
-## Troubleshooting
+## トラブルシューティング
 
-### Schema Parsing Errors
+### スキーマ解析エラー
 
-If you see "Failed to parse model file", ensure:
-- Your file has a valid default export of a Zod object schema
-- The schema name ends with `Schema`
-- You're using `z.object()` as the root schema
+"Failed to parse model file" が表示される場合、以下を確認してください：
+- ファイルに Zod オブジェクトスキーマの有効なデフォルトエクスポートがある
+- スキーマ名が `schema` で終わる
+- ルートスキーマとして `z.object()` を使用している
 
-### Foreign Key Not Detected
+### 外部キーが検出されない
 
-Check that:
-- Field name ends with `Id` (case-sensitive)
-- Field type is `z.string()`
-- Referenced model exists and has been scaffolded
+以下を確認してください：
+- フィールド名が `Id` で終わる（大文字小文字を区別）
+- フィールド型が `z.string()`
+- 参照先モデルが存在し、scaffold されている
 
-### Missing Display Names
+### 表示名が表示されない
 
-If foreign keys show IDs instead of names:
-- Ensure referenced model has a `name` or `title` field
-- Check that the referenced model has been scaffolded
-- Verify API endpoint `/api/<model>` returns data
+外部キーが名前の代わりに ID を表示する場合：
+- 参照先モデルに `name` または `title` フィールドがあることを確認
+- 参照先モデルが scaffold されていることを確認
+- API エンドポイント `/api/<model>` がデータを返すことを確認
 
-## Next Steps
+## 次のステップ
 
-- Learn about [Zod Schema Sharing](./zod-schema-sharing-guide.md) - Understand the concepts behind type-safe schema sharing
-- Read the [Deployment Guide](./deployment-guide.md) - Deploy your application to Azure
-- Explore the [CLI Reference](./cli-reference.md) - Learn about all available commands
-- Explore Azure Functions configuration in `functions/local.settings.json`
-- Configure Cosmos DB connection for production deployment
-- Add authentication and authorization to your routes
-- Customize generated UI components for your brand
-- Return to the [README](../README.md) for more SwallowKit features
+- [Zod スキーマ共有](./zod-schema-sharing-guide.ja.md) - 型安全なスキーマ共有の概念を理解
+- [デプロイガイド](./deployment-guide.ja.md) - アプリケーションを Azure にデプロイ
+- [CLI リファレンス](./cli-reference.ja.md) - 利用可能なすべてのコマンドを学ぶ
+- `functions/local.settings.json` で Azure Functions の設定を調べる
+- 本番環境用の Cosmos DB 接続を設定
+- ルートに認証と認可を追加
+- 生成された UI コンポーネントをブランドに合わせてカスタマイズ
+- より多くの SwallowKit 機能については [README](../README.ja.md) に戻る

@@ -12,6 +12,8 @@ export interface ModelInfo {
   filePath: string; // モデルファイルの絶対パス
   fields: FieldInfo[]; // フィールド情報
   hasId: boolean; // id フィールドがあるか
+  hasCreatedAt: boolean; // createdAt フィールドがあるか
+  hasUpdatedAt: boolean; // updatedAt フィールドがあるか
 }
 
 export interface FieldInfo {
@@ -51,6 +53,8 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
   
   // id フィールドの存在確認
   const hasId = fields.some(f => f.name === "id");
+  const hasCreatedAt = fields.some(f => f.name === "createdAt");
+  const hasUpdatedAt = fields.some(f => f.name === "updatedAt");
   
   return {
     name: modelName,
@@ -58,6 +62,8 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
     filePath: modelPath,
     fields,
     hasId,
+    hasCreatedAt,
+    hasUpdatedAt,
   };
 }
 
