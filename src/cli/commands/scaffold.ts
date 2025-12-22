@@ -308,18 +308,39 @@ async function updateNavigationMenu(modelInfo: any): Promise<void> {
   const modelKebab = toKebabCase(modelInfo.name);
   const cwd = process.cwd();
 
-  // Read or create scaffold config
-  const configPath = path.join(cwd, ".swallowkit", "scaffold.json");
+  // Update scaffold config
+  const configPath = path.join(cwd, "lib", "scaffold-config.ts");
   const configDir = path.dirname(configPath);
-
+  
   if (!fs.existsSync(configDir)) {
     fs.mkdirSync(configDir, { recursive: true });
   }
 
   let config: { models: Array<{ name: string; path: string; label: string }> } = { models: [] };
 
+  // Parse existing TypeScript config if it exists
   if (fs.existsSync(configPath)) {
-    config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const content = fs.readFileSync(configPath, "utf-8");
+    const modelsMatch = content.match(/models:\s*\[([\ s\S]*?)\]/);
+    if (modelsMatch) {
+      try {
+        // Extract model entries
+        const modelsContent = modelsMatch[1];
+        const modelEntries = modelsContent.match(/\{[^}]+\}/g) || [];
+        config.models = modelEntries.map(entry => {
+          const nameMatch = entry.match(/name:\s*['"]([^'"]+)['"]/);
+          const pathMatch = entry.match(/path:\s*['"]([^'"]+)['"]/);
+          const labelMatch = entry.match(/label:\s*['"]([^'"]+)['"]/);
+          return {
+            name: nameMatch?.[1] || '',
+            path: pathMatch?.[1] || '',
+            label: labelMatch?.[1] || '',
+          };
+        });
+      } catch (e) {
+        console.warn('Warning: Could not parse existing config, creating new one');
+      }
+    }
   }
 
   // Add model to config if not already present
@@ -330,7 +351,21 @@ async function updateNavigationMenu(modelInfo: any): Promise<void> {
       label: modelInfo.name,
     });
 
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+    // Generate TypeScript file content
+    const tsContent = `export interface ScaffoldModel {
+  name: string;
+  path: string;
+  label: string;
+}
+
+export const scaffoldConfig = {
+  models: [
+${config.models.map(m => `    { name: '${m.name}', path: '${m.path}', label: '${m.label}' },`).join('\n')}
+  ] as ScaffoldModel[]
+};
+`;
+
+    fs.writeFileSync(configPath, tsContent, "utf-8");
     console.log(`✅ Added ${modelInfo.name} to navigation menu`);
   } else {
     console.log(`ℹ️  ${modelInfo.name} already in navigation menu`);

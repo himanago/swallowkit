@@ -276,12 +276,13 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
   if (fs.existsSync(nextConfigPath)) {
     let nextConfigContent = fs.readFileSync(nextConfigPath, 'utf-8');
     
-    // Add output: 'standalone' for Next.js hybrid rendering
+    // Add output: 'standalone' and experimental.turbopackUseSystemTlsCerts for Next.js hybrid rendering
     if (!nextConfigContent.includes("output:") && !nextConfigContent.includes('output =')) {
-      // Handle both JS and TS config formats
+      // Handle TypeScript config format: const nextConfig: NextConfig = {
+      // Handle JavaScript config format: const nextConfig = {
       nextConfigContent = nextConfigContent.replace(
-        /(const nextConfig[:\s]*=\s*\{)/,
-        `$1\n  output: 'standalone',`
+        /(const\s+nextConfig[:\s]*(?::\s*NextConfig\s*)?=\s*\{)(\s*\/\*[^*]*\*\/)?/,
+        `$1\n  output: 'standalone',\n  experimental: {\n    turbopackUseSystemTlsCerts: true,\n  },$2`
       );
       fs.writeFileSync(nextConfigPath, nextConfigContent);
     }
@@ -439,10 +440,12 @@ AZURE_SWA_NAME=your-static-web-app-name
   fs.writeFileSync(path.join(projectDir, '.env.example'), envExample);
 
   // 7. Create .env.local for local development
-  const envLocal = `# Azure Functions Backend URL (Local)
-FUNCTIONS_BASE_URL=http://localhost:7071
-`;
-  fs.writeFileSync(path.join(projectDir, '.env.local'), envLocal);
+  const envLocalContent = [
+    '# Azure Functions Backend URL (Local)',
+    'FUNCTIONS_BASE_URL=http://localhost:7071',
+    ''
+  ].join('\n');
+  fs.writeFileSync(path.join(projectDir, '.env.local'), envLocalContent);
 
   // 8. Create staticwebapp.config.json for Azure Static Web Apps (Next.js Hybrid Rendering)
   const swaConfig = {
@@ -467,18 +470,6 @@ FUNCTIONS_BASE_URL=http://localhost:7071
   fs.writeFileSync(
     path.join(projectDir, 'staticwebapp.config.json'),
     JSON.stringify(swaConfig, null, 2)
-  );
-
-  // 9. Create .swallowkit directory and scaffold.json
-  const swallowkitDir = path.join(projectDir, '.swallowkit');
-  fs.mkdirSync(swallowkitDir, { recursive: true });
-  
-  const scaffoldConfig = {
-    models: []
-  };
-  fs.writeFileSync(
-    path.join(swallowkitDir, 'scaffold.json'),
-    JSON.stringify(scaffoldConfig, null, 2)
   );
 
   // 14. Create Azure Functions project
@@ -1087,8 +1078,8 @@ param projectName string
 @description('Location for Functions and Cosmos DB')
 param location string = resourceGroup().location
 
-@description('Location for Static Web App')
-param swaLocation string = 'eastasia'
+@description('Location for Static Web App (must be explicitly provided)')
+param swaLocation string
 
 @description('Functions plan type')
 @allowed(['flex', 'premium'])
@@ -1098,6 +1089,35 @@ param functionsPlan string = '${azureConfig.functionsPlan}'
 @allowed(['freetier', 'serverless'])
 param cosmosDbMode string = '${azureConfig.cosmosDbMode}'
 
+// Shared Log Analytics Workspace (in Functions region for data residency)
+module logAnalytics 'modules/loganalytics.bicep' = {
+  name: 'logAnalytics'
+  params: {
+    name: 'log-\${projectName}'
+    location: location
+  }
+}
+
+// Application Insights for Static Web App (must be in same region as SWA)
+module appInsightsSwa 'modules/appinsights.bicep' = {
+  name: 'appInsightsSwa'
+  params: {
+    name: 'appi-\${projectName}-swa'
+    location: swaLocation
+    logAnalyticsWorkspaceId: logAnalytics.outputs.id
+  }
+}
+
+// Application Insights for Functions (in same region as Functions)
+module appInsightsFunctions 'modules/appinsights.bicep' = {
+  name: 'appInsightsFunctions'
+  params: {
+    name: 'appi-\${projectName}-func'
+    location: location
+    logAnalyticsWorkspaceId: logAnalytics.outputs.id
+  }
+}
+
 // Static Web App
 module staticWebApp 'modules/staticwebapp.bicep' = {
   name: 'staticWebApp'
@@ -1105,6 +1125,7 @@ module staticWebApp 'modules/staticwebapp.bicep' = {
     name: 'swa-\${projectName}'
     location: swaLocation
     sku: 'Standard'
+    appInsightsConnectionString: appInsightsSwa.outputs.connectionString
   }
 }
 
@@ -1115,6 +1136,7 @@ module functionsFlex 'modules/functions-flex.bicep' = if (functionsPlan == 'flex
     name: 'func-\${projectName}'
     location: location
     storageAccountName: 'stg\${uniqueString(resourceGroup().id, projectName)}'
+    appInsightsConnectionString: appInsightsFunctions.outputs.connectionString
   }
 }
 
@@ -1124,6 +1146,7 @@ module functionsPremium 'modules/functions-premium.bicep' = if (functionsPlan ==
     name: 'func-\${projectName}'
     location: location
     storageAccountName: 'stg\${uniqueString(resourceGroup().id, projectName)}'
+    appInsightsConnectionString: appInsightsFunctions.outputs.connectionString
   }
 }
 
@@ -1155,6 +1178,12 @@ output functionsAppUrl string = functionsPlan == 'flex' ? functionsFlex.outputs.
 output cosmosDbAccountName string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.accountName : cosmosDbServerless.outputs.accountName
 output cosmosDbEndpoint string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.endpoint : cosmosDbServerless.outputs.endpoint
 output cosmosDatabaseName string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.databaseName : cosmosDbServerless.outputs.databaseName
+output logAnalyticsWorkspaceName string = logAnalytics.outputs.name
+output logAnalyticsWorkspaceId string = logAnalytics.outputs.id
+output appInsightsSwaName string = appInsightsSwa.outputs.name
+output appInsightsSwaConnectionString string = appInsightsSwa.outputs.connectionString
+output appInsightsFunctionsName string = appInsightsFunctions.outputs.name
+output appInsightsFunctionsConnectionString string = appInsightsFunctions.outputs.connectionString
 `;
   
   fs.writeFileSync(path.join(infraDir, 'main.bicep'), mainBicep);
@@ -1192,6 +1221,9 @@ param location string
 ])
 param sku string = 'Standard'
 
+@description('Application Insights connection string')
+param appInsightsConnectionString string
+
 resource staticWebApp 'Microsoft.Web/staticSites@2023-01-01' = {
   name: name
   location: location
@@ -1206,11 +1238,72 @@ resource staticWebApp 'Microsoft.Web/staticSites@2023-01-01' = {
   }
 }
 
+// Link Application Insights to Static Web App
+resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-01-01' = {
+  parent: staticWebApp
+  name: 'appsettings'
+  properties: {
+    APPLICATIONINSIGHTS_CONNECTION_STRING: appInsightsConnectionString
+  }
+}
+
 output id string = staticWebApp.id
 output name string = staticWebApp.name
 output defaultHostname string = staticWebApp.properties.defaultHostname
 `;
   fs.writeFileSync(path.join(modulesDir, 'staticwebapp.bicep'), staticWebAppBicep);
+  
+  // modules/loganalytics.bicep (Shared Log Analytics Workspace)
+  const logAnalyticsBicep = `@description('Log Analytics workspace name')
+param name string
+
+@description('Location for Log Analytics workspace')
+param location string
+
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: name
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
+output id string = logAnalytics.id
+output name string = logAnalytics.name
+`;
+  fs.writeFileSync(path.join(modulesDir, 'loganalytics.bicep'), logAnalyticsBicep);
+  
+  // modules/appinsights.bicep (Application Insights only, connects to shared Log Analytics)
+  const appInsightsBicep = `@description('Application Insights name')
+param name string
+
+@description('Location for Application Insights')
+param location string
+
+@description('Log Analytics workspace resource ID')
+param logAnalyticsWorkspaceId string
+
+// Application Insights
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: name
+  location: location
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logAnalyticsWorkspaceId
+    RetentionInDays: 30
+  }
+}
+
+output id string = appInsights.id
+output name string = appInsights.name
+output connectionString string = appInsights.properties.ConnectionString
+output instrumentationKey string = appInsights.properties.InstrumentationKey
+`;
+  fs.writeFileSync(path.join(modulesDir, 'appinsights.bicep'), appInsightsBicep);
   
   // modules/functions-flex.bicep (Flex Consumption)
   const functionsFlexBicep = `@description('Functions App name')
@@ -1221,6 +1314,9 @@ param location string
 
 @description('Storage account name for Functions')
 param storageAccountName string
+
+@description('Application Insights connection string')
+param appInsightsConnectionString string
 
 // Storage Account for Functions
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -1304,6 +1400,10 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'FUNCTIONS_EXTENSION_VERSION'
           value: '~4'
         }
+        {
+          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+          value: appInsightsConnectionString
+        }
       ]
       cors: {
         allowedOrigins: [
@@ -1342,6 +1442,9 @@ param location string
 
 @description('Storage account name for Functions')
 param storageAccountName string
+
+@description('Application Insights connection string')
+param appInsightsConnectionString string
 
 // Storage Account for Functions
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -1408,6 +1511,10 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'WEBSITE_NODE_DEFAULT_VERSION'
           value: '~22'
+        }
+        {
+          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+          value: appInsightsConnectionString
         }
       ]
       cors: {

@@ -42,13 +42,15 @@ export async function GET(request: NextRequest) {
     });
     
     if (!response.ok) {
+      // Read response body once
+      const text = await response.text();
       let errorMessage = 'Failed to fetch ${modelCamel}s';
       try {
-        const error = await response.json();
+        const error = JSON.parse(text);
         errorMessage = error.error || errorMessage;
       } catch {
-        // Response body is not JSON
-        errorMessage = await response.text() || errorMessage;
+        // Response body is not JSON, use text as-is
+        errorMessage = text || errorMessage;
       }
       return NextResponse.json(
         { error: errorMessage },

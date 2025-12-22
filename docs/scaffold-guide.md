@@ -107,7 +107,7 @@ The scaffold command generates the following files:
 - `app/product/_components/ProductForm.tsx` - Reusable form component
 
 **Configuration:**
-- `.swallowkit/scaffold.json` - Navigation menu configuration
+- `lib/scaffold-config.ts` - Navigation menu configuration
 
 ### 4. Access Your Application
 
@@ -119,7 +119,7 @@ npx swallowkit dev
 
 Open http://localhost:3000 to see your application.
 
-<!-- 画像: ホームページのスクリーンショット。scaffold.jsonに登録されたモデル（Product, Category, Todoなど）がカード形式で表示されている様子 -->
+<!-- 画像: ホームページのスクリーンショット。scaffold-config.tsに登録されたモデル（Product, Category, Todoなど）がカード形式で表示されている様子 -->
 
 ## Type-Appropriate UI Generation
 

@@ -107,7 +107,7 @@ scaffold コマンドは以下のファイルを生成します：
 - `app/product/_components/ProductForm.tsx` - 再利用可能なフォームコンポーネント
 
 **設定:**
-- `.swallowkit/scaffold.json` - ナビゲーションメニュー設定
+- `lib/scaffold-config.ts` - ナビゲーションメニュー設定
 
 ### 4. アプリケーションにアクセス
 
@@ -119,7 +119,7 @@ npx swallowkit dev
 
 http://localhost:3000 を開いてアプリケーションを確認できます。
 
-<!-- 画像: ホームページのスクリーンショット。scaffold.jsonに登録されたモデル（Product, Category, Todoなど）がカード形式で表示されている様子 -->
+<!-- 画像: ホームページのスクリーンショット。scaffold-config.tsに登録されたモデル（Product, Category, Todoなど）がカード形式で表示されている様子 -->
 
 ## 型に応じた UI 生成
 

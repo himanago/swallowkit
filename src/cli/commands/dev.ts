@@ -119,14 +119,20 @@ async function initializeCosmosDB(databaseName: string): Promise<void> {
     const { database } = await client.databases.createIfNotExists({ id: dbName });
     console.log(`✅ Database "${dbName}" ready`);
 
-    // Read scaffold.json to get list of models
-    const scaffoldConfigPath = path.join(process.cwd(), '.swallowkit', 'scaffold.json');
+    // Read lib/scaffold-config.ts to get list of models
+    const scaffoldConfigPath = path.join(process.cwd(), 'lib', 'scaffold-config.ts');
     if (fs.existsSync(scaffoldConfigPath)) {
-      const scaffoldConfig = JSON.parse(fs.readFileSync(scaffoldConfigPath, 'utf-8'));
+      const scaffoldConfigContent = fs.readFileSync(scaffoldConfigPath, 'utf-8');
       
-      if (scaffoldConfig.models && Array.isArray(scaffoldConfig.models)) {
-        for (const model of scaffoldConfig.models) {
-          const modelName = typeof model === 'string' ? model : model.name;
+      // Parse TypeScript file to extract models array
+      const modelsMatch = scaffoldConfigContent.match(/models:\s*\[([\s\S]*?)\]/);
+      if (modelsMatch) {
+        const modelsArrayContent = modelsMatch[1];
+        // Extract model names from objects like { name: 'Task', path: '/task', label: 'Task' }
+        const modelMatches = modelsArrayContent.matchAll(/\{\s*name:\s*['"](\w+)['"]/g);
+        const models = Array.from(modelMatches, m => m[1]);
+        
+        for (const modelName of models) {
           const containerName = `${modelName}s`; // Pluralize model name
           
           // Try creating container with full partition key definition first
