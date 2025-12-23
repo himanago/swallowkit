@@ -247,11 +247,13 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
     'swallowkit': 'latest',
     '@azure/cosmos': '^4.0.0',
     'zod': '^3.25.0',
+    'applicationinsights': '^3.3.0',
   };
   
   packageJson.scripts = {
     ...packageJson.scripts,
     'build': 'next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/',
+    'start': 'node --require ./load-appinsights.js node_modules/next/dist/compiled/cli/next-start.js',
     'build:azure': 'swallowkit build',
     'deploy': 'swallowkit deploy',
     'functions:start': 'cd functions && npm start',
@@ -276,13 +278,13 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
   if (fs.existsSync(nextConfigPath)) {
     let nextConfigContent = fs.readFileSync(nextConfigPath, 'utf-8');
     
-    // Add output: 'standalone' and experimental.turbopackUseSystemTlsCerts for Next.js hybrid rendering
+    // Add output: 'standalone', experimental.turbopackUseSystemTlsCerts, and serverExternalPackages
     if (!nextConfigContent.includes("output:") && !nextConfigContent.includes('output =')) {
       // Handle TypeScript config format: const nextConfig: NextConfig = {
       // Handle JavaScript config format: const nextConfig = {
       nextConfigContent = nextConfigContent.replace(
         /(const\s+nextConfig[:\s]*(?::\s*NextConfig\s*)?=\s*\{)(\s*\/\*[^*]*\*\/)?/,
-        `$1\n  output: 'standalone',\n  experimental: {\n    turbopackUseSystemTlsCerts: true,\n  },$2`
+        `$1\n  output: 'standalone',\n  experimental: {\n    turbopackUseSystemTlsCerts: true,\n  },\n  serverExternalPackages: ['applicationinsights'],$2`
       );
       fs.writeFileSync(nextConfigPath, nextConfigContent);
     }
@@ -439,7 +441,37 @@ AZURE_SWA_NAME=your-static-web-app-name
 `;
   fs.writeFileSync(path.join(projectDir, '.env.example'), envExample);
 
-  // 7. Create .env.local for local development
+  // 7. Create load-appinsights.js for Application Insights (Azure production only)
+  // Note: Named load-appinsights.js instead of instrumentation.js to avoid Next.js auto-detection in dev mode
+  const appInsightsLoaderContent = `// Application Insights loader for Next.js server-side telemetry
+// Only loaded in production via 'npm start' script (not in dev mode)
+if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+  const appInsights = require('applicationinsights');
+  
+  appInsights
+    .setup(process.env.APPLICATIONINSIGHTS_CONNECTION_STRING)
+    .setAutoCollectConsole(true)
+    .setAutoCollectDependencies(true)
+    .setAutoCollectExceptions(true)
+    .setAutoCollectHeartbeat(true)
+    .setAutoCollectPerformance(true, true)
+    .setAutoCollectRequests(true)
+    .setAutoDependencyCorrelation(true)
+    .setDistributedTracingMode(appInsights.DistributedTracingModes.AI_AND_W3C)
+    .setSendLiveMetrics(true)
+    .setUseDiskRetryCaching(true);
+  
+  appInsights.defaultClient.setAutoPopulateAzureProperties(true);
+  appInsights.start();
+  
+  console.log('[App Insights] Initialized for Next.js server-side telemetry');
+} else {
+  console.log('[App Insights] Not configured (skipped in development mode)');
+}
+`;
+  fs.writeFileSync(path.join(projectDir, 'load-appinsights.js'), appInsightsLoaderContent);
+
+  // 8. Create .env.local for local development
   const envLocalContent = [
     '# Azure Functions Backend URL (Local)',
     'FUNCTIONS_BASE_URL=http://localhost:7071',
@@ -1137,6 +1169,7 @@ module functionsFlex 'modules/functions-flex.bicep' = if (functionsPlan == 'flex
     location: location
     storageAccountName: 'stg\${uniqueString(resourceGroup().id, projectName)}'
     appInsightsConnectionString: appInsightsFunctions.outputs.connectionString
+    swaDefaultHostname: staticWebApp.outputs.defaultHostname
   }
 }
 
@@ -1147,6 +1180,7 @@ module functionsPremium 'modules/functions-premium.bicep' = if (functionsPlan ==
     location: location
     storageAccountName: 'stg\${uniqueString(resourceGroup().id, projectName)}'
     appInsightsConnectionString: appInsightsFunctions.outputs.connectionString
+    swaDefaultHostname: staticWebApp.outputs.defaultHostname
   }
 }
 
@@ -1169,6 +1203,19 @@ module cosmosDbServerless 'modules/cosmosdb-serverless.bicep' = if (cosmosDbMode
     location: location
     functionsPrincipalId: functionsPlan == 'flex' ? functionsFlex.outputs.principalId : functionsPremium.outputs.principalId
   }
+}
+
+// Update SWA config with Functions hostname (after Functions deployment)
+module staticWebAppConfig 'modules/staticwebapp-config.bicep' = {
+  name: 'staticWebAppConfig'
+  params: {
+    staticWebAppName: staticWebApp.outputs.name
+    functionsDefaultHostname: functionsPlan == 'flex' ? functionsFlex.outputs.defaultHostname : functionsPremium.outputs.defaultHostname
+  }
+  dependsOn: [
+    functionsFlex
+    functionsPremium
+  ]
 }
 
 output staticWebAppName string = staticWebApp.outputs.name
@@ -1238,7 +1285,7 @@ resource staticWebApp 'Microsoft.Web/staticSites@2023-01-01' = {
   }
 }
 
-// Link Application Insights to Static Web App
+// Link Application Insights to Static Web App (for both client and server-side telemetry)
 resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-01-01' = {
   parent: staticWebApp
   name: 'appsettings'
@@ -1252,6 +1299,29 @@ output name string = staticWebApp.name
 output defaultHostname string = staticWebApp.properties.defaultHostname
 `;
   fs.writeFileSync(path.join(modulesDir, 'staticwebapp.bicep'), staticWebAppBicep);
+
+  // modules/staticwebapp-config.bicep (for updating config after Functions deployment)
+  const staticWebAppConfigBicep = `@description('Static Web App name')
+param staticWebAppName string
+
+@description('Functions App default hostname for backend API calls')
+param functionsDefaultHostname string
+
+resource staticWebApp 'Microsoft.Web/staticSites@2023-01-01' existing = {
+  name: staticWebAppName
+}
+
+resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-01-01' = {
+  parent: staticWebApp
+  name: 'appsettings'
+  properties: {
+    BACKEND_FUNCTIONS_BASE_URL: 'https://\${functionsDefaultHostname}'
+  }
+}
+
+output configName string = staticWebAppConfig.name
+`;
+  fs.writeFileSync(path.join(modulesDir, 'staticwebapp-config.bicep'), staticWebAppConfigBicep);
   
   // modules/loganalytics.bicep (Shared Log Analytics Workspace)
   const logAnalyticsBicep = `@description('Log Analytics workspace name')
@@ -1317,6 +1387,9 @@ param storageAccountName string
 
 @description('Application Insights connection string')
 param appInsightsConnectionString string
+
+@description('Static Web App default hostname for CORS')
+param swaDefaultHostname string
 
 // Storage Account for Functions
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -1407,9 +1480,17 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
       ]
       cors: {
         allowedOrigins: [
-          '*'
+          'https://\${swaDefaultHostname}'
         ]
       }
+      ipSecurityRestrictions: [
+        {
+          action: 'Allow'
+          ipAddress: 'AzureCloud'
+          tag: 'ServiceTag'
+          priority: 100
+        }
+      ]
     }
     httpsOnly: true
   }
@@ -1445,6 +1526,9 @@ param storageAccountName string
 
 @description('Application Insights connection string')
 param appInsightsConnectionString string
+
+@description('Static Web App default hostname for CORS')
+param swaDefaultHostname string
 
 // Storage Account for Functions
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -1519,9 +1603,17 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
       ]
       cors: {
         allowedOrigins: [
-          '*'
+          'https://\${swaDefaultHostname}'
         ]
       }
+      ipSecurityRestrictions: [
+        {
+          action: 'Allow'
+          ipAddress: 'AzureCloud'
+          tag: 'ServiceTag'
+          priority: 100
+        }
+      ]
       alwaysOn: true
     }
     httpsOnly: true
@@ -1766,13 +1858,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: 'functions/package-lock.json'
       
       - name: Install dependencies
         run: |
           cd functions
-          npm ci
+          npm install
       
       - name: Build Functions
         run: |
