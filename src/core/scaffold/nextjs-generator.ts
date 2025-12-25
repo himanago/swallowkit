@@ -34,6 +34,8 @@ const ${modelName}InputSchema = ${schemaName}.partial({ id: true, createdAt: tru
  */
 export async function GET(request: NextRequest) {
   try {
+    console.log('[BFF] Fetching ${modelCamel}s from Functions:', \`\${FUNCTIONS_BASE_URL}/api/${modelCamel}\`);
+    
     const response = await fetch(\`\${FUNCTIONS_BASE_URL}/api/${modelCamel}\`, {
       method: 'GET',
       headers: {
@@ -41,9 +43,17 @@ export async function GET(request: NextRequest) {
       },
     });
     
+    console.log('[BFF] Functions response status:', response.status);
+    
     if (!response.ok) {
       // Read response body once
       const text = await response.text();
+      console.error('[BFF] Functions error response:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: text
+      });
+      
       let errorMessage = 'Failed to fetch ${modelCamel}s';
       try {
         const error = JSON.parse(text);
@@ -59,13 +69,19 @@ export async function GET(request: NextRequest) {
     }
     
     const data = await response.json();
+    console.log('[BFF] Received ${modelCamel}s count:', Array.isArray(data) ? data.length : 'not an array');
     
     // Validate response with Zod schema
     const validated = z.array(${schemaName}).parse(data);
     
     return NextResponse.json(validated);
   } catch (error: any) {
-    console.error('Error fetching ${modelCamel}s:', error);
+    console.error('[BFF] Error fetching ${modelCamel}s:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      cause: error.cause
+    });
     return NextResponse.json(
       { error: error.message || 'Failed to fetch ${modelCamel}s' },
       { status: 500 }
@@ -80,11 +96,13 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    console.log('[BFF] Creating ${modelCamel} with data:', body);
     
     // Validate input (excluding SwallowKit-managed fields)
     const validationResult = ${modelName}InputSchema.safeParse(body);
     
     if (!validationResult.success) {
+      console.error('[BFF] Validation failed:', validationResult.error.errors);
       return NextResponse.json(
         {
           error: 'Validation failed',
@@ -93,6 +111,8 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    
+    console.log('[BFF] Sending to Functions:', \`\${FUNCTIONS_BASE_URL}/api/${modelCamel}\`);
     
     // Pass validated data to Azure Functions
     // SwallowKit auto-manages id, createdAt, updatedAt fields
@@ -104,24 +124,45 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(validationResult.data),
     });
     
+    console.log('[BFF] Functions response status:', response.status);
+    
     if (!response.ok) {
-      const error = await response.json();
+      const text = await response.text();
+      console.error('[BFF] Functions error response:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: text
+      });
+      
+      let errorMessage = 'Failed to create ${modelCamel}';
+      try {
+        const error = JSON.parse(text);
+        errorMessage = error.error || errorMessage;
+      } catch {
+        errorMessage = text || errorMessage;
+      }
       return NextResponse.json(
-        { error: error.error || 'Failed to create ${modelCamel}' },
+        { error: errorMessage },
         { status: response.status }
       );
     }
     
     const data = await response.json();
+    console.log('[BFF] Created ${modelCamel}:', data.id);
     
     // Validate response with Zod schema
     const validated = ${schemaName}.parse(data);
     
     return NextResponse.json(validated, { status: 201 });
-  } catch (error) {
-    console.error('Error creating ${modelCamel}:', error);
+  } catch (error: any) {
+    console.error('[BFF] Error creating ${modelCamel}:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      cause: error.cause
+    });
     return NextResponse.json(
-      { error: 'Failed to create ${modelCamel}' },
+      { error: error.message || 'Failed to create ${modelCamel}' },
       { status: 500 }
     );
   }
@@ -148,6 +189,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    console.log('[BFF] Fetching ${modelCamel} by ID:', id);
     
     const response = await fetch(\`\${FUNCTIONS_BASE_URL}/api/${modelCamel}/\${id}\`, {
       method: 'GET',
@@ -156,24 +198,45 @@ export async function GET(
       },
     });
     
+    console.log('[BFF] Functions response status:', response.status);
+    
     if (!response.ok) {
-      const error = await response.json();
+      const text = await response.text();
+      console.error('[BFF] Functions error response:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: text
+      });
+      
+      let errorMessage = '${modelName} not found';
+      try {
+        const error = JSON.parse(text);
+        errorMessage = error.error || errorMessage;
+      } catch {
+        errorMessage = text || errorMessage;
+      }
       return NextResponse.json(
-        { error: error.error || '${modelName} not found' },
+        { error: errorMessage },
         { status: response.status }
       );
     }
     
     const data = await response.json();
+    console.log('[BFF] Fetched ${modelCamel}:', data.id);
     
     // Validate response with Zod schema
     const validated = ${schemaName}.parse(data);
     
     return NextResponse.json(validated);
-  } catch (error) {
-    console.error('Error fetching ${modelCamel}:', error);
+  } catch (error: any) {
+    console.error('[BFF] Error fetching ${modelCamel}:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      cause: error.cause
+    });
     return NextResponse.json(
-      { error: 'Failed to fetch ${modelCamel}' },
+      { error: error.message || 'Failed to fetch ${modelCamel}' },
       { status: 500 }
     );
   }
@@ -190,11 +253,13 @@ export async function PUT(
   try {
     const { id } = await params;
     const body = await request.json();
+    console.log('[BFF] Updating ${modelCamel}:', id, 'with data:', body);
     
     // Validate input (excluding SwallowKit-managed fields)
     const validationResult = ${modelName}InputSchema.safeParse(body);
     
     if (!validationResult.success) {
+      console.error('[BFF] Validation failed:', validationResult.error.errors);
       return NextResponse.json(
         {
           error: 'Validation failed',
@@ -203,6 +268,8 @@ export async function PUT(
         { status: 400 }
       );
     }
+    
+    console.log('[BFF] Sending to Functions:', \`\${FUNCTIONS_BASE_URL}/api/${modelCamel}/\${id}\`);
     
     // Pass validated data to Azure Functions
     // SwallowKit auto-manages updatedAt field
@@ -214,24 +281,45 @@ export async function PUT(
       body: JSON.stringify(validationResult.data),
     });
     
+    console.log('[BFF] Functions response status:', response.status);
+    
     if (!response.ok) {
-      const error = await response.json();
+      const text = await response.text();
+      console.error('[BFF] Functions error response:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: text
+      });
+      
+      let errorMessage = 'Failed to update ${modelCamel}';
+      try {
+        const error = JSON.parse(text);
+        errorMessage = error.error || errorMessage;
+      } catch {
+        errorMessage = text || errorMessage;
+      }
       return NextResponse.json(
-        { error: error.error || 'Failed to update ${modelCamel}' },
+        { error: errorMessage },
         { status: response.status }
       );
     }
     
     const data = await response.json();
+    console.log('[BFF] Updated ${modelCamel}:', data.id);
     
     // Validate response with Zod schema
     const validated = ${schemaName}.parse(data);
     
     return NextResponse.json(validated);
-  } catch (error) {
-    console.error('Error updating ${modelCamel}:', error);
+  } catch (error: any) {
+    console.error('[BFF] Error updating ${modelCamel}:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      cause: error.cause
+    });
     return NextResponse.json(
-      { error: 'Failed to update ${modelCamel}' },
+      { error: error.message || 'Failed to update ${modelCamel}' },
       { status: 500 }
     );
   }
@@ -247,6 +335,7 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    console.log('[BFF] Deleting ${modelCamel}:', id);
     
     const response = await fetch(\`\${FUNCTIONS_BASE_URL}/api/${modelCamel}/\${id}\`, {
       method: 'DELETE',
@@ -255,19 +344,41 @@ export async function DELETE(
       },
     });
     
+    console.log('[BFF] Functions response status:', response.status);
+    
     if (!response.ok) {
-      const error = await response.json();
+      const text = await response.text();
+      console.error('[BFF] Functions error response:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: text
+      });
+      
+      let errorMessage = 'Failed to delete ${modelCamel}';
+      try {
+        const error = JSON.parse(text);
+        errorMessage = error.error || errorMessage;
+      } catch {
+        errorMessage = text || errorMessage;
+      }
       return NextResponse.json(
-        { error: error.error || 'Failed to delete ${modelCamel}' },
+        { error: errorMessage },
         { status: response.status }
       );
     }
     
+    console.log('[BFF] Deleted ${modelCamel}:', id);
+    
     return new NextResponse(null, { status: 204 });
-  } catch (error) {
-    console.error('Error deleting ${modelCamel}:', error);
+  } catch (error: any) {
+    console.error('[BFF] Error deleting ${modelCamel}:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      cause: error.cause
+    });
     return NextResponse.json(
-      { error: 'Failed to delete ${modelCamel}' },
+      { error: error.message || 'Failed to delete ${modelCamel}' },
       { status: 500 }
     );
   }

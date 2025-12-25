@@ -464,7 +464,45 @@ if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
   appInsights.defaultClient.setAutoPopulateAzureProperties(true);
   appInsights.start();
   
-  console.log('[App Insights] Initialized for Next.js server-side telemetry');
+  // Override console methods to send to Application Insights
+  const originalConsoleLog = console.log;
+  const originalConsoleError = console.error;
+  const originalConsoleWarn = console.warn;
+  
+  console.log = function(...args) {
+    originalConsoleLog.apply(console, args);
+    const message = args.map(arg => 
+      typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+    ).join(' ');
+    appInsights.defaultClient.trackTrace({
+      message: message,
+      severity: appInsights.Contracts.SeverityLevel.Information
+    });
+  };
+  
+  console.error = function(...args) {
+    originalConsoleError.apply(console, args);
+    const message = args.map(arg => 
+      typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+    ).join(' ');
+    appInsights.defaultClient.trackTrace({
+      message: message,
+      severity: appInsights.Contracts.SeverityLevel.Error
+    });
+  };
+  
+  console.warn = function(...args) {
+    originalConsoleWarn.apply(console, args);
+    const message = args.map(arg => 
+      typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+    ).join(' ');
+    appInsights.defaultClient.trackTrace({
+      message: message,
+      severity: appInsights.Contracts.SeverityLevel.Warning
+    });
+  };
+  
+  console.log('[App Insights] Initialized for Next.js server-side telemetry with console override');
 } else {
   console.log('[App Insights] Not configured (skipped in development mode)');
 }
@@ -1211,6 +1249,7 @@ module staticWebAppConfig 'modules/staticwebapp-config.bicep' = {
   params: {
     staticWebAppName: staticWebApp.outputs.name
     functionsDefaultHostname: functionsPlan == 'flex' ? functionsFlex.outputs.defaultHostname : functionsPremium.outputs.defaultHostname
+    appInsightsConnectionString: appInsightsSwa.outputs.connectionString
   }
   dependsOn: [
     functionsFlex
@@ -1291,6 +1330,7 @@ resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-01-01' = {
   name: 'appsettings'
   properties: {
     APPLICATIONINSIGHTS_CONNECTION_STRING: appInsightsConnectionString
+    ApplicationInsightsAgent_EXTENSION_VERSION: '~3'
   }
 }
 
@@ -1307,6 +1347,9 @@ param staticWebAppName string
 @description('Functions App default hostname for backend API calls')
 param functionsDefaultHostname string
 
+@description('Application Insights connection string for SWA')
+param appInsightsConnectionString string
+
 resource staticWebApp 'Microsoft.Web/staticSites@2023-01-01' existing = {
   name: staticWebAppName
 }
@@ -1315,6 +1358,8 @@ resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-01-01' = {
   parent: staticWebApp
   name: 'appsettings'
   properties: {
+    APPLICATIONINSIGHTS_CONNECTION_STRING: appInsightsConnectionString
+    ApplicationInsightsAgent_EXTENSION_VERSION: '~3'
     BACKEND_FUNCTIONS_BASE_URL: 'https://\${functionsDefaultHostname}'
   }
 }
