@@ -22,7 +22,7 @@ export function generateNextjsBFFRoutes(model: ModelInfo): {
 import { z } from 'zod';
 import { ${schemaName} } from '@/lib/models/${modelKebab}';
 
-const FUNCTIONS_BASE_URL = process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
+const FUNCTIONS_BASE_URL = process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
 
 // Input schema: SwallowKit-managed fields (id, createdAt, updatedAt) are optional
 // These fields are ignored by the backend and auto-managed
@@ -173,7 +173,7 @@ export async function POST(request: NextRequest) {
   const detailRoute = `import { NextRequest, NextResponse } from 'next/server';
 import { ${schemaName} } from '@/lib/models/${modelKebab}';
 
-const FUNCTIONS_BASE_URL = process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
+const FUNCTIONS_BASE_URL = process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
 
 // Input schema: SwallowKit-managed fields (id, createdAt, updatedAt) are optional
 // These fields are ignored by the backend and auto-managed

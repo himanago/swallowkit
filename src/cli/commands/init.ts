@@ -252,8 +252,8 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
   
   packageJson.scripts = {
     ...packageJson.scripts,
-    'build': 'next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/',
-    'start': 'node --require ./load-appinsights.js node_modules/next/dist/compiled/cli/next-start.js',
+    'build': 'next build --webpack && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/',
+    'start': 'next start',
     'build:azure': 'swallowkit build',
     'deploy': 'swallowkit deploy',
     'functions:start': 'cd functions && npm start',
@@ -284,7 +284,7 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
       // Handle JavaScript config format: const nextConfig = {
       nextConfigContent = nextConfigContent.replace(
         /(const\s+nextConfig[:\s]*(?::\s*NextConfig\s*)?=\s*\{)(\s*\/\*[^*]*\*\/)?/,
-        `$1\n  output: 'standalone',\n  experimental: {\n    turbopackUseSystemTlsCerts: true,\n  },\n  serverExternalPackages: ['applicationinsights'],$2`
+        `$1\n  output: 'standalone',\n  experimental: {\n    turbopackUseSystemTlsCerts: true,\n  },\n  serverExternalPackages: ['applicationinsights', 'diagnostic-channel-publishers'],$2`
       );
       fs.writeFileSync(nextConfigPath, nextConfigContent);
     }
@@ -328,7 +328,7 @@ module.exports = {
   fs.mkdirSync(apiLibDir, { recursive: true });
 
   // Create backend utility for calling Azure Functions
-  const backendUtilContent = `const FUNCTIONS_BASE_URL = process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
+  const backendUtilContent = `const FUNCTIONS_BASE_URL = process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
 
 /**
  * Simple HTTP client for calling backend APIs
@@ -441,73 +441,79 @@ AZURE_SWA_NAME=your-static-web-app-name
 `;
   fs.writeFileSync(path.join(projectDir, '.env.example'), envExample);
 
-  // 7. Create load-appinsights.js for Application Insights (Azure production only)
-  // Note: Named load-appinsights.js instead of instrumentation.js to avoid Next.js auto-detection in dev mode
-  const appInsightsLoaderContent = `// Application Insights loader for Next.js server-side telemetry
-// Only loaded in production via 'npm start' script (not in dev mode)
-if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
-  const appInsights = require('applicationinsights');
-  
-  appInsights
-    .setup(process.env.APPLICATIONINSIGHTS_CONNECTION_STRING)
-    .setAutoCollectConsole(true)
-    .setAutoCollectDependencies(true)
-    .setAutoCollectExceptions(true)
-    .setAutoCollectHeartbeat(true)
-    .setAutoCollectPerformance(true, true)
-    .setAutoCollectRequests(true)
-    .setAutoDependencyCorrelation(true)
-    .setDistributedTracingMode(appInsights.DistributedTracingModes.AI_AND_W3C)
-    .setSendLiveMetrics(true)
-    .setUseDiskRetryCaching(true);
-  
-  appInsights.defaultClient.setAutoPopulateAzureProperties(true);
-  appInsights.start();
-  
-  // Override console methods to send to Application Insights
-  const originalConsoleLog = console.log;
-  const originalConsoleError = console.error;
-  const originalConsoleWarn = console.warn;
-  
-  console.log = function(...args) {
-    originalConsoleLog.apply(console, args);
-    const message = args.map(arg => 
-      typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-    ).join(' ');
-    appInsights.defaultClient.trackTrace({
-      message: message,
-      severity: appInsights.Contracts.SeverityLevel.Information
-    });
-  };
-  
-  console.error = function(...args) {
-    originalConsoleError.apply(console, args);
-    const message = args.map(arg => 
-      typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-    ).join(' ');
-    appInsights.defaultClient.trackTrace({
-      message: message,
-      severity: appInsights.Contracts.SeverityLevel.Error
-    });
-  };
-  
-  console.warn = function(...args) {
-    originalConsoleWarn.apply(console, args);
-    const message = args.map(arg => 
-      typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-    ).join(' ');
-    appInsights.defaultClient.trackTrace({
-      message: message,
-      severity: appInsights.Contracts.SeverityLevel.Warning
-    });
-  };
-  
-  console.log('[App Insights] Initialized for Next.js server-side telemetry with console override');
-} else {
-  console.log('[App Insights] Not configured (skipped in development mode)');
+  // 7. Create instrumentation.ts for Application Insights (Next.js official way)
+  const instrumentationContent = `// Application Insights instrumentation for Next.js
+// This file is automatically loaded by Next.js when instrumentationHook is enabled
+export async function register() {
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    // Only run on server-side
+    const connectionString = process.env.APPLICATIONINSIGHTS_CONNECTION_STRING;
+    
+    if (connectionString) {
+      const appInsights = await import('applicationinsights');
+      
+      appInsights
+        .setup(connectionString)
+        .setAutoCollectConsole(true)
+        .setAutoCollectDependencies(true)
+        .setAutoCollectExceptions(true)
+        .setAutoCollectHeartbeat(true)
+        .setAutoCollectPerformance(true, true)
+        .setAutoCollectRequests(true)
+        .setAutoDependencyCorrelation(true)
+        .setDistributedTracingMode(appInsights.DistributedTracingModes.AI_AND_W3C)
+        .setSendLiveMetrics(true)
+        .setUseDiskRetryCaching(true);
+      
+      appInsights.defaultClient.setAutoPopulateAzureProperties();
+      appInsights.start();
+      
+      // Override console methods to send to Application Insights
+      const originalConsoleLog = console.log;
+      const originalConsoleError = console.error;
+      const originalConsoleWarn = console.warn;
+      
+      console.log = function(...args: any[]) {
+        originalConsoleLog.apply(console, args);
+        const message = args.map(arg => 
+          typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+        ).join(' ');
+        appInsights.defaultClient.trackTrace({
+          message: message,
+          severity: '1'
+        });
+      };
+      
+      console.error = function(...args: any[]) {
+        originalConsoleError.apply(console, args);
+        const message = args.map(arg => 
+          typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+        ).join(' ');
+        appInsights.defaultClient.trackTrace({
+          message: message,
+          severity: '3'
+        });
+      };
+      
+      console.warn = function(...args: any[]) {
+        originalConsoleWarn.apply(console, args);
+        const message = args.map(arg => 
+          typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+        ).join(' ');
+        appInsights.defaultClient.trackTrace({
+          message: message,
+          severity: '2'
+        });
+      };
+      
+      console.log('[App Insights] Initialized for Next.js server-side telemetry with console override');
+    } else {
+      console.log('[App Insights] Not configured (skipped in development mode)');
+    }
+  }
 }
 `;
-  fs.writeFileSync(path.join(projectDir, 'load-appinsights.js'), appInsightsLoaderContent);
+  fs.writeFileSync(path.join(projectDir, 'instrumentation.ts'), instrumentationContent);
 
   // 8. Create .env.local for local development
   const envLocalContent = [
@@ -794,7 +800,7 @@ export async function POST(request: NextRequest) {
   let envExample = fs.readFileSync(envExamplePath, 'utf-8');
   
   if (!envExample.includes('FUNCTIONS_BASE_URL')) {
-    envExample += `\n# Azure Functions Backend URL\nFUNCTIONS_BASE_URL=http://localhost:7071\n`;
+    envExample += `\n# Azure Functions Backend URL\nBACKEND_FUNCTIONS_BASE_URL=http://localhost:7071\n`;
     fs.writeFileSync(envExamplePath, envExample);
   }
 
@@ -803,7 +809,7 @@ export async function POST(request: NextRequest) {
   let envLocal = fs.readFileSync(envLocalPath, 'utf-8');
   
   if (!envLocal.includes('FUNCTIONS_BASE_URL')) {
-    envLocal += `\n# Azure Functions Backend URL (Local)\nFUNCTIONS_BASE_URL=http://localhost:7071\n`;
+    envLocal += `\n# Azure Functions Backend URL (Local)\nBACKEND_FUNCTIONS_BASE_URL=http://localhost:7071\n`;
     fs.writeFileSync(envLocalPath, envLocal);
   }
 
