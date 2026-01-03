@@ -328,7 +328,10 @@ module.exports = {
   fs.mkdirSync(apiLibDir, { recursive: true });
 
   // Create backend utility for calling Azure Functions
-  const backendUtilContent = `const FUNCTIONS_BASE_URL = process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
+  const backendUtilContent = `// Get Functions base URL at runtime (not at build time)
+function getFunctionsBaseUrl(): string {
+  return process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
+}
 
 /**
  * Simple HTTP client for calling backend APIs
@@ -340,7 +343,8 @@ async function request<T>(
   body?: any,
   queryParams?: Record<string, string>
 ): Promise<T> {
-  let url = \`\${FUNCTIONS_BASE_URL}\${endpoint}\`;
+  const functionsBaseUrl = getFunctionsBaseUrl();
+  let url = \`\${functionsBaseUrl}\${endpoint}\`;
   if (queryParams) {
     const params = new URLSearchParams(queryParams);
     url += \`?\${params.toString()}\`;
@@ -1083,7 +1087,7 @@ ${cicdChoice === 'github' ? `#### GitHub Actions
 
 2. Get Function App publish profile:
    \`\`\`bash
-   az functionapp deployment list-publishing-profiles --name func-${projectName} --resource-group <rg-name> --xml
+   az webapp deployment list-publishing-profiles --name func-${projectName} --resource-group <rg-name> --xml
    \`\`\`
 
 3. Add secrets to GitHub repository:
@@ -1205,7 +1209,26 @@ module staticWebApp 'modules/staticwebapp.bicep' = {
   }
 }
 
-// Azure Functions (conditional based on plan)
+// Cosmos DB (conditional based on mode) - Deploy BEFORE Functions
+module cosmosDbFreeTier 'modules/cosmosdb-freetier.bicep' = if (cosmosDbMode == 'freetier') {
+  name: 'cosmosDb'
+  params: {
+    accountName: 'cosmos-\${projectName}'
+    databaseName: '\${projectName}Database'
+    location: location
+  }
+}
+
+module cosmosDbServerless 'modules/cosmosdb-serverless.bicep' = if (cosmosDbMode == 'serverless') {
+  name: 'cosmosDb'
+  params: {
+    accountName: 'cosmos-\${projectName}'
+    databaseName: '\${projectName}Database'
+    location: location
+  }
+}
+
+// Azure Functions (conditional based on plan) - Deploy AFTER Cosmos DB
 module functionsFlex 'modules/functions-flex.bicep' = if (functionsPlan == 'flex') {
   name: 'functionsApp'
   params: {
@@ -1214,7 +1237,13 @@ module functionsFlex 'modules/functions-flex.bicep' = if (functionsPlan == 'flex
     storageAccountName: 'stg\${uniqueString(resourceGroup().id, projectName)}'
     appInsightsConnectionString: appInsightsFunctions.outputs.connectionString
     swaDefaultHostname: staticWebApp.outputs.defaultHostname
+    cosmosDbEndpoint: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.endpoint : cosmosDbServerless.outputs.endpoint
+    cosmosDbDatabaseName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.databaseName : cosmosDbServerless.outputs.databaseName
   }
+  dependsOn: [
+    cosmosDbFreeTier
+    cosmosDbServerless
+  ]
 }
 
 module functionsPremium 'modules/functions-premium.bicep' = if (functionsPlan == 'premium') {
@@ -1225,28 +1254,38 @@ module functionsPremium 'modules/functions-premium.bicep' = if (functionsPlan ==
     storageAccountName: 'stg\${uniqueString(resourceGroup().id, projectName)}'
     appInsightsConnectionString: appInsightsFunctions.outputs.connectionString
     swaDefaultHostname: staticWebApp.outputs.defaultHostname
+    cosmosDbEndpoint: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.endpoint : cosmosDbServerless.outputs.endpoint
+    cosmosDbDatabaseName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.databaseName : cosmosDbServerless.outputs.databaseName
   }
+  dependsOn: [
+    cosmosDbFreeTier
+    cosmosDbServerless
+  ]
 }
 
-// Cosmos DB (conditional based on mode)
-module cosmosDbFreeTier 'modules/cosmosdb-freetier.bicep' = if (cosmosDbMode == 'freetier') {
-  name: 'cosmosDb'
+// Cosmos DB role assignment for Functions (after Functions is created)
+module cosmosDbRoleAssignmentFreeTier 'modules/cosmosdb-role-assignment.bicep' = if (cosmosDbMode == 'freetier') {
+  name: 'cosmosDbRoleAssignment'
   params: {
-    accountName: 'cosmos-\${projectName}'
-    databaseName: '\${projectName}Database'
-    location: location
+    cosmosAccountName: cosmosDbFreeTier.outputs.accountName
     functionsPrincipalId: functionsPlan == 'flex' ? functionsFlex.outputs.principalId : functionsPremium.outputs.principalId
   }
+  dependsOn: [
+    functionsFlex
+    functionsPremium
+  ]
 }
 
-module cosmosDbServerless 'modules/cosmosdb-serverless.bicep' = if (cosmosDbMode == 'serverless') {
-  name: 'cosmosDb'
+module cosmosDbRoleAssignmentServerless 'modules/cosmosdb-role-assignment.bicep' = if (cosmosDbMode == 'serverless') {
+  name: 'cosmosDbRoleAssignment'
   params: {
-    accountName: 'cosmos-\${projectName}'
-    databaseName: '\${projectName}Database'
-    location: location
+    cosmosAccountName: cosmosDbServerless.outputs.accountName
     functionsPrincipalId: functionsPlan == 'flex' ? functionsFlex.outputs.principalId : functionsPremium.outputs.principalId
   }
+  dependsOn: [
+    functionsFlex
+    functionsPremium
+  ]
 }
 
 // Update SWA config with Functions hostname (after Functions deployment)
@@ -1442,6 +1481,12 @@ param appInsightsConnectionString string
 @description('Static Web App default hostname for CORS')
 param swaDefaultHostname string
 
+@description('Cosmos DB endpoint')
+param cosmosDbEndpoint string
+
+@description('Cosmos DB database name')
+param cosmosDbDatabaseName string
+
 // Storage Account for Functions
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
@@ -1528,6 +1573,14 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsightsConnectionString
         }
+        {
+          name: 'CosmosDBConnection'
+          value: cosmosDbEndpoint
+        }
+        {
+          name: 'COSMOS_DB_DATABASE_NAME'
+          value: cosmosDbDatabaseName
+        }
       ]
       cors: {
         allowedOrigins: [
@@ -1580,6 +1633,12 @@ param appInsightsConnectionString string
 
 @description('Static Web App default hostname for CORS')
 param swaDefaultHostname string
+
+@description('Cosmos DB endpoint')
+param cosmosDbEndpoint string
+
+@description('Cosmos DB database name')
+param cosmosDbDatabaseName string
 
 // Storage Account for Functions
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -1651,6 +1710,14 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsightsConnectionString
         }
+        {
+          name: 'CosmosDBConnection'
+          value: cosmosDbEndpoint
+        }
+        {
+          name: 'COSMOS_DB_DATABASE_NAME'
+          value: cosmosDbDatabaseName
+        }
       ]
       cors: {
         allowedOrigins: [
@@ -1687,9 +1754,6 @@ param databaseName string
 
 @description('Location for Cosmos DB')
 param location string
-
-@description('Functions App Managed Identity Principal ID')
-param functionsPrincipalId string
 
 // Cosmos DB Account (Free Tier)
 resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
@@ -1728,20 +1792,6 @@ resource database 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-11-15
   }
 }
 
-// Built-in Cosmos DB Data Contributor role definition
-var cosmosDbDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
-
-// Role assignment for Functions to access Cosmos DB
-resource roleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
-  parent: cosmosAccount
-  name: guid(cosmosAccount.id, functionsPrincipalId, cosmosDbDataContributorRoleId)
-  properties: {
-    roleDefinitionId: '\${cosmosAccount.id}/sqlRoleDefinitions/\${cosmosDbDataContributorRoleId}'
-    principalId: functionsPrincipalId
-    scope: cosmosAccount.id
-  }
-}
-
 output accountName string = cosmosAccount.name
 output endpoint string = cosmosAccount.properties.documentEndpoint
 output databaseName string = database.name
@@ -1757,9 +1807,6 @@ param databaseName string
 
 @description('Location for Cosmos DB')
 param location string
-
-@description('Functions App Managed Identity Principal ID')
-param functionsPrincipalId string
 
 // Cosmos DB Account (Serverless)
 resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
@@ -1799,6 +1846,23 @@ resource database 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-11-15
   }
 }
 
+output accountName string = cosmosAccount.name
+output endpoint string = cosmosAccount.properties.documentEndpoint
+output databaseName string = database.name
+`;
+  fs.writeFileSync(path.join(modulesDir, 'cosmosdb-serverless.bicep'), cosmosDbServerlessBicep);
+
+  // modules/cosmosdb-role-assignment.bicep (Role Assignment Module)
+  const cosmosDbRoleAssignmentBicep = `@description('Cosmos DB account name')
+param cosmosAccountName string
+
+@description('Functions App Managed Identity Principal ID')
+param functionsPrincipalId string
+
+resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' existing = {
+  name: cosmosAccountName
+}
+
 // Built-in Cosmos DB Data Contributor role definition
 var cosmosDbDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
 
@@ -1813,11 +1877,9 @@ resource roleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignment
   }
 }
 
-output accountName string = cosmosAccount.name
-output endpoint string = cosmosAccount.properties.documentEndpoint
-output databaseName string = database.name
+output roleAssignmentId string = roleAssignment.id
 `;
-  fs.writeFileSync(path.join(modulesDir, 'cosmosdb-serverless.bicep'), cosmosDbServerlessBicep);
+  fs.writeFileSync(path.join(modulesDir, 'cosmosdb-role-assignment.bicep'), cosmosDbRoleAssignmentBicep);
 
   console.log('✅ Infrastructure files created\n');
 }

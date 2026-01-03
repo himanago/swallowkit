@@ -22,7 +22,10 @@ export function generateNextjsBFFRoutes(model: ModelInfo): {
 import { z } from 'zod';
 import { ${schemaName} } from '@/lib/models/${modelKebab}';
 
-const FUNCTIONS_BASE_URL = process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
+// Get Functions base URL at runtime (not at build time)
+function getFunctionsBaseUrl(): string {
+  return process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
+}
 
 // Input schema: SwallowKit-managed fields (id, createdAt, updatedAt) are optional
 // These fields are ignored by the backend and auto-managed
@@ -34,9 +37,10 @@ const ${modelName}InputSchema = ${schemaName}.partial({ id: true, createdAt: tru
  */
 export async function GET(request: NextRequest) {
   try {
-    console.log('[BFF] Fetching ${modelCamel}s from Functions:', \`\${FUNCTIONS_BASE_URL}/api/${modelCamel}\`);
+    const functionsBaseUrl = getFunctionsBaseUrl();
+    console.log('[BFF] Fetching ${modelCamel}s from Functions:', \`\${functionsBaseUrl}/api/${modelCamel}\`);
     
-    const response = await fetch(\`\${FUNCTIONS_BASE_URL}/api/${modelCamel}\`, {
+    const response = await fetch(\`\${functionsBaseUrl}/api/${modelCamel}\`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -112,11 +116,12 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    console.log('[BFF] Sending to Functions:', \`\${FUNCTIONS_BASE_URL}/api/${modelCamel}\`);
+    const functionsBaseUrl = getFunctionsBaseUrl();
+    console.log('[BFF] Sending to Functions:', \`\${functionsBaseUrl}/api/${modelCamel}\`);
     
     // Pass validated data to Azure Functions
     // SwallowKit auto-manages id, createdAt, updatedAt fields
-    const response = await fetch(\`\${FUNCTIONS_BASE_URL}/api/${modelCamel}\`, {
+    const response = await fetch(\`\${functionsBaseUrl}/api/${modelCamel}\`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -173,7 +178,10 @@ export async function POST(request: NextRequest) {
   const detailRoute = `import { NextRequest, NextResponse } from 'next/server';
 import { ${schemaName} } from '@/lib/models/${modelKebab}';
 
-const FUNCTIONS_BASE_URL = process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
+// Get Functions base URL at runtime (not at build time)
+function getFunctionsBaseUrl(): string {
+  return process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
+}
 
 // Input schema: SwallowKit-managed fields (id, createdAt, updatedAt) are optional
 // These fields are ignored by the backend and auto-managed
@@ -191,7 +199,8 @@ export async function GET(
     const { id } = await params;
     console.log('[BFF] Fetching ${modelCamel} by ID:', id);
     
-    const response = await fetch(\`\${FUNCTIONS_BASE_URL}/api/${modelCamel}/\${id}\`, {
+    const functionsBaseUrl = getFunctionsBaseUrl();
+    const response = await fetch(\`\${functionsBaseUrl}/api/${modelCamel}/\${id}\`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -269,11 +278,12 @@ export async function PUT(
       );
     }
     
-    console.log('[BFF] Sending to Functions:', \`\${FUNCTIONS_BASE_URL}/api/${modelCamel}/\${id}\`);
+    const functionsBaseUrl = getFunctionsBaseUrl();
+    console.log('[BFF] Sending to Functions:', \`\${functionsBaseUrl}/api/${modelCamel}/\${id}\`);
     
     // Pass validated data to Azure Functions
     // SwallowKit auto-manages updatedAt field
-    const response = await fetch(\`\${FUNCTIONS_BASE_URL}/api/${modelCamel}/\${id}\`, {
+    const response = await fetch(\`\${functionsBaseUrl}/api/${modelCamel}/\${id}\`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -337,7 +347,8 @@ export async function DELETE(
     const { id } = await params;
     console.log('[BFF] Deleting ${modelCamel}:', id);
     
-    const response = await fetch(\`\${FUNCTIONS_BASE_URL}/api/${modelCamel}/\${id}\`, {
+    const functionsBaseUrl = getFunctionsBaseUrl();
+    const response = await fetch(\`\${functionsBaseUrl}/api/${modelCamel}/\${id}\`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
