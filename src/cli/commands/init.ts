@@ -1574,7 +1574,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           value: appInsightsConnectionString
         }
         {
-          name: 'CosmosDBConnection'
+          name: 'CosmosDBConnection__accountEndpoint'
           value: cosmosDbEndpoint
         }
         {
@@ -1711,7 +1711,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           value: appInsightsConnectionString
         }
         {
-          name: 'CosmosDBConnection'
+          name: 'CosmosDBConnection__accountEndpoint'
           value: cosmosDbEndpoint
         }
         {
