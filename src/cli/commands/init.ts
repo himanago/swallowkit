@@ -1764,6 +1764,8 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
     databaseAccountOfferType: 'Standard'
     enableAutomaticFailover: false
     enableFreeTier: true
+    publicNetworkAccess: 'Enabled'
+    disableLocalAuth: true
     consistencyPolicy: {
       defaultConsistencyLevel: 'Session'
     }
@@ -1774,7 +1776,7 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
         isZoneRedundant: false
       }
     ]
-    disableKeyBasedMetadataWriteAccess: false
+    disableKeyBasedMetadataWriteAccess: true
   }
 }
 
@@ -1816,6 +1818,8 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
   properties: {
     databaseAccountOfferType: 'Standard'
     enableAutomaticFailover: false
+    publicNetworkAccess: 'Enabled'
+    disableLocalAuth: true
     consistencyPolicy: {
       defaultConsistencyLevel: 'Session'
     }
@@ -1831,7 +1835,7 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
         name: 'EnableServerless'
       }
     ]
-    disableKeyBasedMetadataWriteAccess: false
+    disableKeyBasedMetadataWriteAccess: true
   }
 }
 
