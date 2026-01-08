@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { initCommand, devCommand, buildCommand, deployCommand, scaffoldCommand, createModelCommand } from "./commands";
+import { initCommand, devCommand, scaffoldCommand, createModelCommand } from "./commands";
 import { provisionCommand } from "./commands/provision";
 
 const program = new Command();
@@ -54,13 +54,5 @@ program
       apiOnly: options.apiOnly,
     });
   });
-
-program
-  .command("build")
-  .description("Build for production")
-  .option("--output <dir>", "Output directory", "dist")
-  .action(buildCommand);
-
-program.addCommand(deployCommand);
 
 program.parse();

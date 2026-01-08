@@ -3,6 +3,7 @@ import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { CosmosClient, PartitionKeyKind } from '@azure/cosmos';
+import { ensureSwallowKitProject } from '../../core/config';
 
 interface DevOptions {
   port?: string;
@@ -71,6 +72,9 @@ export const devCommand = new Command()
   .option('--verbose', 'Show verbose logs', false)
   .option('--no-functions', 'Skip Azure Functions startup', false)
   .action(async (options: DevOptions & { functionsPort?: string; noFunctions?: boolean }) => {
+    // SwallowKit プロジェクトディレクトリかどうかを検証
+    ensureSwallowKitProject("dev");
+
     console.log('🚀 Starting SwallowKit development environment...');
     if (options.verbose) {
       console.log('⚙️  Options:', options);

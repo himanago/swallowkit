@@ -160,3 +160,51 @@ export function validateConfig(config: SwallowKitConfig): { valid: boolean; erro
     errors,
   };
 }
+
+/**
+ * SwallowKit プロジェクトディレクトリかどうかを検証するための設定ファイルパス一覧
+ */
+const SWALLOWKIT_PROJECT_MARKERS = [
+  "swallowkit.config.js",
+  "swallowkit.config.json",
+  ".swallowkitrc.json",
+];
+
+/**
+ * 現在のディレクトリが SwallowKit プロジェクトディレクトリかどうかを検証
+ * @param projectRoot 検証するディレクトリパス（省略時は process.cwd()）
+ * @returns プロジェクトが有効な場合は true、無効な場合は false
+ */
+export function isSwallowKitProject(projectRoot?: string): boolean {
+  const cwd = projectRoot || process.cwd();
+  
+  // swallowkit 設定ファイルの存在をチェック
+  for (const marker of SWALLOWKIT_PROJECT_MARKERS) {
+    const markerPath = path.resolve(cwd, marker);
+    if (fs.existsSync(markerPath)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * SwallowKit プロジェクトディレクトリかどうかを検証し、無効な場合はエラーメッセージを表示して終了
+ * init 以外のコマンドの冒頭で呼び出すこと
+ * @param commandName コマンド名（エラーメッセージ用）
+ * @param projectRoot 検証するディレクトリパス（省略時は process.cwd()）
+ */
+export function ensureSwallowKitProject(commandName: string, projectRoot?: string): void {
+  if (!isSwallowKitProject(projectRoot)) {
+    console.error(`❌ Error: This directory is not a SwallowKit project.`);
+    console.error(`\n   The '${commandName}' command must be run from a SwallowKit project directory.`);
+    console.error(`   A SwallowKit project should contain one of the following files:`);
+    for (const marker of SWALLOWKIT_PROJECT_MARKERS) {
+      console.error(`     - ${marker}`);
+    }
+    console.error(`\n💡 Tip: Run 'npx swallowkit init' first to create a new SwallowKit project,`);
+    console.error(`   or navigate to an existing SwallowKit project directory.`);
+    process.exit(1);
+  }
+}
