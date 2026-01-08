@@ -7,6 +7,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
 import { toPascalCase, toCamelCase } from "../../core/scaffold/model-parser";
+import { ensureSwallowKitProject } from "../../core/config";
 
 interface CreateModelOptions {
   names: string[]; // モデル名のリスト（例: ["todo", "user", "post"]）
@@ -55,6 +56,9 @@ function askConfirmation(question: string): Promise<boolean> {
  * create-model コマンド
  */
 export async function createModelCommand(options: CreateModelOptions) {
+  // SwallowKit プロジェクトディレクトリかどうかを検証
+  ensureSwallowKitProject("create-model");
+
   console.log("🏗️  SwallowKit Create-Model: Generating model templates...\n");
 
   const modelsDir = options.modelsDir || "lib/models";

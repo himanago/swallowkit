@@ -285,8 +285,6 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
     ...packageJson.scripts,
     'build': 'next build --webpack && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/',
     'start': 'next start',
-    'build:azure': 'swallowkit build',
-    'deploy': 'swallowkit deploy',
     'functions:start': 'cd functions && npm start',
   };
   

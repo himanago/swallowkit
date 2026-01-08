@@ -3,12 +3,16 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import prompts from 'prompts';
+import { ensureSwallowKitProject } from '../../core/config';
 
 export const provisionCommand = new Command('provision')
   .description('Provision Azure resources using Bicep templates')
   .requiredOption('-g, --resource-group <name>', 'Resource group name')
   .option('--subscription <id>', 'Azure subscription ID (optional)')
   .action(async (options) => {
+    // SwallowKit プロジェクトディレクトリかどうかを検証
+    ensureSwallowKitProject("provision");
+
     console.log('🚀 Starting Azure resource provisioning...\n');
 
     // Check if Azure CLI is installed

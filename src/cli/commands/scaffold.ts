@@ -15,6 +15,7 @@ import {
   generateNewPage,
   generateEditPage,
 } from "../../core/scaffold/ui-generator";
+import { ensureSwallowKitProject } from "../../core/config";
 
 interface ScaffoldOptions {
   model: string; // モデルファイルのパス（例: "lib/models/todo.ts" or "todo"）
@@ -24,6 +25,9 @@ interface ScaffoldOptions {
 }
 
 export async function scaffoldCommand(options: ScaffoldOptions) {
+  // SwallowKit プロジェクトディレクトリかどうかを検証
+  ensureSwallowKitProject("scaffold");
+
   console.log("🏗️  SwallowKit Scaffold: Generating CRUD operations...\n");
 
   try {
