@@ -61,25 +61,35 @@ async function promptAzureConfig(): Promise<AzureConfig> {
 
   const functionsPlan: FunctionsPlan = functionsResponse.plan || 'flex';
 
-  const vnetResponse = await prompts({
-    type: 'select',
-    name: 'vnet',
-    message: 'Network security (VNet integration):',
-    choices: [
-      { title: 'None (public endpoints, simplest setup)', value: 'none' },
-      { title: 'Outbound VNet (Cosmos DB via Private Endpoint)', value: 'outbound' },
-      { title: 'Full Private (Functions + Cosmos DB Private Endpoints) - Premium only', value: 'full' }
-    ],
-    initial: 0
-  });
+  let vnetOption: VNetOption;
 
-  let vnetOption: VNetOption = vnetResponse.vnet || 'none';
-
-  // Flex Consumption does not support inbound private endpoints
-  if (functionsPlan === 'flex' && vnetOption === 'full') {
-    console.log('\n⚠️  Flex Consumption does not support inbound private endpoints.');
-    console.log('   Switching to outbound-only VNet integration.\n');
-    vnetOption = 'outbound';
+  if (functionsPlan === 'premium') {
+    // Premium: 3 options including Full Private
+    const vnetResponse = await prompts({
+      type: 'select',
+      name: 'vnet',
+      message: 'Network security:',
+      choices: [
+        { title: 'Full Private (recommended) - Functions + Cosmos DB via Private Endpoints', value: 'full' },
+        { title: 'VNet Integration - Cosmos DB via Private Endpoint only', value: 'outbound' },
+        { title: 'None - Public endpoints, simplest but least secure', value: 'none' }
+      ],
+      initial: 0
+    });
+    vnetOption = vnetResponse.vnet || 'full';
+  } else {
+    // Flex Consumption: 2 options (Full Private not supported)
+    const vnetResponse = await prompts({
+      type: 'select',
+      name: 'vnet',
+      message: 'Network security:',
+      choices: [
+        { title: 'VNet Integration (recommended) - Cosmos DB via Private Endpoint', value: 'outbound' },
+        { title: 'None - Public endpoints, simplest but least secure', value: 'none' }
+      ],
+      initial: 0
+    });
+    vnetOption = vnetResponse.vnet || 'outbound';
   }
 
   return {
