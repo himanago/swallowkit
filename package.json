@@ -1,7 +1,7 @@
 {
   "name": "swallowkit",
-  "version": "0.2.0-beta.1",
-  "description": "A React framework for building full-stack Azure Static Web Apps with ease.",
+  "version": "0.3.0-beta.2",
+  "description": "Type-safe schema-driven development toolkit for Next.js applications on Azure",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
