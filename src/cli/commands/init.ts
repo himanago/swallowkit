@@ -624,7 +624,7 @@ async function createAzureFunctionsProject(projectDir: string) {
       prestart: 'npm run build'
     },
     dependencies: {
-      '@azure/functions': '^4.0.0',
+      '@azure/functions': '~4.5.0',
       '@azure/cosmos': '^4.0.0',
       'zod': '^3.25.0'
     },
@@ -673,7 +673,7 @@ async function createAzureFunctionsProject(projectDir: string) {
     },
     extensionBundle: {
       id: 'Microsoft.Azure.Functions.ExtensionBundle',
-      version: '[4.*, 5.0.0)'
+      version: '[4.0.0, 4.10.0)'
     }
   };
   fs.writeFileSync(
@@ -782,6 +782,10 @@ app.http('greet', {
 });
 `;
   fs.writeFileSync(path.join(srcDir, 'greet.ts'), greetFunction);
+
+  // Install dependencies for functions
+  console.log('📦 Installing Functions dependencies...\n');
+  await installDependencies(functionsDir);
 
   console.log('✅ Azure Functions project created\n');
 }

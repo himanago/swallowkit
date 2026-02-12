@@ -151,7 +151,7 @@ await api.delete('/api/todos/123');
 
 - Node.js 22.x
 - Azure Cosmos DB Emulator (local development)
-  - [Official documentation](https://learn.microsoft.com/en-us/azure/cosmos-db/emulator)
+  - [Official documentation (vNext recommended)](https://learn.microsoft.com/en-us/azure/cosmos-db/emulator-linux)
     - Windows: [Download](https://aka.ms/cosmosdb-emulator)
     - Docker: `docker run -p 8081:8081 mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator`
 

@@ -114,8 +114,10 @@ async function initializeCosmosDB(databaseName: string): Promise<void> {
       return;
     }
 
+    const endpoint = endpointMatch[1];
+
     const client = new CosmosClient({
-      endpoint: endpointMatch[1],
+      endpoint: endpoint,
       key: keyMatch[1]
     });
 
@@ -129,7 +131,7 @@ async function initializeCosmosDB(databaseName: string): Promise<void> {
       const scaffoldConfigContent = fs.readFileSync(scaffoldConfigPath, 'utf-8');
       
       // Parse TypeScript file to extract models array
-      const modelsMatch = scaffoldConfigContent.match(/models:\s*\[([\s\S]*?)\]/);
+      const modelsMatch = scaffoldConfigContent.match(/models:\s*\[([\s\S]*?)\]\s*as\s*ScaffoldModel\[\]/);
       if (modelsMatch) {
         const modelsArrayContent = modelsMatch[1];
         // Extract model names from objects like { name: 'Task', path: '/task', label: 'Task' }
@@ -338,13 +340,14 @@ async function startDevEnvironment(options: DevOptions) {
     }
 
     if (hasFunctions && !options.noFunctions) {
-
       // Azure Functions を起動
+      const funcEnv: NodeJS.ProcessEnv = { ...process.env, FUNCTIONS_PORT: functionsPort };
+      
       const funcProcess = spawn('npm', ['start'], {
         cwd: functionsDir,
         shell: true,
         stdio: 'pipe', // Always pipe to capture output
-        env: { ...process.env, FUNCTIONS_PORT: functionsPort }
+        env: funcEnv
       });
 
       // Functions の出力をそのまま表示（プレフィックス付き）

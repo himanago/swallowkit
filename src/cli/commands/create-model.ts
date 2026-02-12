@@ -32,6 +32,9 @@ export const ${camelName}Schema = z.object({
 });
 
 export type ${pascalName} = z.infer<typeof ${camelName}Schema>;
+
+// Display name for UI
+export const displayName = '${pascalName}';
 `;
 }
 

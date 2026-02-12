@@ -8,6 +8,7 @@ import { pathToFileURL } from "url";
 
 export interface ModelInfo {
   name: string; // モデル名（例: "Todo"）
+  displayName: string; // 表示名（例: "Todo" または "タスク"）
   schemaName: string; // スキーマ変数名（例: "todoSchema"）
   filePath: string; // モデルファイルの絶対パス
   fields: FieldInfo[]; // フィールド情報
@@ -48,6 +49,10 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
   
   const schemaName = schemaMatch[1];
   
+  // displayName を抽出（例: export const displayName = 'Task'）
+  const displayNameMatch = content.match(/export\s+const\s+displayName\s*=\s*['"]([^'"]+)['"]/);  
+  const displayName = displayNameMatch ? displayNameMatch[1] : modelName;
+  
   // フィールド情報を抽出（動的インポートを使用）
   const fields = await extractFieldsFromSchema(modelPath, schemaName);
   
@@ -58,6 +63,7 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
   
   return {
     name: modelName,
+    displayName,
     schemaName,
     filePath: modelPath,
     fields,
@@ -332,4 +338,35 @@ export function toKebabCase(str: string): string {
   return str
     .replace(/([a-z])([A-Z])/g, "$1-$2")
     .toLowerCase();
+}
+
+/**
+ * models ディレクトリから全てのモデル情報を取得
+ * @param modelsDir モデルディレクトリのパス（デフォルト: "lib/models"）
+ * @returns モデル情報の配列
+ */
+export async function getAllModels(modelsDir: string = "lib/models"): Promise<ModelInfo[]> {
+  const cwd = process.cwd();
+  const fullModelsDir = path.join(cwd, modelsDir);
+  
+  if (!fs.existsSync(fullModelsDir)) {
+    return [];
+  }
+  
+  const files = fs.readdirSync(fullModelsDir);
+  const modelFiles = files.filter(file => file.endsWith('.ts'));
+  
+  const models: ModelInfo[] = [];
+  
+  for (const file of modelFiles) {
+    try {
+      const modelPath = path.join(fullModelsDir, file);
+      const modelInfo = await parseModelFile(modelPath);
+      models.push(modelInfo);
+    } catch (error: any) {
+      console.warn(`⚠️  Failed to parse model file ${file}: ${error.message}`);
+    }
+  }
+  
+  return models;
 }

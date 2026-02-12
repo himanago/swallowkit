@@ -491,49 +491,48 @@ async function updateNavigationMenu(modelInfo: any): Promise<void> {
 
   // Update scaffold config
   const configPath = path.join(cwd, "lib", "scaffold-config.ts");
-  const configDir = path.dirname(configPath);
   
-  if (!fs.existsSync(configDir)) {
-    fs.mkdirSync(configDir, { recursive: true });
+  if (!fs.existsSync(configPath)) {
+    console.log("⚠️  scaffold-config.ts not found. Skipping navigation menu update.");
+    return;
   }
 
-  let config: { models: Array<{ name: string; path: string; label: string }> } = { models: [] };
-
-  // Parse existing TypeScript config if it exists
-  if (fs.existsSync(configPath)) {
-    const content = fs.readFileSync(configPath, "utf-8");
-    const modelsMatch = content.match(/models:\s*\[([\ s\S]*?)\]/);
-    if (modelsMatch) {
-      try {
-        // Extract model entries
-        const modelsContent = modelsMatch[1];
-        const modelEntries = modelsContent.match(/\{[^}]+\}/g) || [];
-        config.models = modelEntries.map(entry => {
-          const nameMatch = entry.match(/name:\s*['"]([^'"]+)['"]/);
-          const pathMatch = entry.match(/path:\s*['"]([^'"]+)['"]/);
-          const labelMatch = entry.match(/label:\s*['"]([^'"]+)['"]/);
-          return {
-            name: nameMatch?.[1] || '',
-            path: pathMatch?.[1] || '',
-            label: labelMatch?.[1] || '',
-          };
-        });
-      } catch (e) {
-        console.warn('Warning: Could not parse existing config, creating new one');
-      }
+  // Read existing config
+  const configContent = fs.readFileSync(configPath, "utf-8");
+  
+  // Parse models array - extract each model entry
+  const models: Array<{ name: string; path: string; label: string }> = [];
+  const modelsMatch = configContent.match(/models:\s*\[([\s\S]*?)\]\s*as\s*ScaffoldModel\[\]/);
+  
+  if (modelsMatch) {
+    const modelsArrayContent = modelsMatch[1];
+    // Match each object in the array: { name: '...', path: '...', label: '...' }
+    const modelPattern = /\{\s*name:\s*['"]([^'"]+)['"]\s*,\s*path:\s*['"]([^'"]+)['"]\s*,\s*label:\s*['"]([^'"]+)['"]\s*\}/g;
+    let match;
+    while ((match = modelPattern.exec(modelsArrayContent)) !== null) {
+      models.push({
+        name: match[1],
+        path: match[2],
+        label: match[3]
+      });
     }
   }
 
-  // Add model to config if not already present
-  if (!config.models.find(m => m.name === modelInfo.name)) {
-    config.models.push({
-      name: modelInfo.name,
-      path: `/${modelKebab}`,
-      label: modelInfo.name,
-    });
+  // Check if model already exists
+  if (models.find(m => m.name === modelInfo.name)) {
+    console.log(`ℹ️  ${modelInfo.name} already in navigation menu`);
+    return;
+  }
 
-    // Generate TypeScript file content
-    const tsContent = `export interface ScaffoldModel {
+  // Add new model
+  models.push({
+    name: modelInfo.name,
+    path: `/${modelKebab}`,
+    label: modelInfo.displayName
+  });
+
+  // Generate new scaffold-config.ts content
+  const newConfigContent = `export interface ScaffoldModel {
   name: string;
   path: string;
   label: string;
@@ -541,69 +540,11 @@ async function updateNavigationMenu(modelInfo: any): Promise<void> {
 
 export const scaffoldConfig = {
   models: [
-${config.models.map(m => `    { name: '${m.name}', path: '${m.path}', label: '${m.label}' },`).join('\n')}
+${models.map(m => `    { name: '${m.name}', path: '${m.path}', label: '${m.label}' },`).join('\n')}
   ] as ScaffoldModel[]
 };
 `;
 
-    fs.writeFileSync(configPath, tsContent, "utf-8");
-    console.log(`✅ Added ${modelInfo.name} to navigation menu`);
-  } else {
-    console.log(`ℹ️  ${modelInfo.name} already in navigation menu`);
-  }
-
-  // Update homepage to include menu
-  const homePagePath = path.join(cwd, "app", "page.tsx");
-  
-  if (fs.existsSync(homePagePath)) {
-    let homePageContent = fs.readFileSync(homePagePath, "utf-8");
-    
-    // Check if menu component is already added
-    if (!homePageContent.includes('scaffoldedModels')) {
-      // Add import and menu section
-      const menuImport = `import { scaffoldConfig } from '@/lib/scaffold-config';\n`;
-      const menuSection = `
-      {/* Scaffolded Models Menu */}
-      {scaffoldConfig.models.length > 0 && (
-        <div className="mt-8">
-          <h2 className="text-3xl font-bold mb-6 text-gray-900 dark:text-gray-100">Models</h2>
-          <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-            {scaffoldConfig.models.map((model) => (
-              <a
-                key={model.name}
-                href={model.path}
-                className="block p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-              >
-                <h3 className="text-xl font-semibold mb-2 text-gray-900 dark:text-gray-100">{model.label}</h3>
-                <p className="text-gray-600 dark:text-gray-400">Manage {model.label.toLowerCase()}</p>
-              </a>
-            ))}
-          </div>
-        </div>
-      )}`;
-
-      // Insert import at the beginning
-      if (!homePageContent.includes(menuImport.trim())) {
-        homePageContent = menuImport + homePageContent;
-      }
-
-      // Insert menu section before the closing div of main content
-      if (!homePageContent.includes('Scaffolded Models Menu')) {
-        // Find the last </div> or end of main section
-        const mainEndIndex = homePageContent.lastIndexOf('</div>');
-        if (mainEndIndex !== -1) {
-          homePageContent = 
-            homePageContent.slice(0, mainEndIndex) +
-            menuSection +
-            '\n' +
-            homePageContent.slice(mainEndIndex);
-        }
-      }
-
-      fs.writeFileSync(homePagePath, homePageContent, "utf-8");
-      console.log(`✅ Updated homepage menu`);
-    } else {
-      console.log(`ℹ️  Homepage menu already configured`);
-    }
-  }
+  fs.writeFileSync(configPath, newConfigContent, "utf-8");
+  console.log(`✅ Added ${modelInfo.name} to navigation menu`);
 }

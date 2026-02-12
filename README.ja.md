@@ -150,7 +150,7 @@ await api.delete('/api/todos/123');
 
 - Node.js 22.x
 - Azure Cosmos DB Emulator (ローカル開発用)
-  - [公式ドキュメント](https://learn.microsoft.com/ja-jp/azure/cosmos-db/emulator)
+  - [公式ドキュメント (vNext 推奨)](https://learn.microsoft.com/ja-jp/azure/cosmos-db/emulator-linux)
     - Windows: [ダウンロード](https://aka.ms/cosmosdb-emulator)
     - Docker: `docker run -p 8081:8081 mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator`
 

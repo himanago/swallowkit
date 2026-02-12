@@ -1,6 +1,6 @@
 {
   "name": "swallowkit",
-  "version": "0.3.0-beta.2",
+  "version": "0.4.0-beta.1",
   "description": "Type-safe schema-driven development toolkit for Next.js applications on Azure",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
