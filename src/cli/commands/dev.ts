@@ -340,6 +340,29 @@ async function startDevEnvironment(options: DevOptions) {
     }
 
     if (hasFunctions && !options.noFunctions) {
+      // Build shared package before starting Functions
+      const sharedDir = path.join(process.cwd(), 'shared');
+      if (fs.existsSync(sharedDir) && fs.existsSync(path.join(sharedDir, 'package.json'))) {
+        console.log('📦 Building shared package...');
+        const sharedBuild = spawn('npm', ['run', 'build', '-w', 'shared'], {
+          cwd: process.cwd(),
+          shell: true,
+          stdio: 'inherit',
+        });
+
+        await new Promise<void>((resolve, reject) => {
+          sharedBuild.on('close', (code) => {
+            if (code === 0) {
+              console.log('✅ Shared package built successfully');
+              resolve();
+            } else {
+              reject(new Error(`Shared package build failed with code ${code}`));
+            }
+          });
+          sharedBuild.on('error', reject);
+        });
+      }
+
       // Azure Functions を起動
       const funcEnv: NodeJS.ProcessEnv = { ...process.env, FUNCTIONS_PORT: functionsPort };
       

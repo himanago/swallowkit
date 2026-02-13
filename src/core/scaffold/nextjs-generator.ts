@@ -1,14 +1,129 @@
 /**
  * Next.js BFF API Routes コード生成
  * Azure Functions を呼び出す BFF パターンの API routes を生成
+ * callFunction ヘルパー方式
  */
 
 import { ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
 
 /**
- * Next.js BFF API Routes を生成（全 CRUD 操作）
+ * BFF callFunction ヘルパー (lib/api/call-function.ts) のコードを生成
  */
-export function generateNextjsBFFRoutes(model: ModelInfo): {
+export function generateBFFCallFunction(): string {
+  return `import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod/v4';
+
+/**
+ * SwallowKit BFF Call Function Helper
+ * Azure Functions を呼び出す汎用ヘルパー
+ *
+ * @example
+ * // シンプルな GET
+ * return callFunction({ method: 'GET', path: '/api/todo', responseSchema: z.array(TodoSchema) });
+ *
+ * // バリデーション付き POST
+ * return callFunction({ method: 'POST', path: '/api/todo', body, inputSchema: InputSchema, responseSchema: TodoSchema, successStatus: 201 });
+ *
+ * // カスタムビジネスロジック関数の呼び出し
+ * return callFunction({ method: 'POST', path: '/api/todo/archive', body: { ids } });
+ */
+
+function getFunctionsBaseUrl(): string {
+  return process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
+}
+
+interface CallFunctionConfig<TInput = any, TOutput = any> {
+  /** HTTP メソッド */
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  /** Azure Functions のパス (例: '/api/todo', '/api/todo/123') */
+  path: string;
+  /** リクエストボディ (POST/PUT 用) */
+  body?: any;
+  /** 入力バリデーション用 Zod スキーマ (省略時はバリデーションなし) */
+  inputSchema?: z.ZodSchema<TInput>;
+  /** 出力バリデーション用 Zod スキーマ (省略時はそのまま返す) */
+  responseSchema?: z.ZodSchema<TOutput>;
+  /** 成功時の HTTP ステータスコード (デフォルト: 200) */
+  successStatus?: number;
+}
+
+export async function callFunction<TInput = any, TOutput = any>(
+  config: CallFunctionConfig<TInput, TOutput>
+): Promise<NextResponse> {
+  const { method, path, body, inputSchema, responseSchema, successStatus = 200 } = config;
+
+  try {
+    // 入力バリデーション
+    let validatedBody = body;
+    if (inputSchema && body !== undefined) {
+      const result = inputSchema.safeParse(body);
+      if (!result.success) {
+        console.error('[BFF] Validation failed:', result.error.issues);
+        return NextResponse.json(
+          { error: 'Validation failed', details: result.error.issues },
+          { status: 400 }
+        );
+      }
+      validatedBody = result.data;
+    }
+
+    // Azure Functions を呼び出し
+    const functionsBaseUrl = getFunctionsBaseUrl();
+    const url = functionsBaseUrl + path;
+    console.log(\`[BFF] \${method} \${url}\`);
+
+    const response = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: validatedBody !== undefined ? JSON.stringify(validatedBody) : undefined,
+    });
+
+    console.log('[BFF] Functions response status:', response.status);
+
+    // エラーレスポンスの転送
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('[BFF] Functions error:', { status: response.status, body: text });
+
+      let errorMessage = 'Request failed';
+      try {
+        const error = JSON.parse(text);
+        errorMessage = error.error || errorMessage;
+      } catch {
+        errorMessage = text || errorMessage;
+      }
+      return NextResponse.json({ error: errorMessage }, { status: response.status });
+    }
+
+    // DELETE 204 の場合はボディなし
+    if (response.status === 204 || method === 'DELETE') {
+      return new NextResponse(null, { status: 204 });
+    }
+
+    // レスポンスの取得と出力バリデーション
+    const data = await response.json();
+
+    if (responseSchema) {
+      const validated = responseSchema.parse(data);
+      return NextResponse.json(validated, { status: successStatus });
+    }
+
+    return NextResponse.json(data, { status: successStatus });
+  } catch (error: any) {
+    console.error(\`[BFF] Error:\`, error);
+    return NextResponse.json(
+      { error: error.message || 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+`;
+}
+
+/**
+ * 明示的ハンドラー方式の BFF ルートファイルを生成
+ */
+export function generateCompactBFFRoutes(model: ModelInfo, sharedPackageName: string): {
   listRoute: string;
   detailRoute: string;
 } {
@@ -16,383 +131,82 @@ export function generateNextjsBFFRoutes(model: ModelInfo): {
   const modelCamel = toCamelCase(modelName);
   const modelKebab = toKebabCase(modelName);
   const schemaName = model.schemaName;
-  
-  // List & Create route (GET /api/[model], POST /api/[model])
-  const listRoute = `import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-import { ${schemaName} } from '@/lib/models/${modelKebab}';
 
-// Get Functions base URL at runtime (not at build time)
-function getFunctionsBaseUrl(): string {
-  return process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
+  const listRoute = `import { NextRequest } from 'next/server';
+import { callFunction } from '@/lib/api/call-function';
+import { ${schemaName} } from '${sharedPackageName}';
+import { z } from 'zod/v4';
+
+const InputSchema = ${schemaName}.omit({ id: true, createdAt: true, updatedAt: true });
+
+// GET /api/${modelCamel} - 一覧取得
+export async function GET() {
+  return callFunction({
+    method: 'GET',
+    path: '/api/${modelCamel}',
+    responseSchema: z.array(${schemaName}),
+  });
 }
 
-// Input schema: SwallowKit-managed fields (id, createdAt, updatedAt) are optional
-// These fields are ignored by the backend and auto-managed
-const ${modelName}InputSchema = ${schemaName}.partial({ id: true, createdAt: true, updatedAt: true });
-
-/**
- * GET /api/${modelCamel}
- * Fetch all ${modelName} items from Azure Functions
- */
-export async function GET(request: NextRequest) {
-  try {
-    const functionsBaseUrl = getFunctionsBaseUrl();
-    console.log('[BFF] Fetching ${modelCamel}s from Functions:', \`\${functionsBaseUrl}/api/${modelCamel}\`);
-    
-    const response = await fetch(\`\${functionsBaseUrl}/api/${modelCamel}\`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-    
-    console.log('[BFF] Functions response status:', response.status);
-    
-    if (!response.ok) {
-      // Read response body once
-      const text = await response.text();
-      console.error('[BFF] Functions error response:', {
-        status: response.status,
-        statusText: response.statusText,
-        body: text
-      });
-      
-      let errorMessage = 'Failed to fetch ${modelCamel}s';
-      try {
-        const error = JSON.parse(text);
-        errorMessage = error.error || errorMessage;
-      } catch {
-        // Response body is not JSON, use text as-is
-        errorMessage = text || errorMessage;
-      }
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: response.status }
-      );
-    }
-    
-    const data = await response.json();
-    console.log('[BFF] Received ${modelCamel}s count:', Array.isArray(data) ? data.length : 'not an array');
-    
-    // Validate response with Zod schema
-    const validated = z.array(${schemaName}).parse(data);
-    
-    return NextResponse.json(validated);
-  } catch (error: any) {
-    console.error('[BFF] Error fetching ${modelCamel}s:', {
-      message: error.message,
-      stack: error.stack,
-      name: error.name,
-      cause: error.cause
-    });
-    return NextResponse.json(
-      { error: error.message || 'Failed to fetch ${modelCamel}s' },
-      { status: 500 }
-    );
-  }
-}
-
-/**
- * POST /api/${modelCamel}
- * Create a new ${modelName} via Azure Functions
- */
+// POST /api/${modelCamel} - 新規作成
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    console.log('[BFF] Creating ${modelCamel} with data:', body);
-    
-    // Validate input (excluding SwallowKit-managed fields)
-    const validationResult = ${modelName}InputSchema.safeParse(body);
-    
-    if (!validationResult.success) {
-      console.error('[BFF] Validation failed:', validationResult.error.errors);
-      return NextResponse.json(
-        {
-          error: 'Validation failed',
-          details: validationResult.error.errors,
-        },
-        { status: 400 }
-      );
-    }
-    
-    const functionsBaseUrl = getFunctionsBaseUrl();
-    console.log('[BFF] Sending to Functions:', \`\${functionsBaseUrl}/api/${modelCamel}\`);
-    
-    // Pass validated data to Azure Functions
-    // SwallowKit auto-manages id, createdAt, updatedAt fields
-    const response = await fetch(\`\${functionsBaseUrl}/api/${modelCamel}\`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(validationResult.data),
-    });
-    
-    console.log('[BFF] Functions response status:', response.status);
-    
-    if (!response.ok) {
-      const text = await response.text();
-      console.error('[BFF] Functions error response:', {
-        status: response.status,
-        statusText: response.statusText,
-        body: text
-      });
-      
-      let errorMessage = 'Failed to create ${modelCamel}';
-      try {
-        const error = JSON.parse(text);
-        errorMessage = error.error || errorMessage;
-      } catch {
-        errorMessage = text || errorMessage;
-      }
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: response.status }
-      );
-    }
-    
-    const data = await response.json();
-    console.log('[BFF] Created ${modelCamel}:', data.id);
-    
-    // Validate response with Zod schema
-    const validated = ${schemaName}.parse(data);
-    
-    return NextResponse.json(validated, { status: 201 });
-  } catch (error: any) {
-    console.error('[BFF] Error creating ${modelCamel}:', {
-      message: error.message,
-      stack: error.stack,
-      name: error.name,
-      cause: error.cause
-    });
-    return NextResponse.json(
-      { error: error.message || 'Failed to create ${modelCamel}' },
-      { status: 500 }
-    );
-  }
+  const body = await request.json();
+  return callFunction({
+    method: 'POST',
+    path: '/api/${modelCamel}',
+    body,
+    inputSchema: InputSchema,
+    responseSchema: ${schemaName},
+    successStatus: 201,
+  });
 }
 `;
 
-  // Detail route (GET /api/[model]/[id], PUT /api/[model]/[id], DELETE /api/[model]/[id])
-  const detailRoute = `import { NextRequest, NextResponse } from 'next/server';
-import { ${schemaName} } from '@/lib/models/${modelKebab}';
+  const detailRoute = `import { NextRequest } from 'next/server';
+import { callFunction } from '@/lib/api/call-function';
+import { ${schemaName} } from '${sharedPackageName}';
 
-// Get Functions base URL at runtime (not at build time)
-function getFunctionsBaseUrl(): string {
-  return process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
-}
+const InputSchema = ${schemaName}.omit({ id: true, createdAt: true, updatedAt: true });
 
-// Input schema: SwallowKit-managed fields (id, createdAt, updatedAt) are optional
-// These fields are ignored by the backend and auto-managed
-const ${modelName}InputSchema = ${schemaName}.partial({ id: true, createdAt: true, updatedAt: true });
-
-/**
- * GET /api/${modelCamel}/[id]
- * Fetch a single ${modelName} by ID from Azure Functions
- */
+// GET /api/${modelCamel}/{id} - 詳細取得
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const { id } = await params;
-    console.log('[BFF] Fetching ${modelCamel} by ID:', id);
-    
-    const functionsBaseUrl = getFunctionsBaseUrl();
-    const response = await fetch(\`\${functionsBaseUrl}/api/${modelCamel}/\${id}\`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-    
-    console.log('[BFF] Functions response status:', response.status);
-    
-    if (!response.ok) {
-      const text = await response.text();
-      console.error('[BFF] Functions error response:', {
-        status: response.status,
-        statusText: response.statusText,
-        body: text
-      });
-      
-      let errorMessage = '${modelName} not found';
-      try {
-        const error = JSON.parse(text);
-        errorMessage = error.error || errorMessage;
-      } catch {
-        errorMessage = text || errorMessage;
-      }
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: response.status }
-      );
-    }
-    
-    const data = await response.json();
-    console.log('[BFF] Fetched ${modelCamel}:', data.id);
-    
-    // Validate response with Zod schema
-    const validated = ${schemaName}.parse(data);
-    
-    return NextResponse.json(validated);
-  } catch (error: any) {
-    console.error('[BFF] Error fetching ${modelCamel}:', {
-      message: error.message,
-      stack: error.stack,
-      name: error.name,
-      cause: error.cause
-    });
-    return NextResponse.json(
-      { error: error.message || 'Failed to fetch ${modelCamel}' },
-      { status: 500 }
-    );
-  }
+  const { id } = await params;
+  return callFunction({
+    method: 'GET',
+    path: \`/api/${modelCamel}/\${id}\`,
+    responseSchema: ${schemaName},
+  });
 }
 
-/**
- * PUT /api/${modelCamel}/[id]
- * Update a ${modelName} via Azure Functions
- */
+// PUT /api/${modelCamel}/{id} - 更新
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const { id } = await params;
-    const body = await request.json();
-    console.log('[BFF] Updating ${modelCamel}:', id, 'with data:', body);
-    
-    // Validate input (excluding SwallowKit-managed fields)
-    const validationResult = ${modelName}InputSchema.safeParse(body);
-    
-    if (!validationResult.success) {
-      console.error('[BFF] Validation failed:', validationResult.error.errors);
-      return NextResponse.json(
-        {
-          error: 'Validation failed',
-          details: validationResult.error.errors,
-        },
-        { status: 400 }
-      );
-    }
-    
-    const functionsBaseUrl = getFunctionsBaseUrl();
-    console.log('[BFF] Sending to Functions:', \`\${functionsBaseUrl}/api/${modelCamel}/\${id}\`);
-    
-    // Pass validated data to Azure Functions
-    // SwallowKit auto-manages updatedAt field
-    const response = await fetch(\`\${functionsBaseUrl}/api/${modelCamel}/\${id}\`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(validationResult.data),
-    });
-    
-    console.log('[BFF] Functions response status:', response.status);
-    
-    if (!response.ok) {
-      const text = await response.text();
-      console.error('[BFF] Functions error response:', {
-        status: response.status,
-        statusText: response.statusText,
-        body: text
-      });
-      
-      let errorMessage = 'Failed to update ${modelCamel}';
-      try {
-        const error = JSON.parse(text);
-        errorMessage = error.error || errorMessage;
-      } catch {
-        errorMessage = text || errorMessage;
-      }
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: response.status }
-      );
-    }
-    
-    const data = await response.json();
-    console.log('[BFF] Updated ${modelCamel}:', data.id);
-    
-    // Validate response with Zod schema
-    const validated = ${schemaName}.parse(data);
-    
-    return NextResponse.json(validated);
-  } catch (error: any) {
-    console.error('[BFF] Error updating ${modelCamel}:', {
-      message: error.message,
-      stack: error.stack,
-      name: error.name,
-      cause: error.cause
-    });
-    return NextResponse.json(
-      { error: error.message || 'Failed to update ${modelCamel}' },
-      { status: 500 }
-    );
-  }
+  const { id } = await params;
+  const body = await request.json();
+  return callFunction({
+    method: 'PUT',
+    path: \`/api/${modelCamel}/\${id}\`,
+    body,
+    inputSchema: InputSchema,
+    responseSchema: ${schemaName},
+  });
 }
 
-/**
- * DELETE /api/${modelCamel}/[id]
- * Delete a ${modelName} via Azure Functions
- */
+// DELETE /api/${modelCamel}/{id} - 削除
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const { id } = await params;
-    console.log('[BFF] Deleting ${modelCamel}:', id);
-    
-    const functionsBaseUrl = getFunctionsBaseUrl();
-    const response = await fetch(\`\${functionsBaseUrl}/api/${modelCamel}/\${id}\`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-    
-    console.log('[BFF] Functions response status:', response.status);
-    
-    if (!response.ok) {
-      const text = await response.text();
-      console.error('[BFF] Functions error response:', {
-        status: response.status,
-        statusText: response.statusText,
-        body: text
-      });
-      
-      let errorMessage = 'Failed to delete ${modelCamel}';
-      try {
-        const error = JSON.parse(text);
-        errorMessage = error.error || errorMessage;
-      } catch {
-        errorMessage = text || errorMessage;
-      }
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: response.status }
-      );
-    }
-    
-    console.log('[BFF] Deleted ${modelCamel}:', id);
-    
-    return new NextResponse(null, { status: 204 });
-  } catch (error: any) {
-    console.error('[BFF] Error deleting ${modelCamel}:', {
-      message: error.message,
-      stack: error.stack,
-      name: error.name,
-      cause: error.cause
-    });
-    return NextResponse.json(
-      { error: error.message || 'Failed to delete ${modelCamel}' },
-      { status: 500 }
-    );
-  }
+  const { id } = await params;
+  return callFunction({
+    method: 'DELETE',
+    path: \`/api/${modelCamel}/\${id}\`,
+  });
 }
 `;
 

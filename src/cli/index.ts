@@ -32,7 +32,7 @@ program.addCommand(provisionCommand);
 program
   .command("create-model <names...>")
   .description("Create model template files with id, createdAt, and updatedAt fields")
-  .option("--models-dir <dir>", "Models directory", "lib/models")
+  .option("--models-dir <dir>", "Models directory", "shared/models")
   .action((names, options) => {
     createModelCommand({
       names,

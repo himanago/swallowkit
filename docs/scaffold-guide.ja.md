@@ -92,10 +92,12 @@ npx swallowkit scaffold lib/models/product.ts
 scaffold コマンドは以下のファイルを生成します：
 
 **Azure Functions（バックエンド）:**
+- `functions/src/lib/crud-factory.ts` - CRUD ファクトリー（初回のみ）
 - `functions/src/models/product.ts` - モデル定義
 - `functions/src/product.ts` - CRUD Azure Functions
 
 **Next.js BFF API Routes:**
+- `lib/api/crud-factory.ts` - BFF CRUD ファクトリー（初回のみ）
 - `app/api/product/route.ts` - GET（一覧）と POST（作成）エンドポイント
 - `app/api/product/[id]/route.ts` - GET、PUT、DELETE エンドポイント（単一アイテム）
 
@@ -136,6 +138,8 @@ SwallowKit は、Zod スキーマの型に基づいて適切な UI コントロ�
 | `z.enum()` | セレクトドロップダウン | `<select>` とオプション |
 | `z.array()` | カンマ区切りテキスト入力 | タグ: "tag1, tag2, tag3" |
 | 外部キー | 関連データのドロップダウン | 下記参照 |
+| ネストスキーマ（単一） | セレクトドロップダウン | `category: categorySchema` |
+| ネストスキーマ（配列） | マルチセレクト | `tags: z.array(tagSchema)` |
 
 ### Boolean フィールド
 
@@ -191,6 +195,83 @@ tags: z.array(z.string()).optional()
 ### オプショナルフィールド
 
 `.optional()` でマークされたフィールドはフォームで必須ではなく、それ以外は `required` 属性が付きます。
+
+## ネストスキーマ参照
+
+SwallowKit は、他のスキーマを直接参照するフィールドを自動検出し、適切な UI を生成します。`categoryId: z.string()` のような外部キーパターンとは異なり、Zod スキーマオブジェクトを直接埋め込むパターンに対応しています。
+
+### 検出されるパターン
+
+```typescript
+import { categorySchema } from './category';
+import { tagSchema } from './tag';
+
+export const productSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  // 単一オブジェクト参照（セレクトボックスが生成される）
+  category: categorySchema.optional(),
+  // 配列参照（マルチセレクトが生成される）
+  tags: z.array(tagSchema).optional(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+```
+
+### 生成される UI
+
+#### 単一オブジェクト参照
+
+`category: categorySchema.optional()` のようなフィールドは、セレクトボックスとして生成されます：
+
+```tsx
+<select
+  id="category"
+  value={formData.categoryId}
+  onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
+>
+  <option value="">選択してください</option>
+  {categoryOptions.map((option) => (
+    <option key={option.id} value={option.id}>{option.name}</option>
+  ))}
+</select>
+```
+
+フォーム送信時に、選択された ID はオブジェクトに自動変換されます。
+
+#### 配列参照
+
+`tags: z.array(tagSchema)` のようなフィールドは、マルチセレクトとして生成されます：
+
+```tsx
+<select
+  id="tags"
+  multiple
+  value={formData.tagsIds}
+  onChange={(e) => {
+    const selected = Array.from(e.target.selectedOptions, option => option.value);
+    setFormData({ ...formData, tagsIds: selected });
+  }}
+>
+  {tagOptions.map((option) => (
+    <option key={option.id} value={option.id}>{option.name}</option>
+  ))}
+</select>
+```
+
+#### 一覧・詳細での表示
+
+- **単一参照**: `item.category?.name || '-'` として表示名をレンダリング
+- **配列参照**: `item.tags.map(ref => ref.name).join(', ')` としてカンマ区切りで表示
+
+### 表示フィールドの自動検出
+
+SwallowKit は参照先スキーマのファイルを自動的に読み取り、表示用フィールドを以下の優先順位で検出します：
+
+1. `name` フィールド
+2. `title` フィールド
+3. `label` フィールド
+4. デフォルト: `name`
 
 ## 外部キーリレーションシップ
 
@@ -732,6 +813,55 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 - 参照先モデルに `name` または `title` フィールドがあることを確認
 - 参照先モデルが scaffold されていることを確認
 - API エンドポイント `/api/<model>` がデータを返すことを確認
+
+## ファクトリーパターン（CRUD コード重複の削減）
+
+SwallowKit は**ファクトリーパターン**を使用して CRUD コードを生成します。これにより、エンティティごとのコード重複（約 94%）を排除し、保守性を大幅に向上させます。
+
+### 仕組み
+
+`scaffold` コマンドは以下のファクトリーファイルを生成します：
+
+- `lib/api/crud-factory.ts` - Next.js BFF 用の汎用 CRUD ハンドラー
+- `functions/src/lib/crud-factory.ts` - Azure Functions 用の汎用 CRUD ハンドラー
+
+各エンティティのルートファイルは、ファクトリーを呼び出すだけの簡潔なコードになります：
+
+**Next.js BFF ルート:**
+
+```typescript
+// app/api/todo/route.ts
+import { createCrudHandlers } from '@/lib/api/crud-factory';
+import { todoSchema } from '@/lib/models/todo';
+
+const handlers = createCrudHandlers({
+  entityName: 'todo',
+  schema: todoSchema,
+});
+
+export const GET = handlers.GET;
+export const POST = handlers.POST;
+```
+
+**Azure Functions:**
+
+```typescript
+// functions/src/todo.ts
+import { app } from '@azure/functions';
+import { createCrudFunctions } from './lib/crud-factory';
+import { todoSchema } from './models/todo';
+
+const crud = createCrudFunctions({
+  schema: todoSchema,
+  containerName: 'Todos',
+});
+
+app.http('getTodos', { methods: ['GET'], route: 'todo', handler: crud.getAll });
+app.http('getTodoById', { methods: ['GET'], route: 'todo/{id}', handler: crud.getById });
+app.http('createTodo', { methods: ['POST'], route: 'todo', handler: crud.create });
+app.http('updateTodo', { methods: ['PUT'], route: 'todo/{id}', handler: crud.update });
+app.http('deleteTodo', { methods: ['DELETE'], route: 'todo/{id}', handler: crud.delete });
+```
 
 ## 次のステップ
 

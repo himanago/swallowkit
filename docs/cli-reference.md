@@ -202,6 +202,7 @@ Each endpoint includes:
 - ✅ Automatic Zod schema validation
 - ✅ Error handling
 - ✅ TypeScript type safety
+- ✅ Factory pattern support (shared `crud-factory.ts`)
 
 **2. Next.js BFF API Routes**
 
@@ -250,6 +251,7 @@ npx swallowkit scaffold lib/models/todo.ts
 
 # Generate CRUD from Product model
 npx swallowkit scaffold lib/models/product.ts
+
 ```
 
 ### Usage After Generation

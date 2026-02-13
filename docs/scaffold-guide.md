@@ -92,10 +92,12 @@ npx swallowkit scaffold lib/models/product.ts
 The scaffold command generates the following files:
 
 **Azure Functions (Backend):**
+- `functions/src/lib/crud-factory.ts` - CRUD factory (first time only)
 - `functions/src/models/product.ts` - Model definition
 - `functions/src/product.ts` - CRUD Azure Functions
 
 **Next.js BFF API Routes:**
+- `lib/api/crud-factory.ts` - BFF CRUD factory (first time only)
 - `app/api/product/route.ts` - GET (list) and POST (create) endpoints
 - `app/api/product/[id]/route.ts` - GET, PUT, DELETE endpoints for single item
 
@@ -136,6 +138,8 @@ SwallowKit automatically generates appropriate UI controls based on your Zod sch
 | `z.enum()` | Select dropdown | `<select>` with options |
 | `z.array()` | Comma-separated text input | Tags: "tag1, tag2, tag3" |
 | Foreign Key | Dropdown with related data | See below |
+| Nested Schema (single) | Select dropdown | `category: categorySchema` |
+| Nested Schema (array) | Multi-select | `tags: z.array(tagSchema)` |
 
 ### Boolean Fields
 
@@ -191,6 +195,83 @@ Generates a comma-separated input:
 ### Optional Fields
 
 Fields marked with `.optional()` are not required in forms, while others have the `required` attribute.
+
+## Nested Schema References
+
+SwallowKit automatically detects fields that directly reference other Zod schemas and generates appropriate UI. Unlike the `categoryId: z.string()` foreign key pattern, this supports embedding Zod schema objects directly.
+
+### Detected Patterns
+
+```typescript
+import { categorySchema } from './category';
+import { tagSchema } from './tag';
+
+export const productSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  // Single object reference (generates a select dropdown)
+  category: categorySchema.optional(),
+  // Array reference (generates a multi-select)
+  tags: z.array(tagSchema).optional(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+```
+
+### Generated UI
+
+#### Single Object Reference
+
+Fields like `category: categorySchema.optional()` generate a select dropdown:
+
+```tsx
+<select
+  id="category"
+  value={formData.categoryId}
+  onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
+>
+  <option value="">Select an option</option>
+  {categoryOptions.map((option) => (
+    <option key={option.id} value={option.id}>{option.name}</option>
+  ))}
+</select>
+```
+
+On form submission, the selected ID is automatically converted back to an object.
+
+#### Array Reference
+
+Fields like `tags: z.array(tagSchema)` generate a multi-select:
+
+```tsx
+<select
+  id="tags"
+  multiple
+  value={formData.tagsIds}
+  onChange={(e) => {
+    const selected = Array.from(e.target.selectedOptions, option => option.value);
+    setFormData({ ...formData, tagsIds: selected });
+  }}
+>
+  {tagOptions.map((option) => (
+    <option key={option.id} value={option.id}>{option.name}</option>
+  ))}
+</select>
+```
+
+#### List & Detail Display
+
+- **Single reference**: Renders display name as `item.category?.name || '-'`
+- **Array reference**: Renders as comma-separated display names `item.tags.map(ref => ref.name).join(', ')`
+
+### Display Field Auto-Detection
+
+SwallowKit automatically reads the referenced schema file and detects the display field in the following priority:
+
+1. `name` field
+2. `title` field
+3. `label` field
+4. Default: `name`
 
 ## Foreign Key Relationships
 
@@ -732,6 +813,55 @@ If foreign keys show IDs instead of names:
 - Ensure referenced model has a `name` or `title` field
 - Check that the referenced model has been scaffolded
 - Verify API endpoint `/api/<model>` returns data
+
+## Factory Pattern (Reducing CRUD Code Duplication)
+
+SwallowKit uses a **factory pattern** to generate CRUD code. This eliminates per-entity code duplication (~94%) and significantly improves maintainability.
+
+### How It Works
+
+The `scaffold` command generates the following factory files:
+
+- `lib/api/crud-factory.ts` - Generic CRUD handlers for Next.js BFF
+- `functions/src/lib/crud-factory.ts` - Generic CRUD handlers for Azure Functions
+
+Each entity's route file becomes a concise wrapper that simply calls the factory:
+
+**Next.js BFF Route:**
+
+```typescript
+// app/api/todo/route.ts
+import { createCrudHandlers } from '@/lib/api/crud-factory';
+import { todoSchema } from '@/lib/models/todo';
+
+const handlers = createCrudHandlers({
+  entityName: 'todo',
+  schema: todoSchema,
+});
+
+export const GET = handlers.GET;
+export const POST = handlers.POST;
+```
+
+**Azure Functions:**
+
+```typescript
+// functions/src/todo.ts
+import { app } from '@azure/functions';
+import { createCrudFunctions } from './lib/crud-factory';
+import { todoSchema } from './models/todo';
+
+const crud = createCrudFunctions({
+  schema: todoSchema,
+  containerName: 'Todos',
+});
+
+app.http('getTodos', { methods: ['GET'], route: 'todo', handler: crud.getAll });
+app.http('getTodoById', { methods: ['GET'], route: 'todo/{id}', handler: crud.getById });
+app.http('createTodo', { methods: ['POST'], route: 'todo', handler: crud.create });
+app.http('updateTodo', { methods: ['PUT'], route: 'todo/{id}', handler: crud.update });
+app.http('deleteTodo', { methods: ['DELETE'], route: 'todo/{id}', handler: crud.delete });
+```
 
 ## Next Steps
 

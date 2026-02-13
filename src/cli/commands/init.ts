@@ -137,15 +137,15 @@ export async function initCommand(options: InitOptions) {
       await createAzurePipelines(projectDir);
     }
 
-    // Rename git branch from master to main
-    const gitDir = path.join(projectDir, '.git');
-    if (fs.existsSync(gitDir)) {
-      try {
-        execSync('git branch -M main', { cwd: projectDir, stdio: 'ignore' });
-        console.log('✅ Git branch renamed to main\n');
-      } catch (error) {
-        console.warn('⚠️  Could not rename git branch to main');
-      }
+    // Initialize Git repository and create initial commit
+    try {
+      execSync('git init', { cwd: projectDir, stdio: 'ignore' });
+      execSync('git branch -M main', { cwd: projectDir, stdio: 'ignore' });
+      execSync('git add -A', { cwd: projectDir, stdio: 'ignore' });
+      execSync('git commit -m "Initial commit from SwallowKit"', { cwd: projectDir, stdio: 'ignore' });
+      console.log('✅ Git repository initialized with initial commit\n');
+    } catch (error) {
+      console.warn('⚠️  Could not initialize Git repository (is git installed?)');
     }
 
     console.log(`\n✅ Project "${options.name}" created successfully!`);
@@ -183,6 +183,7 @@ async function createNextJsProject(projectName: string): Promise<void> {
         '--tailwind',
         '--app',
         '--no-src',
+        '--disable-git',
         '--import-alias',
         '@/*',
         '--use-npm',
@@ -283,17 +284,18 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
   
   // Add SwallowKit dependencies (Next.js version already upgraded by upgradeNextJs)
+  // zod is in the shared workspace package, not here
   packageJson.dependencies = {
     ...packageJson.dependencies,
     'swallowkit': 'latest',
     '@azure/cosmos': '^4.0.0',
-    'zod': '^3.25.0',
     'applicationinsights': '^3.3.0',
+    [`@${projectName}/shared`]: '*',
   };
   
   packageJson.scripts = {
     ...packageJson.scripts,
-    'build': 'next build --webpack && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/',
+    'build': 'npm run build -w shared && next build --webpack && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/',
     'start': 'next start',
     'functions:start': 'cd functions && npm start',
   };
@@ -301,11 +303,13 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
   packageJson.engines = {
     node: '20.x',
   };
+
+  // npm workspaces: shared package for Zod models, functions for Azure Functions
+  packageJson.workspaces = ['shared', 'functions'];
   
   fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
 
-  // Install dependencies to update package-lock.json
-  await installDependencies(projectDir);
+  // Don't install yet — wait until all workspace packages (shared, functions) are created
 
   // 2. Update next.config to add standalone output
   // Check for both .ts and .js variants
@@ -323,7 +327,7 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
       // Handle JavaScript config format: const nextConfig = {
       nextConfigContent = nextConfigContent.replace(
         /(const\s+nextConfig[:\s]*(?::\s*NextConfig\s*)?=\s*\{)(\s*\/\*[^*]*\*\/)?/,
-        `$1\n  output: 'standalone',\n  experimental: {\n    turbopackUseSystemTlsCerts: true,\n  },\n  serverExternalPackages: ['applicationinsights', 'diagnostic-channel-publishers'],$2`
+        `$1\n  output: 'standalone',\n  transpilePackages: ['@${projectName}/shared'],\n  experimental: {\n    turbopackUseSystemTlsCerts: true,\n  },\n  serverExternalPackages: ['applicationinsights', 'diagnostic-channel-publishers'],$2`
       );
       fs.writeFileSync(nextConfigPath, nextConfigContent);
     }
@@ -338,6 +342,9 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
     }
     if (!tsconfig.exclude.includes('functions')) {
       tsconfig.exclude.push('functions');
+    }
+    if (!tsconfig.exclude.includes('shared')) {
+      tsconfig.exclude.push('shared');
     }
     fs.writeFileSync(tsconfigPath, JSON.stringify(tsconfig, null, 2));
   }
@@ -356,11 +363,11 @@ module.exports = {
 `;
   fs.writeFileSync(path.join(projectDir, 'swallowkit.config.js'), swallowkitConfig);
 
-  // 4. Create lib directory for shared models
+  // 4. Create shared workspace package for Zod models (Single Source of Truth)
+  await createSharedPackage(projectDir, projectName);
+
+  // Create lib directory for Next.js-specific utilities
   const libDir = path.join(projectDir, 'lib');
-  const modelsDir = path.join(libDir, 'models');
-  
-  fs.mkdirSync(modelsDir, { recursive: true });
 
   // Create lib/api directory for backend utilities
   const apiLibDir = path.join(libDir, 'api');
@@ -600,10 +607,84 @@ export async function register() {
   // 16. Create home page
   await createHomePage(projectDir);
 
+  // 17. Install all workspace dependencies (root + shared + functions)
+  console.log('📦 Installing workspace dependencies...\n');
+  await installDependencies(projectDir);
+
   console.log('✅ Project structure created\n');
 
-  // 17. Create README.md
+  // 18. Create README.md
   createReadme(projectDir, projectName, cicdChoice, azureConfig);
+}
+
+async function createSharedPackage(projectDir: string, projectName: string) {
+  console.log('📦 Creating shared workspace package for Zod models...\n');
+
+  const sharedDir = path.join(projectDir, 'shared');
+  const modelsDir = path.join(sharedDir, 'models');
+  fs.mkdirSync(modelsDir, { recursive: true });
+
+  // shared/package.json
+  const sharedPackageJson = {
+    name: `@${projectName}/shared`,
+    version: '1.0.0',
+    description: 'Shared Zod models — Single Source of Truth for validation schemas',
+    main: 'dist/index.js',
+    types: 'dist/index.d.ts',
+    scripts: {
+      build: 'tsc',
+      watch: 'tsc --watch',
+    },
+    dependencies: {
+      'zod': '>=3.25.0',
+    },
+    devDependencies: {
+      'typescript': '^5.0.0',
+    },
+  };
+  fs.writeFileSync(
+    path.join(sharedDir, 'package.json'),
+    JSON.stringify(sharedPackageJson, null, 2)
+  );
+
+  // shared/tsconfig.json
+  const sharedTsConfig = {
+    compilerOptions: {
+      target: 'ES2020',
+      module: 'commonjs',
+      moduleResolution: 'node',
+      lib: ['ES2020'],
+      outDir: 'dist',
+      rootDir: '.',
+      declaration: true,
+      declarationMap: true,
+      sourceMap: true,
+      strict: true,
+      esModuleInterop: true,
+      skipLibCheck: true,
+      forceConsistentCasingInFileNames: true,
+    },
+    include: ['index.ts', 'models/**/*'],
+    exclude: ['node_modules', 'dist'],
+  };
+  fs.writeFileSync(
+    path.join(sharedDir, 'tsconfig.json'),
+    JSON.stringify(sharedTsConfig, null, 2)
+  );
+
+  // shared/index.ts (empty re-export file, scaffold will add entries)
+  fs.writeFileSync(
+    path.join(sharedDir, 'index.ts'),
+    `// Shared Zod models — auto-managed by SwallowKit scaffold command\n// Do not edit the export list below manually\n`
+  );
+
+  // shared/.gitignore
+  fs.writeFileSync(
+    path.join(sharedDir, '.gitignore'),
+    `node_modules\ndist\n`
+  );
+
+  console.log('✅ Shared package created\n');
 }
 
 async function createAzureFunctionsProject(projectDir: string) {
@@ -626,7 +707,7 @@ async function createAzureFunctionsProject(projectDir: string) {
     dependencies: {
       '@azure/functions': '~4.5.0',
       '@azure/cosmos': '^4.0.0',
-      'zod': '^3.25.0'
+      [`@${path.basename(projectDir)}/shared`]: '*',
     },
     devDependencies: {
       '@types/node': '^20.0.0',
@@ -639,6 +720,7 @@ async function createAzureFunctionsProject(projectDir: string) {
   );
 
   // Create functions tsconfig.json
+  const sharedPkgName = `@${path.basename(projectDir)}/shared`;
   const functionsTsConfig = {
     compilerOptions: {
       target: 'ES2020',
@@ -650,7 +732,11 @@ async function createAzureFunctionsProject(projectDir: string) {
       strict: true,
       esModuleInterop: true,
       skipLibCheck: true,
-      forceConsistentCasingInFileNames: true
+      forceConsistentCasingInFileNames: true,
+      paths: {
+        [sharedPkgName]: ['../shared'],
+        [`${sharedPkgName}/*`]: ['../shared/*'],
+      },
     },
     include: ['src/**/*'],
     exclude: ['node_modules', 'dist']
@@ -729,7 +815,7 @@ local.settings.json
   // Create greet function directly in src
 
   const greetFunction = `import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 // Zod schema for request validation
 const greetRequestSchema = z.object({
@@ -750,7 +836,7 @@ export async function greet(request: HttpRequest, context: InvocationContext): P
       return {
         status: 400,
         jsonBody: {
-          error: result.error.errors[0].message
+          error: result.error.issues[0].message
         }
       };
     }
@@ -783,9 +869,7 @@ app.http('greet', {
 `;
   fs.writeFileSync(path.join(srcDir, 'greet.ts'), greetFunction);
 
-  // Install dependencies for functions
-  console.log('📦 Installing Functions dependencies...\n');
-  await installDependencies(functionsDir);
+  // Dependencies are installed via workspace root 'npm install'
 
   console.log('✅ Azure Functions project created\n');
 }
@@ -898,7 +982,7 @@ export default function Home() {
             Welcome to SwallowKit
           </h1>
           <p className="text-xl text-gray-600 dark:text-gray-400">
-            Full-stack TypeScript with Next.js + Azure Functions + Zod
+            Next.js on Azure Static Web Apps + Functions + Cosmos DB — Zod schema sharing
           </p>
         </header>
 
@@ -1009,7 +1093,7 @@ function createReadme(projectDir: string, projectName: string, cicdChoice: strin
 
   const readme = `# ${projectName}
 
-A full-stack application built with **SwallowKit** - a modern TypeScript framework for building Next.js + Azure Functions applications.
+A full-stack application built with **SwallowKit** - Next.js on Azure Static Web Apps + Functions + Cosmos DB with Zod schema sharing.
 
 ## 🚀 Tech Stack
 
@@ -2318,6 +2402,7 @@ on:
       - 'app/**'
       - 'components/**'
       - 'lib/**'
+      - 'shared/**'
       - 'public/**'
       - 'package.json'
       - 'next.config.js'
@@ -2330,6 +2415,7 @@ on:
       - 'app/**'
       - 'components/**'
       - 'lib/**'
+      - 'shared/**'
       - 'public/**'
       - 'package.json'
       - 'next.config.js'
@@ -2369,11 +2455,13 @@ on:
       - main
     paths:
       - 'functions/**'
+      - 'shared/**'
   pull_request:
     branches:
       - main
     paths:
       - 'functions/**'
+      - 'shared/**'
   workflow_dispatch:
 
 jobs:
@@ -2391,13 +2479,15 @@ jobs:
       
       - name: Install dependencies
         run: |
-          cd functions
-          npm install
+          npm ci
+      
+      - name: Build shared package
+        run: |
+          npm run build -w shared
       
       - name: Build Functions
         run: |
-          cd functions
-          npm run build
+          npm run build -w functions
       
       - name: Deploy to Azure Functions
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
@@ -2429,6 +2519,7 @@ async function createAzurePipelines(projectDir: string) {
       - app/**
       - components/**
       - lib/**
+      - shared/**
       - public/**
       - package.json
       - next.config.js
@@ -2442,6 +2533,7 @@ pr:
       - app/**
       - components/**
       - lib/**
+      - shared/**
       - public/**
       - package.json
       - next.config.js
@@ -2487,6 +2579,7 @@ steps:
   paths:
     include:
       - functions/**
+      - shared/**
 
 pr:
   branches:
@@ -2495,6 +2588,7 @@ pr:
   paths:
     include:
       - functions/**
+      - shared/**
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -2509,13 +2603,15 @@ steps:
     displayName: 'Install Node.js'
 
   - script: |
-      cd functions
       npm ci
-    displayName: 'Install Functions dependencies'
+    displayName: 'Install workspace dependencies'
 
   - script: |
-      cd functions
-      npm run build
+      npm run build -w shared
+    displayName: 'Build shared package'
+
+  - script: |
+      npm run build -w functions
     displayName: 'Build Functions'
 
   - task: ArchiveFiles@2

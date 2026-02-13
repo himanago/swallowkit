@@ -6,7 +6,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
-import { toPascalCase, toCamelCase } from "../../core/scaffold/model-parser";
+import { toPascalCase } from "../../core/scaffold/model-parser";
 import { ensureSwallowKitProject } from "../../core/config";
 
 interface CreateModelOptions {
@@ -19,19 +19,18 @@ interface CreateModelOptions {
  */
 function generateModelTemplate(modelName: string): string {
   const pascalName = toPascalCase(modelName);
-  const camelName = toCamelCase(modelName);
   
-  return `import { z } from 'zod';
+  return `import { z } from 'zod/v4';
 
-// ${pascalName} model
-export const ${camelName}Schema = z.object({
+// ${pascalName} model (Zod official pattern: same name for value and type)
+export const ${pascalName} = z.object({
   id: z.string(),
   name: z.string().min(1),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
 
-export type ${pascalName} = z.infer<typeof ${camelName}Schema>;
+export type ${pascalName} = z.infer<typeof ${pascalName}>;
 
 // Display name for UI
 export const displayName = '${pascalName}';
@@ -64,9 +63,9 @@ export async function createModelCommand(options: CreateModelOptions) {
 
   console.log("🏗️  SwallowKit Create-Model: Generating model templates...\n");
 
-  const modelsDir = options.modelsDir || "lib/models";
+  const modelsDir = options.modelsDir || "shared/models";
   
-  // lib/models ディレクトリが存在しなければ作成
+  // shared/models ディレクトリが存在しなければ作成
   if (!fs.existsSync(modelsDir)) {
     console.log(`📁 Creating directory: ${modelsDir}`);
     fs.mkdirSync(modelsDir, { recursive: true });
@@ -98,6 +97,9 @@ export async function createModelCommand(options: CreateModelOptions) {
     fs.writeFileSync(filePath, content);
     console.log(`✅ Created: ${filePath}`);
     created.push(kebabName);
+
+    // shared/index.ts に re-export を追加
+    updateSharedIndex(kebabName, pascalName);
   }
 
   // サマリー表示
@@ -111,7 +113,28 @@ export async function createModelCommand(options: CreateModelOptions) {
 
   if (created.length > 0) {
     console.log("\n📝 Next steps:");
-    console.log("  1. Customize the generated model fields in lib/models/");
-    console.log("  2. Run 'npx swallowkit scaffold lib/models/<model>.ts' to generate CRUD code");
+    console.log("  1. Customize the generated model fields in shared/models/");
+    console.log("  2. Run 'npx swallowkit scaffold <model>' to generate CRUD code");
   }
+}
+
+/**
+ * shared/index.ts に re-export エントリを追加
+ */
+function updateSharedIndex(kebabName: string, pascalName: string): void {
+  const indexPath = path.join("shared", "index.ts");
+  
+  if (!fs.existsSync(indexPath)) {
+    return;
+  }
+  
+  const content = fs.readFileSync(indexPath, "utf-8");
+  const exportLine = `export { ${pascalName} } from './models/${kebabName}';`;
+  
+  // 既に存在する場合はスキップ
+  if (content.includes(exportLine)) {
+    return;
+  }
+  
+  fs.appendFileSync(indexPath, exportLine + "\n");
 }

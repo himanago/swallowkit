@@ -202,6 +202,7 @@ npx swallowkit scaffold <model-file> [options]
 - ✅ Zod スキーマで自動検証
 - ✅ エラーハンドリング付き
 - ✅ TypeScript 型安全
+- ✅ ファクトリーパターン対応（共有 `crud-factory.ts`）
 
 **2. Next.js BFF API Routes**
 
@@ -262,6 +263,7 @@ npx swallowkit scaffold lib/models/todo.ts
 
 # Product モデルから CRUD を生成
 npx swallowkit scaffold lib/models/product.ts
+
 ```
 
 ### 生成後の使用
