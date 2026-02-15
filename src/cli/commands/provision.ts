@@ -127,15 +127,18 @@ export const provisionCommand = new Command('provision')
       console.log('\n✅ Deployment completed successfully!\n');
       console.log('📋 Resource Information:');
       
+      let swaName = '<swa-name>';
+      let functionAppName = '<function-name>';
       if (deployment.properties?.outputs) {
         const outputs = deployment.properties.outputs;
-        
         if (outputs.staticWebAppName) {
-          console.log(`  - Static Web App: ${outputs.staticWebAppName.value}`);
+          swaName = outputs.staticWebAppName.value;
+          console.log(`  - Static Web App: ${swaName}`);
           console.log(`  - URL: https://${outputs.staticWebAppUrl.value}`);
         }
         if (outputs.functionsAppName) {
-          console.log(`  - Function App: ${outputs.functionsAppName.value}`);
+          functionAppName = outputs.functionsAppName.value;
+          console.log(`  - Function App: ${functionAppName}`);
           console.log(`  - URL: https://${outputs.functionsAppUrl.value}`);
         }
         if (outputs.cosmosDbAccountName) {
@@ -146,13 +149,41 @@ export const provisionCommand = new Command('provision')
 
       // Next steps guidance
       console.log('\n📝 Next Steps:');
-      console.log('  1. Configure CI/CD secrets/variables:');
-      console.log('     - Get Static Web App deployment token:');
-      console.log(`       az staticwebapp secrets list --name <swa-name> --resource-group ${options.resourceGroup} --query "properties.apiKey" -o tsv`);
-      console.log('     - Get Function App publish profile:');
-      console.log(`       az functionapp deployment list-publishing-profiles --name <function-name> --resource-group ${options.resourceGroup} --xml`);
+      console.log('  1. Configure CI/CD secrets/variables:\n');
+
+      // Fetch SWA deployment token
+      console.log('     [AZURE_STATIC_WEB_APPS_API_TOKEN]');
+      try {
+        const swaToken = execSync(
+          `az staticwebapp secrets list --name ${swaName} --resource-group ${options.resourceGroup} --query "properties.apiKey" -o tsv`,
+          { encoding: 'utf-8', stdio: 'pipe' }
+        ).trim();
+        console.log(`       ${swaToken}\n`);
+      } catch {
+        console.log('       ⚠️  Failed to retrieve. Run manually:');
+        console.log(`       az staticwebapp secrets list --name ${swaName} --resource-group ${options.resourceGroup} --query "properties.apiKey" -o tsv\n`);
+      }
+
+      // Function App name (already known)
+      console.log('     [AZURE_FUNCTIONAPP_NAME]');
+      console.log(`       ${functionAppName}\n`);
+
+      // Fetch Function App publish profile
+      console.log('     [AZURE_FUNCTIONAPP_PUBLISH_PROFILE]');
+      try {
+        const publishProfile = execSync(
+          `az webapp deployment list-publishing-profiles --name ${functionAppName} --resource-group ${options.resourceGroup} --xml`,
+          { encoding: 'utf-8', stdio: 'pipe' }
+        ).trim();
+        console.log(`       ${publishProfile}\n`);
+      } catch {
+        console.log('       ⚠️  Failed to retrieve. Run manually:');
+        console.log(`       az webapp deployment list-publishing-profiles --name ${functionAppName} --resource-group ${options.resourceGroup} --xml\n`);
+      }
+
       console.log('  2. Set up your CI/CD pipeline (GitHub Actions or Azure Pipelines)');
-      console.log('  3. Push your code to trigger the first deployment\n');
+      console.log('  3. Manually trigger the first deployment in your CI/CD pipeline');
+      console.log('     (Automatic deployments will run on subsequent pushes)\n');
 
     } catch (error: any) {
       console.error('❌ Deployment failed:');

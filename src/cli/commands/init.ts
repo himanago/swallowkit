@@ -698,7 +698,7 @@ async function createAzureFunctionsProject(projectDir: string) {
     name: 'functions',
     version: '1.0.0',
     description: 'Azure Functions backend',
-    main: 'dist/*.js',
+    main: 'dist/index.js',
     scripts: {
       start: 'func start',
       build: 'tsc',
@@ -707,6 +707,7 @@ async function createAzureFunctionsProject(projectDir: string) {
     dependencies: {
       '@azure/functions': '~4.5.0',
       '@azure/cosmos': '^4.0.0',
+      'zod': '>=3.25.0',
       [`@${path.basename(projectDir)}/shared`]: '*',
     },
     devDependencies: {
@@ -966,10 +967,13 @@ export default function Home() {
     try {
       const response = await fetch('/api/greet?name=SwallowKit');
       const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || \`Server error: \${response.status}\`);
+      }
       setMessage(data.message);
       setGreetingStatus('success');
     } catch (error) {
-      setMessage('Failed to connect to Azure Functions');
+      setMessage(error instanceof Error ? error.message : 'Failed to connect to Azure Functions');
       setGreetingStatus('error');
     }
   };
@@ -1268,8 +1272,8 @@ Static Web App ──(public)──> Azure Functions ──(VNet/PE)──> Cosm
                               (outbound only)
 \`\`\`
 
-- **Functions → Cosmos DB**: Private Endpoint経由（プライベート接続）
-- **SWA → Functions**: パブリックエンドポイント経由（CORS + IP制限で保護）
+- **Functions → Cosmos DB**: Connected via Private Endpoint (private connection)
+- **SWA → Functions**: Connected via public endpoint (secured with CORS + IP restrictions)
 ` : `
 \`\`\`
 Static Web App ──(public)──> Azure Functions ──(VNet/PE)──> Cosmos DB
@@ -1278,21 +1282,21 @@ Static Web App ──(public)──> Azure Functions ──(VNet/PE)──> Cosm
                               (inbound + outbound)
 \`\`\`
 
-- **Functions**: 完全プライベート（プライベートエンドポイント経由のみアクセス可能）
-- **Cosmos DB**: プライベートエンドポイント経由のみアクセス可能
+- **Functions**: Fully private (accessible only via Private Endpoint)
+- **Cosmos DB**: Accessible only via Private Endpoint
 
-⚠️ **注意**: Full Private構成では、SWAからFunctionsへの直接アクセスが制限されます。
-Azure Front DoorまたはAPI Management経由でのアクセスを検討してください。
+⚠️ **Note**: In Full Private configuration, direct access from SWA to Functions is restricted.
+Consider using Azure Front Door or API Management for access.
 `}
 ### VNet Resources
 
 | Resource | Purpose |
 |----------|---------|
-| \`vnet-${projectName}\` | 仮想ネットワーク (10.0.0.0/16) |
-| \`snet-functions\` | Functions用サブネット (10.0.1.0/24) |
-| \`snet-private-endpoints\` | プライベートエンドポイント用 (10.0.2.0/24) |
-| \`pe-cosmos-${projectName}\` | Cosmos DBプライベートエンドポイント |
-${azureConfig.vnetOption === 'full' ? `| \`pe-func-${projectName}\` | Functionsプライベートエンドポイント |` : ''}
+| \`vnet-${projectName}\` | Virtual Network (10.0.0.0/16) |
+| \`snet-functions\` | Functions subnet (10.0.1.0/24) |
+| \`snet-private-endpoints\` | Private Endpoints subnet (10.0.2.0/24) |
+| \`pe-cosmos-${projectName}\` | Cosmos DB Private Endpoint |
+${azureConfig.vnetOption === 'full' ? `| \`pe-func-${projectName}\` | Functions Private Endpoint |` : ''}
 
 ### Private DNS Zones
 
@@ -2489,6 +2493,19 @@ jobs:
         run: |
           npm run build -w functions
       
+      - name: Prepare functions for deployment
+        run: |
+          SHARED_PKG_NAME=$(node -p "require('./shared/package.json').name")
+          mkdir -p /tmp/fn-deps
+          node -e "const p=JSON.parse(require('fs').readFileSync('./functions/package.json','utf8'));Object.keys(p.dependencies).filter(k=>k.endsWith('/shared')).forEach(k=>delete p.dependencies[k]);require('fs').writeFileSync('/tmp/fn-deps/package.json',JSON.stringify(p,null,2));"
+          cd /tmp/fn-deps && npm install --omit=dev && cd -
+          rm -rf ./functions/node_modules
+          mv /tmp/fn-deps/node_modules ./functions/node_modules
+          SHARED_DEST="./functions/node_modules/$SHARED_PKG_NAME"
+          mkdir -p "$SHARED_DEST"
+          cp -r ./shared/dist "$SHARED_DEST/dist"
+          cp ./shared/package.json "$SHARED_DEST/package.json"
+      
       - name: Deploy to Azure Functions
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         uses: Azure/functions-action@v1
@@ -2613,6 +2630,19 @@ steps:
   - script: |
       npm run build -w functions
     displayName: 'Build Functions'
+
+  - script: |
+      SHARED_PKG_NAME=$(node -p "require('./shared/package.json').name")
+      mkdir -p /tmp/fn-deps
+      node -e "const p=JSON.parse(require('fs').readFileSync('./functions/package.json','utf8'));Object.keys(p.dependencies).filter(k=>k.endsWith('/shared')).forEach(k=>delete p.dependencies[k]);require('fs').writeFileSync('/tmp/fn-deps/package.json',JSON.stringify(p,null,2));"
+      cd /tmp/fn-deps && npm install --omit=dev && cd -
+      rm -rf ./functions/node_modules
+      mv /tmp/fn-deps/node_modules ./functions/node_modules
+      SHARED_DEST="./functions/node_modules/$SHARED_PKG_NAME"
+      mkdir -p "$SHARED_DEST"
+      cp -r ./shared/dist "$SHARED_DEST/dist"
+      cp ./shared/package.json "$SHARED_DEST/package.json"
+    displayName: 'Prepare functions for deployment'
 
   - task: ArchiveFiles@2
     condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
