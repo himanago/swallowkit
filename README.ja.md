@@ -44,31 +44,53 @@ cd my-app
 
 ### 2. モデルの作成
 
+複数のモデルをまとめて作成できます：
+
 ```bash
-npx swallowkit create-model todo
+npx swallowkit create-model category todo
 ```
 
-これにより `lib/models/todo.ts` が生成されます。必要なフィールドを追加してカスタマイズ：
+これにより `shared/models/category.ts` と `shared/models/todo.ts` が生成されます。必要なフィールドを追加してカスタマイズ：
 
 ```typescript
-// lib/models/todo.ts
+// shared/models/category.ts
 import { z } from 'zod';
 
-export const todoSchema = z.object({
+export const category = z.object({
   id: z.string(),
-  text: z.string().min(1).max(200),
-  completed: z.boolean().default(false),
+  name: z.string().min(1).max(50),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
 
-export type Todo = z.infer<typeof todoSchema>;
+export type Category = z.infer<typeof category>;
 ```
+
+親子関係を表現するには、ID 参照ではなく**ネスト型**で記述します：
+
+```typescript
+// shared/models/todo.ts
+import { z } from 'zod';
+import { category } from './category';
+
+export const todo = z.object({
+  id: z.string(),
+  text: z.string().min(1).max(200),
+  completed: z.boolean().default(false),
+  category: category.optional(),       // ネストオブジェクト（categoryId ではない）
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+
+export type Todo = z.infer<typeof todo>;
+```
+
+> **Tip**: ネスト型を使うことで型安全性が保たれ、関連データがドキュメント内にまとまって保存されます。これは Cosmos DB のドキュメントモデルに自然な形です。
 
 ### 3. CRUD コード生成
 
 ```bash
-npx swallowkit scaffold lib/models/todo.ts
+npx swallowkit scaffold shared/models/todo.ts
 ```
 
 これで以下が自動生成されます:
@@ -89,7 +111,7 @@ npx swallowkit dev
 
 ```typescript
 import { api } from '@/lib/api/backend';
-import type { Todo } from '@/lib/models/todo';
+import type { Todo } from '@/shared/models/todo';
 
 // 全件取得 - BFFエンドポイントを呼び出し
 const todos = await api.get<Todo[]>('/api/todos');
@@ -158,15 +180,25 @@ await api.delete('/api/todos/123');
 
 Next.js アプリを standalone モードで Azure Static Web Apps にデプロイし、バックエンド操作のために独立した Azure Functions に接続します。
 
+**1. リソースをプロビジョニング (Bicep IaC)**
+
 ```bash
-# 1. リソースをプロビジョニング (Bicep IaC)
 npx swallowkit provision --resource-group my-app-rg --location japaneast
+```
 
-# 2. CI/CD シークレットを設定 (詳細はデプロイガイド参照)
+プロビジョニング完了後、CI/CD に必要なシークレット値がターミナルに表示されます。コピーしておいてください。
 
-# 3. コードをプッシュして自動デプロイ
+**2. コードをプッシュ**
+
+```bash
 git push origin main
 ```
+
+**3. 自動実行された CI/CD をキャンセル** — シークレット未登録のため失敗します。
+
+**4. 表示された値をシークレットに登録** — GitHub (Settings → Secrets) または Azure DevOps (Pipelines → Library) に登録します。
+
+**5. CI/CD ワークフローを手動で再実行します。**
 
 詳細は **[デプロイガイド](./docs/deployment-guide.ja.md)** を参照してください。
 

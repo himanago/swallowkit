@@ -381,16 +381,11 @@ az functionapp show \
 Edit Bicep files in `infra/` before provisioning:
 
 ```bicep
-// infra/modules/functions.bicep
+// infra/modules/functions-flex.bicep
 
-// Change Consumption → Premium
-resource appServicePlan 'Microsoft.Web/serverfarms@2022-03-01' = {
-  name: functionAppName
-  location: location
-  sku: {
-    name: 'EP1'  // Premium Elastic
-    tier: 'ElasticPremium'
-  }
+// Customize instance memory size
+resource flexFunctionsServer 'Microsoft.Web/sites@2023-12-01' = {
+  // Flex Consumption properties
 }
 ```
 

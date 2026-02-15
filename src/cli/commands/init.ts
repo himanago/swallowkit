@@ -10,12 +10,10 @@ interface InitOptions {
 }
 
 type CiCdProvider = 'github' | 'azure' | 'skip';
-type FunctionsPlan = 'flex' | 'premium';
 type CosmosDbMode = 'freetier' | 'serverless';
-type VNetOption = 'none' | 'outbound' | 'full';
+type VNetOption = 'none' | 'outbound';
 
 interface AzureConfig {
-  functionsPlan: FunctionsPlan;
   cosmosDbMode: CosmosDbMode;
   vnetOption: VNetOption;
 }
@@ -37,17 +35,6 @@ async function promptCiCd(): Promise<CiCdProvider> {
 }
 
 async function promptAzureConfig(): Promise<AzureConfig> {
-  const functionsResponse = await prompts({
-    type: 'select',
-    name: 'plan',
-    message: 'Azure Functions plan (affects performance and cost):',
-    choices: [
-      { title: 'Flex Consumption (recommended for most apps)', value: 'flex' },
-      { title: 'Premium (always-on, VNet support)', value: 'premium' }
-    ],
-    initial: 0
-  });
-
   const cosmosResponse = await prompts({
     type: 'select',
     name: 'mode',
@@ -59,43 +46,20 @@ async function promptAzureConfig(): Promise<AzureConfig> {
     initial: 0
   });
 
-  const functionsPlan: FunctionsPlan = functionsResponse.plan || 'flex';
-
-  let vnetOption: VNetOption;
-
-  if (functionsPlan === 'premium') {
-    // Premium: 3 options including Full Private
-    const vnetResponse = await prompts({
-      type: 'select',
-      name: 'vnet',
-      message: 'Network security:',
-      choices: [
-        { title: 'Full Private (recommended) - Functions + Cosmos DB via Private Endpoints', value: 'full' },
-        { title: 'VNet Integration - Cosmos DB via Private Endpoint only', value: 'outbound' },
-        { title: 'None - Public endpoints, simplest but least secure', value: 'none' }
-      ],
-      initial: 0
-    });
-    vnetOption = vnetResponse.vnet || 'full';
-  } else {
-    // Flex Consumption: 2 options (Full Private not supported)
-    const vnetResponse = await prompts({
-      type: 'select',
-      name: 'vnet',
-      message: 'Network security:',
-      choices: [
-        { title: 'VNet Integration (recommended) - Cosmos DB via Private Endpoint', value: 'outbound' },
-        { title: 'None - Public endpoints, simplest but least secure', value: 'none' }
-      ],
-      initial: 0
-    });
-    vnetOption = vnetResponse.vnet || 'outbound';
-  }
+  const vnetResponse = await prompts({
+    type: 'select',
+    name: 'vnet',
+    message: 'Network security:',
+    choices: [
+      { title: 'VNet Integration (recommended) - Cosmos DB via Private Endpoint', value: 'outbound' },
+      { title: 'None - Public endpoints, simplest but least secure', value: 'none' }
+    ],
+    initial: 0
+  });
 
   return {
-    functionsPlan,
     cosmosDbMode: cosmosResponse.mode || 'freetier',
-    vnetOption
+    vnetOption: vnetResponse.vnet || 'outbound'
   };
 }
 
@@ -698,7 +662,7 @@ async function createAzureFunctionsProject(projectDir: string) {
     name: 'functions',
     version: '1.0.0',
     description: 'Azure Functions backend',
-    main: 'dist/index.js',
+    main: 'dist/*.js',
     scripts: {
       start: 'func start',
       build: 'tsc',
@@ -1088,12 +1052,10 @@ export const scaffoldConfig = {
 function createReadme(projectDir: string, projectName: string, cicdChoice: string, azureConfig: AzureConfig) {
   console.log('📝 Creating README.md...\n');
 
-  const functionsPlanLabel = azureConfig.functionsPlan === 'flex' ? 'Flex Consumption' : 'Premium';
   const cosmosDbModeLabel = azureConfig.cosmosDbMode === 'freetier' ? 'Free Tier (1000 RU/s)' : 'Serverless';
   const cicdLabel = cicdChoice === 'github' ? 'GitHub Actions' : cicdChoice === 'azure' ? 'Azure Pipelines' : 'None';
   const vnetLabel = azureConfig.vnetOption === 'none' ? 'None (public endpoints)' : 
-                    azureConfig.vnetOption === 'outbound' ? 'Outbound VNet (Cosmos DB Private Endpoint)' : 
-                    'Full Private (Functions + Cosmos DB Private Endpoints)';
+                    'Outbound VNet (Cosmos DB Private Endpoint)';
 
   const readme = `# ${projectName}
 
@@ -1113,7 +1075,7 @@ A full-stack application built with **SwallowKit** - Next.js on Azure Static Web
 
 This project was initialized with the following settings:
 
-- **Azure Functions Plan**: ${functionsPlanLabel}
+- **Azure Functions Plan**: Flex Consumption
 - **Cosmos DB Mode**: ${cosmosDbModeLabel}
 - **Network Security**: ${vnetLabel}
 - **CI/CD**: ${cicdLabel}
@@ -1264,7 +1226,7 @@ ${azureConfig.vnetOption !== 'none' ? `
 This project is configured with **${vnetLabel}**.
 
 ### Architecture
-${azureConfig.vnetOption === 'outbound' ? `
+
 \`\`\`
 Static Web App ──(public)──> Azure Functions ──(VNet/PE)──> Cosmos DB
                                     │
@@ -1274,20 +1236,7 @@ Static Web App ──(public)──> Azure Functions ──(VNet/PE)──> Cosm
 
 - **Functions → Cosmos DB**: Connected via Private Endpoint (private connection)
 - **SWA → Functions**: Connected via public endpoint (secured with CORS + IP restrictions)
-` : `
-\`\`\`
-Static Web App ──(public)──> Azure Functions ──(VNet/PE)──> Cosmos DB
-                                    │
-                              Private Endpoint
-                              (inbound + outbound)
-\`\`\`
 
-- **Functions**: Fully private (accessible only via Private Endpoint)
-- **Cosmos DB**: Accessible only via Private Endpoint
-
-⚠️ **Note**: In Full Private configuration, direct access from SWA to Functions is restricted.
-Consider using Azure Front Door or API Management for access.
-`}
 ### VNet Resources
 
 | Resource | Purpose |
@@ -1296,12 +1245,10 @@ Consider using Azure Front Door or API Management for access.
 | \`snet-functions\` | Functions subnet (10.0.1.0/24) |
 | \`snet-private-endpoints\` | Private Endpoints subnet (10.0.2.0/24) |
 | \`pe-cosmos-${projectName}\` | Cosmos DB Private Endpoint |
-${azureConfig.vnetOption === 'full' ? `| \`pe-func-${projectName}\` | Functions Private Endpoint |` : ''}
 
 ### Private DNS Zones
 
 - \`privatelink.documents.azure.com\` (Cosmos DB)
-${azureConfig.vnetOption === 'full' ? `- \`privatelink.azurewebsites.net\` (Functions)` : ''}
 ` : ''}
 ## 📚 Learn More
 
@@ -1329,7 +1276,6 @@ async function createInfrastructure(projectDir: string, projectName: string, azu
   fs.mkdirSync(modulesDir, { recursive: true });
 
   const enableVNet = azureConfig.vnetOption !== 'none';
-  const enableFullPrivate = azureConfig.vnetOption === 'full' && azureConfig.functionsPlan === 'premium';
 
   // main.bicep
   const mainBicep = `targetScope = 'resourceGroup'
@@ -1343,19 +1289,12 @@ param location string = resourceGroup().location
 @description('Location for Static Web App (must be explicitly provided)')
 param swaLocation string
 
-@description('Functions plan type')
-@allowed(['flex', 'premium'])
-param functionsPlan string = '${azureConfig.functionsPlan}'
-
 @description('Cosmos DB mode')
 @allowed(['freetier', 'serverless'])
 param cosmosDbMode string = '${azureConfig.cosmosDbMode}'
 
 @description('Enable VNet integration')
 param enableVNet bool = ${enableVNet}
-
-@description('Enable full private network (Functions private endpoint)')
-param enableFullPrivate bool = ${enableFullPrivate}
 
 // Shared Log Analytics Workspace (in Functions region for data residency)
 module logAnalytics 'modules/loganalytics.bicep' = {
@@ -1403,7 +1342,6 @@ module vnet 'modules/vnet.bicep' = if (enableVNet) {
   params: {
     name: 'vnet-\${projectName}'
     location: location
-    functionsPlan: functionsPlan
   }
 }
 
@@ -1446,8 +1384,8 @@ module cosmosPrivateEndpoint 'modules/private-endpoint-cosmos.bicep' = if (enabl
   ]
 }
 
-// Azure Functions (conditional based on plan) - Deploy AFTER Cosmos DB
-module functionsFlex 'modules/functions-flex.bicep' = if (functionsPlan == 'flex') {
+// Azure Functions (Flex Consumption) - Deploy AFTER Cosmos DB
+module functionsFlex 'modules/functions-flex.bicep' = {
   name: 'functionsApp'
   params: {
     name: 'func-\${projectName}'
@@ -1464,44 +1402,6 @@ module functionsFlex 'modules/functions-flex.bicep' = if (functionsPlan == 'flex
     cosmosDbFreeTier
     cosmosDbServerless
     cosmosPrivateEndpoint
-  ]
-}
-
-module functionsPremium 'modules/functions-premium.bicep' = if (functionsPlan == 'premium') {
-  name: 'functionsApp'
-  params: {
-    name: 'func-\${projectName}'
-    location: location
-    storageAccountName: 'stg\${uniqueString(resourceGroup().id, projectName)}'
-    appInsightsConnectionString: appInsightsFunctions.outputs.connectionString
-    swaDefaultHostname: staticWebApp.outputs.defaultHostname
-    cosmosDbEndpoint: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.endpoint : cosmosDbServerless.outputs.endpoint
-    cosmosDbDatabaseName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.databaseName : cosmosDbServerless.outputs.databaseName
-    enableVNet: enableVNet
-    vnetSubnetId: enableVNet ? vnet.outputs.functionsSubnetId : ''
-    enablePrivateEndpoint: enableFullPrivate
-  }
-  dependsOn: [
-    cosmosDbFreeTier
-    cosmosDbServerless
-    cosmosPrivateEndpoint
-  ]
-}
-
-// Functions Private Endpoint (Premium only, full private mode)
-module functionsPrivateEndpoint 'modules/private-endpoint-functions.bicep' = if (enableFullPrivate) {
-  name: 'functionsPrivateEndpoint'
-  params: {
-    name: 'pe-func-\${projectName}'
-    location: location
-    functionAppId: functionsPremium.outputs.id
-    functionAppName: functionsPremium.outputs.name
-    subnetId: vnet.outputs.privateEndpointSubnetId
-    vnetId: vnet.outputs.id
-  }
-  dependsOn: [
-    functionsPremium
-    vnet
   ]
 }
 
@@ -1510,11 +1410,10 @@ module cosmosDbRoleAssignmentFreeTier 'modules/cosmosdb-role-assignment.bicep' =
   name: 'cosmosDbRoleAssignment'
   params: {
     cosmosAccountName: cosmosDbFreeTier.outputs.accountName
-    functionsPrincipalId: functionsPlan == 'flex' ? functionsFlex.outputs.principalId : functionsPremium.outputs.principalId
+    functionsPrincipalId: functionsFlex.outputs.principalId
   }
   dependsOn: [
     functionsFlex
-    functionsPremium
   ]
 }
 
@@ -1522,11 +1421,10 @@ module cosmosDbRoleAssignmentServerless 'modules/cosmosdb-role-assignment.bicep'
   name: 'cosmosDbRoleAssignment'
   params: {
     cosmosAccountName: cosmosDbServerless.outputs.accountName
-    functionsPrincipalId: functionsPlan == 'flex' ? functionsFlex.outputs.principalId : functionsPremium.outputs.principalId
+    functionsPrincipalId: functionsFlex.outputs.principalId
   }
   dependsOn: [
     functionsFlex
-    functionsPremium
   ]
 }
 
@@ -1535,19 +1433,18 @@ module staticWebAppConfig 'modules/staticwebapp-config.bicep' = {
   name: 'staticWebAppConfig'
   params: {
     staticWebAppName: staticWebApp.outputs.name
-    functionsDefaultHostname: functionsPlan == 'flex' ? functionsFlex.outputs.defaultHostname : functionsPremium.outputs.defaultHostname
+    functionsDefaultHostname: functionsFlex.outputs.defaultHostname
     appInsightsConnectionString: appInsightsSwa.outputs.connectionString
   }
   dependsOn: [
     functionsFlex
-    functionsPremium
   ]
 }
 
 output staticWebAppName string = staticWebApp.outputs.name
 output staticWebAppUrl string = staticWebApp.outputs.defaultHostname
-output functionsAppName string = functionsPlan == 'flex' ? functionsFlex.outputs.name : functionsPremium.outputs.name
-output functionsAppUrl string = functionsPlan == 'flex' ? functionsFlex.outputs.defaultHostname : functionsPremium.outputs.defaultHostname
+output functionsAppName string = functionsFlex.outputs.name
+output functionsAppUrl string = functionsFlex.outputs.defaultHostname
 output cosmosDbAccountName string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.accountName : cosmosDbServerless.outputs.accountName
 output cosmosDbEndpoint string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.endpoint : cosmosDbServerless.outputs.endpoint
 output cosmosDatabaseName string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.databaseName : cosmosDbServerless.outputs.databaseName
@@ -1571,17 +1468,11 @@ output vnetName string = enableVNet ? vnet.outputs.name : ''
     "projectName": {
       "value": "${projectName}"
     },
-    "functionsPlan": {
-      "value": "${azureConfig.functionsPlan}"
-    },
     "cosmosDbMode": {
       "value": "${azureConfig.cosmosDbMode}"
     },
     "enableVNet": {
       "value": ${enableVNet}
-    },
-    "enableFullPrivate": {
-      "value": ${enableFullPrivate}
     }
   }
 }
@@ -1876,144 +1767,6 @@ output principalId string = functionApp.identity.principalId
 `;
   fs.writeFileSync(path.join(modulesDir, 'functions-flex.bicep'), functionsFlexBicep);
   
-  // modules/functions-premium.bicep (Premium Plan)
-  const functionsPremiumBicep = `@description('Functions App name')
-param name string
-
-@description('Location for the Functions App')
-param location string
-
-@description('Storage account name for Functions')
-param storageAccountName string
-
-@description('Application Insights connection string')
-param appInsightsConnectionString string
-
-@description('Static Web App default hostname for CORS')
-param swaDefaultHostname string
-
-@description('Cosmos DB endpoint')
-param cosmosDbEndpoint string
-
-@description('Cosmos DB database name')
-param cosmosDbDatabaseName string
-
-@description('Enable VNet integration')
-param enableVNet bool = false
-
-@description('VNet subnet ID for Functions (required if enableVNet is true)')
-param vnetSubnetId string = ''
-
-@description('Enable private endpoint for inbound traffic')
-param enablePrivateEndpoint bool = false
-
-// Storage Account for Functions
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
-  name: storageAccountName
-  location: location
-  sku: {
-    name: 'Standard_LRS'
-  }
-  kind: 'StorageV2'
-  properties: {
-    supportsHttpsTrafficOnly: true
-    minimumTlsVersion: 'TLS1_2'
-  }
-}
-
-// App Service Plan (Premium)
-resource hostingPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
-  name: '\${name}-plan'
-  location: location
-  sku: {
-    name: 'EP1'
-    tier: 'ElasticPremium'
-  }
-  properties: {
-    reserved: true // Required for Linux
-    maximumElasticWorkerCount: 20
-  }
-}
-
-// Azure Functions App
-resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
-  name: name
-  location: location
-  kind: 'functionapp,linux'
-  identity: {
-    type: 'SystemAssigned'
-  }
-  properties: {
-    serverFarmId: hostingPlan.id
-    reserved: true
-    virtualNetworkSubnetId: enableVNet ? vnetSubnetId : null
-    publicNetworkAccess: enablePrivateEndpoint ? 'Disabled' : 'Enabled'
-    siteConfig: {
-      linuxFxVersion: 'NODE|22'
-      appSettings: [
-        {
-          name: 'AzureWebJobsStorage'
-          value: 'DefaultEndpointsProtocol=https;AccountName=\${storageAccount.name};EndpointSuffix=\${environment().suffixes.storage};AccountKey=\${storageAccount.listKeys().keys[0].value}'
-        }
-        {
-          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING'
-          value: 'DefaultEndpointsProtocol=https;AccountName=\${storageAccount.name};EndpointSuffix=\${environment().suffixes.storage};AccountKey=\${storageAccount.listKeys().keys[0].value}'
-        }
-        {
-          name: 'WEBSITE_CONTENTSHARE'
-          value: toLower(name)
-        }
-        {
-          name: 'FUNCTIONS_EXTENSION_VERSION'
-          value: '~4'
-        }
-        {
-          name: 'FUNCTIONS_WORKER_RUNTIME'
-          value: 'node'
-        }
-        {
-          name: 'WEBSITE_NODE_DEFAULT_VERSION'
-          value: '~22'
-        }
-        {
-          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-          value: appInsightsConnectionString
-        }
-        {
-          name: 'CosmosDBConnection__accountEndpoint'
-          value: cosmosDbEndpoint
-        }
-        {
-          name: 'COSMOS_DB_DATABASE_NAME'
-          value: cosmosDbDatabaseName
-        }
-      ]
-      cors: {
-        allowedOrigins: [
-          'https://\${swaDefaultHostname}'
-        ]
-      }
-      ipSecurityRestrictions: enablePrivateEndpoint ? [] : [
-        {
-          action: 'Allow'
-          ipAddress: 'AzureCloud'
-          tag: 'ServiceTag'
-          priority: 100
-        }
-      ]
-      alwaysOn: true
-    }
-    httpsOnly: true
-  }
-}
-
-output id string = functionApp.id
-output name string = functionApp.name
-output defaultHostname string = functionApp.properties.defaultHostName
-output principalId string = functionApp.identity.principalId
-`;
-  fs.writeFileSync(path.join(modulesDir, 'functions-premium.bicep'), functionsPremiumBicep);
-  
   // modules/cosmosdb-freetier.bicep (Free Tier)
   const cosmosDbFreeTierBicep = `@description('Cosmos DB account name')
 param accountName string
@@ -2173,12 +1926,6 @@ param name string
 @description('Location for VNet')
 param location string
 
-@description('Functions plan type (affects subnet delegation)')
-@allowed(['flex', 'premium'])
-param functionsPlan string
-
-var functionsSubnetDelegation = functionsPlan == 'flex' ? 'Microsoft.App/environments' : 'Microsoft.Web/serverFarms'
-
 resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
   name: name
   location: location
@@ -2197,7 +1944,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
             {
               name: 'delegation'
               properties: {
-                serviceName: functionsSubnetDelegation
+                serviceName: 'Microsoft.App/environments'
               }
             }
           ]
@@ -2301,87 +2048,6 @@ output privateEndpointId string = privateEndpoint.id
 output privateDnsZoneId string = privateDnsZone.id
 `;
     fs.writeFileSync(path.join(modulesDir, 'private-endpoint-cosmos.bicep'), cosmosPrivateEndpointBicep);
-
-    // modules/private-endpoint-functions.bicep (for Premium plan full private mode)
-    const functionsPrivateEndpointBicep = `@description('Private endpoint name')
-param name string
-
-@description('Location')
-param location string
-
-@description('Functions App resource ID')
-param functionAppId string
-
-@description('Functions App name')
-param functionAppName string
-
-@description('Subnet ID for private endpoint')
-param subnetId string
-
-@description('VNet ID for DNS zone link')
-param vnetId string
-
-// Private DNS Zone for Azure Websites
-resource privateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
-  name: 'privatelink.azurewebsites.net'
-  location: 'global'
-}
-
-// Link DNS Zone to VNet
-resource privateDnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
-  parent: privateDnsZone
-  name: '\${functionAppName}-vnet-link'
-  location: 'global'
-  properties: {
-    virtualNetwork: {
-      id: vnetId
-    }
-    registrationEnabled: false
-  }
-}
-
-// Private Endpoint for Functions
-resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
-  name: name
-  location: location
-  properties: {
-    subnet: {
-      id: subnetId
-    }
-    privateLinkServiceConnections: [
-      {
-        name: '\${functionAppName}-connection'
-        properties: {
-          privateLinkServiceId: functionAppId
-          groupIds: [
-            'sites'
-          ]
-        }
-      }
-    ]
-  }
-}
-
-// DNS Zone Group
-resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
-  parent: privateEndpoint
-  name: 'default'
-  properties: {
-    privateDnsZoneConfigs: [
-      {
-        name: 'functions-dns-config'
-        properties: {
-          privateDnsZoneId: privateDnsZone.id
-        }
-      }
-    ]
-  }
-}
-
-output privateEndpointId string = privateEndpoint.id
-output privateDnsZoneId string = privateDnsZone.id
-`;
-    fs.writeFileSync(path.join(modulesDir, 'private-endpoint-functions.bicep'), functionsPrivateEndpointBicep);
 
     console.log('✅ VNet modules created\n');
   }
@@ -2512,8 +2178,8 @@ jobs:
         with:
           app-name: \${{ secrets.AZURE_FUNCTIONAPP_NAME }}
           package: './functions'
-          publish-profile: \${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}${azureConfig.functionsPlan === 'flex' ? `
-          sku: flexconsumption` : ''}
+          publish-profile: \${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+          sku: flexconsumption
 `;
   fs.writeFileSync(path.join(workflowsDir, 'deploy-functions.yml'), functionsWorkflow);
 

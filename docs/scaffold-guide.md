@@ -22,14 +22,14 @@ This generates `lib/models/product.ts`:
 import { z } from 'zod';
 
 // Product model
-export const productSchema = z.object({
+export const product = z.object({
   id: z.string(),
   name: z.string().min(1),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
 
-export type Product = z.infer<typeof productSchema>;
+export type Product = z.infer<typeof product>;
 ```
 
 💡 **Create multiple models at once**:
@@ -46,7 +46,7 @@ Edit the generated file to add your required fields:
 // lib/models/product.ts
 import { z } from 'zod';
 
-export const productSchema = z.object({
+export const product = z.object({
   id: z.string(),
   name: z.string().min(1, "Product name is required"),
   price: z.number().min(0, "Price must be positive"),
@@ -58,7 +58,7 @@ export const productSchema = z.object({
   updatedAt: z.string().optional(),
 });
 
-export type Product = z.infer<typeof productSchema>;
+export type Product = z.infer<typeof product>;
 ```
 
 ⚠️ **Important**: Always include `id`, `createdAt`, and `updatedAt` fields. These are automatically managed by the backend.
@@ -138,8 +138,8 @@ SwallowKit automatically generates appropriate UI controls based on your Zod sch
 | `z.enum()` | Select dropdown | `<select>` with options |
 | `z.array()` | Comma-separated text input | Tags: "tag1, tag2, tag3" |
 | Foreign Key | Dropdown with related data | See below |
-| Nested Schema (single) | Select dropdown | `category: categorySchema` |
-| Nested Schema (array) | Multi-select | `tags: z.array(tagSchema)` |
+| Nested Schema (single) | Select dropdown | `category: category` |
+| Nested Schema (array) | Multi-select | `tags: z.array(tag)` |
 
 ### Boolean Fields
 
@@ -200,19 +200,21 @@ Fields marked with `.optional()` are not required in forms, while others have th
 
 SwallowKit automatically detects fields that directly reference other Zod schemas and generates appropriate UI. Unlike the `categoryId: z.string()` foreign key pattern, this supports embedding Zod schema objects directly.
 
+> **Recommended**: For parent-child relationships, prefer nested schema references over ID-based foreign keys. Nesting preserves type safety and keeps related data together in the document, which is natural for Cosmos DB's document model.
+
 ### Detected Patterns
 
 ```typescript
-import { categorySchema } from './category';
-import { tagSchema } from './tag';
+import { category } from './category';
+import { tag } from './tag';
 
-export const productSchema = z.object({
+export const product = z.object({
   id: z.string(),
   name: z.string().min(1),
   // Single object reference (generates a select dropdown)
-  category: categorySchema.optional(),
+  category: category.optional(),
   // Array reference (generates a multi-select)
-  tags: z.array(tagSchema).optional(),
+  tags: z.array(tag).optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
@@ -222,7 +224,7 @@ export const productSchema = z.object({
 
 #### Single Object Reference
 
-Fields like `category: categorySchema.optional()` generate a select dropdown:
+Fields like `category: category.optional()` generate a select dropdown:
 
 ```tsx
 <select
@@ -241,7 +243,7 @@ On form submission, the selected ID is automatically converted back to an object
 
 #### Array Reference
 
-Fields like `tags: z.array(tagSchema)` generate a multi-select:
+Fields like `tags: z.array(tag)` generate a multi-select:
 
 ```tsx
 <select
@@ -294,18 +296,18 @@ categoryId: z.string().min(1, "Category is required")
 // lib/models/category.ts
 import { z } from 'zod';
 
-export const categorySchema = z.object({
+export const category = z.object({
   id: z.string(),
   name: z.string().min(1, "Category name is required"),
   color: z.enum(["red", "blue", "green", "yellow", "purple"]).optional(),
 });
 
-export type CategoryType = z.infer<typeof categorySchema>;
+export type Category = z.infer<typeof category>;
 
 // lib/models/todo.ts
 import { z } from 'zod';
 
-export const todoSchema = z.object({
+export const todo = z.object({
   id: z.string(),
   title: z.string().min(1, "Title is required"),
   categoryId: z.string().min(1, "Category is required"), // Foreign key
@@ -313,7 +315,7 @@ export const todoSchema = z.object({
   priority: z.enum(["low", "medium", "high"]).default("medium"),
 });
 
-export type TodoType = z.infer<typeof todoSchema>;
+export type Todo = z.infer<typeof todo>;
 ```
 
 ### Generated Foreign Key UI
@@ -401,10 +403,10 @@ This means your referenced models should have either a `name` or `title` field f
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { TodoType } from '@/lib/models/todo';
+import { Todo } from '@/lib/models/todo';
 
 export default function TodoListPage() {
-  const [todos, setTodos] = useState<TodoType[]>([]);
+  const [todos, setTodos] = useState<Todo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
@@ -554,7 +556,7 @@ export default function TodoListPage() {
 
 import { useState, FormEvent, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { todoSchema } from '@/lib/models/todo';
+import { todo } from '@/lib/models/todo';
 import { z } from 'zod';
 
 interface TodoFormProps {
@@ -595,7 +597,7 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 
     try {
       // Validate with Zod
-      const validatedData = todoSchema.parse({
+      const validatedData = todo.parse({
         ...formData,
         id: initialData?.id || crypto.randomUUID(),
       });
@@ -737,13 +739,13 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 
 ### 1. Model Naming Conventions
 
-- Schema names: `camelCase` + `schema` suffix: `productSchema`, `categorySchema`, `todoSchema`
-- Type names: `PascalCase` + `Type` suffix: `ProductType`, `CategoryType`, `TodoType`
+- Schema names: `camelCase` (no suffix): `product`, `category`, `todo`
+- Type names: `PascalCase` (no suffix): `Product`, `Category`, `Todo`
 - Class names: `PascalCase`: `Product`, `Category`, `Todo`
 - Export the schema and type:
   ```typescript
-  export const productSchema = z.object({...});
-  export type ProductType = z.infer<typeof productSchema>;
+  export const product = z.object({...});
+  export type Product = z.infer<typeof product>;
   ```
 
 ### 2. Foreign Key Naming
@@ -760,13 +762,13 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 - Include either `name` or `title` field in your models for better foreign key display
 - Example:
   ```typescript
-  export const categorySchema = z.object({
+  export const category = z.object({
     id: z.string(),
     name: z.string().min(1, "Name is required"), // Used for display
     // ...other fields
   });
   
-  export type CategoryType = z.infer<typeof categorySchema>;
+  export type Category = z.infer<typeof category>;
   ```
 
 ### 4. Optional vs Required Fields
@@ -796,8 +798,7 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 ### Schema Parsing Errors
 
 If you see "Failed to parse model file", ensure:
-- Your file has a valid default export of a Zod object schema
-- The schema name ends with `Schema`
+- Your file has a valid export of a Zod object schema
 - You're using `z.object()` as the root schema
 
 ### Foreign Key Not Detected
@@ -832,11 +833,11 @@ Each entity's route file becomes a concise wrapper that simply calls the factory
 ```typescript
 // app/api/todo/route.ts
 import { createCrudHandlers } from '@/lib/api/crud-factory';
-import { todoSchema } from '@/lib/models/todo';
+import { todo } from '@/lib/models/todo';
 
 const handlers = createCrudHandlers({
   entityName: 'todo',
-  schema: todoSchema,
+  schema: todo,
 });
 
 export const GET = handlers.GET;
@@ -849,10 +850,10 @@ export const POST = handlers.POST;
 // functions/src/todo.ts
 import { app } from '@azure/functions';
 import { createCrudFunctions } from './lib/crud-factory';
-import { todoSchema } from './models/todo';
+import { todo } from './models/todo';
 
 const crud = createCrudFunctions({
-  schema: todoSchema,
+  schema: todo,
   containerName: 'Todos',
 });
 

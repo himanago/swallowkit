@@ -45,45 +45,19 @@ npx swallowkit provision \
 - Azure Cosmos DB (サーバーレス)
 - マネージド ID（サービス間の安全な接続）
 
-### 3. CI/CD シークレットの設定
+プロビジョニング完了後、CI/CD に必要なシークレット値がターミナルに表示されます：
 
-#### GitHub Actions の場合
-
-**Static Web Apps デプロイトークンを取得:**
-
-```bash
-az staticwebapp secrets list \
-  --name <swa-name> \
-  --resource-group my-app-rg \
-  --query "properties.apiKey" -o tsv
+```
+=== CI/CD Secrets ===
+AZURE_STATIC_WEB_APPS_API_TOKEN: <トークン値>
+AZURE_FUNCTIONAPP_PUBLISH_PROFILE: <プロファイル XML>
 ```
 
-**GitHub リポジトリにシークレットを追加:**
-1. GitHub リポジトリの Settings → Secrets and variables → Actions
-2. `AZURE_STATIC_WEB_APPS_API_TOKEN` を追加
+> **重要**: これらの値をコピーしておいてください。ステップ 4 で使用します。
 
-**Functions 発行プロファイルを取得:**
+### 3. コードのプッシュ
 
-```bash
-az functionapp deployment list-publishing-profiles \
-  --name <function-name> \
-  --resource-group my-app-rg \
-  --xml
-```
-
-**GitHub シークレットに追加:**
-- `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` を追加
-
-#### Azure Pipelines の場合
-
-**変数グループを作成:**
-1. Azure DevOps → Pipelines → Library → Variable groups
-2. `azure-deployment` という名前のグループを作成
-3. 以下を追加:
-   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
-   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
-
-### 4. デプロイ実行
+コードをプッシュして CI/CD ワークフローをトリガーします：
 
 ```bash
 git add .
@@ -91,7 +65,38 @@ git commit -m "Initial deployment"
 git push origin main
 ```
 
-CI/CD ワークフローが自動的に実行されます。
+> **注意**: このプッシュで CI/CD ワークフローが自動実行されますが、シークレットが未登録のため**失敗します**。これは想定内です——次のステップに進んでください。
+
+### 4. キャンセル・シークレット登録・再実行
+
+#### ステップ 4-1: 自動実行された CI/CD をキャンセル
+
+初回プッシュでトリガーされた CI/CD はシークレットがないため成功しません。キャンセルしてください：
+
+- **GitHub Actions**: Actions タブ → 実行中のワークフローをクリック → Cancel workflow
+- **Azure Pipelines**: Pipelines → 実行中のパイプラインをクリック → Cancel
+
+#### ステップ 4-2: `provision` で表示されたシークレットを登録
+
+##### GitHub Actions の場合
+
+1. GitHub リポジトリの Settings → Secrets and variables → Actions
+2. プロビジョニング時に表示された値を使って以下のシークレットを追加：
+   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
+   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
+
+##### Azure Pipelines の場合
+
+1. Azure DevOps → Pipelines → Library → Variable groups
+2. `azure-deployment` という名前のグループを作成
+3. プロビジョニング時に表示された値を使って以下を追加：
+   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
+   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
+
+#### ステップ 4-3: CI/CD ワークフローを手動で再実行
+
+- **GitHub Actions**: Actions タブ → 失敗したワークフローを選択 → Re-run all jobs
+- **Azure Pipelines**: Pipelines → 失敗したパイプラインを選択 → Run pipeline
 
 ## 生成されるリソース
 
@@ -236,19 +241,6 @@ npx swallowkit provision \
 ```
 
 ### 一般的なカスタマイズ
-
-**Functions のプランを変更:**
-
-```bicep
-// infra/modules/functions.bicep
-resource functionApp 'Microsoft.Web/sites@2022-03-01' = {
-  kind: 'functionapp'
-  properties: {
-    serverFarmId: appServicePlan.id
-    // Premium プランに変更
-  }
-}
-```
 
 **Cosmos DB を有料プランに変更:**
 

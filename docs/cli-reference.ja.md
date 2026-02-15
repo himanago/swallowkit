@@ -393,16 +393,11 @@ az functionapp show \
 プロビジョニング前に `infra/` の Bicep ファイルを編集できます:
 
 ```bicep
-// infra/modules/functions.bicep
+// infra/modules/functions-flex.bicep
 
-// Consumption → Premium に変更
-resource appServicePlan 'Microsoft.Web/serverfarms@2022-03-01' = {
-  name: functionAppName
-  location: location
-  sku: {
-    name: 'EP1'  // Premium Elastic
-    tier: 'ElasticPremium'
-  }
+// インスタンスメモリサイズをカスタマイズ
+resource flexFunctionsServer 'Microsoft.Web/sites@2023-12-01' = {
+  // Flex Consumption プロパティ
 }
 ```
 

@@ -45,45 +45,19 @@ This creates using Bicep templates:
 - Azure Cosmos DB (serverless)
 - Managed Identity (secure service connections)
 
-### 3. Configure CI/CD Secrets
+After provisioning completes, the terminal displays the secret values required for CI/CD:
 
-#### For GitHub Actions
-
-**Get Static Web Apps deployment token:**
-
-```bash
-az staticwebapp secrets list \
-  --name <swa-name> \
-  --resource-group my-app-rg \
-  --query "properties.apiKey" -o tsv
+```
+=== CI/CD Secrets ===
+AZURE_STATIC_WEB_APPS_API_TOKEN: <token-value>
+AZURE_FUNCTIONAPP_PUBLISH_PROFILE: <profile-xml>
 ```
 
-**Add secret to GitHub repository:**
-1. Go to Settings → Secrets and variables → Actions
-2. Add `AZURE_STATIC_WEB_APPS_API_TOKEN`
+> **Important**: Copy these values — you will need them in step 4.
 
-**Get Functions publish profile:**
+### 3. Push Code
 
-```bash
-az functionapp deployment list-publishing-profiles \
-  --name <function-name> \
-  --resource-group my-app-rg \
-  --xml
-```
-
-**Add to GitHub secrets:**
-- Add `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
-
-#### For Azure Pipelines
-
-**Create variable group:**
-1. Azure DevOps → Pipelines → Library → Variable groups
-2. Create group named `azure-deployment`
-3. Add:
-   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
-   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
-
-### 4. Deploy
+Push your code to trigger the CI/CD workflow:
 
 ```bash
 git add .
@@ -91,7 +65,38 @@ git commit -m "Initial deployment"
 git push origin main
 ```
 
-CI/CD workflows will run automatically.
+> **Note**: This push will automatically trigger the CI/CD workflow, but it will **fail** because secrets are not registered yet. This is expected — proceed to the next step.
+
+### 4. Cancel, Register Secrets, and Re-run
+
+#### Step 4-1: Cancel the auto-triggered CI/CD run
+
+The initial push triggers a CI/CD run that cannot succeed without secrets. Cancel it:
+
+- **GitHub Actions**: Go to the Actions tab → click the running workflow → Cancel workflow
+- **Azure Pipelines**: Go to Pipelines → click the running pipeline → Cancel
+
+#### Step 4-2: Register the secrets displayed by `provision`
+
+##### For GitHub Actions
+
+1. Go to your GitHub repository → Settings → Secrets and variables → Actions
+2. Add the following secrets using the values displayed after provisioning:
+   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
+   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
+
+##### For Azure Pipelines
+
+1. Azure DevOps → Pipelines → Library → Variable groups
+2. Create group named `azure-deployment`
+3. Add the following variables using the values displayed after provisioning:
+   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
+   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
+
+#### Step 4-3: Manually re-run the CI/CD workflow
+
+- **GitHub Actions**: Actions tab → select the failed workflow → Re-run all jobs
+- **Azure Pipelines**: Pipelines → select the failed pipeline → Run pipeline
 
 ## Generated Resources
 
@@ -236,19 +241,6 @@ npx swallowkit provision \
 ```
 
 ### Common Customizations
-
-**Change Functions plan:**
-
-```bicep
-// infra/modules/functions.bicep
-resource functionApp 'Microsoft.Web/sites@2022-03-01' = {
-  kind: 'functionapp'
-  properties: {
-    serverFarmId: appServicePlan.id
-    // Change to Premium plan
-  }
-}
-```
 
 **Change Cosmos DB to provisioned:**
 

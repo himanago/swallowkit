@@ -43,33 +43,55 @@ npx swallowkit init my-app
 cd my-app
 ```
 
-### 2. Create Model
+### 2. Create Models
+
+You can create multiple models at once:
 
 ```bash
-npx swallowkit create-model todo
+npx swallowkit create-model category todo
 ```
 
-This generates `lib/models/todo.ts`. Customize it by adding your required fields:
+This generates `shared/models/category.ts` and `shared/models/todo.ts`. Customize them by adding your required fields:
 
 ```typescript
-// lib/models/todo.ts
+// shared/models/category.ts
 import { z } from 'zod';
 
-export const todoSchema = z.object({
+export const category = z.object({
   id: z.string(),
-  text: z.string().min(1).max(200),
-  completed: z.boolean().default(false),
+  name: z.string().min(1).max(50),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
 
-export type Todo = z.infer<typeof todoSchema>;
+export type Category = z.infer<typeof category>;
 ```
+
+For parent-child relationships, use **nested schemas** instead of ID references:
+
+```typescript
+// shared/models/todo.ts
+import { z } from 'zod';
+import { category } from './category';
+
+export const todo = z.object({
+  id: z.string(),
+  text: z.string().min(1).max(200),
+  completed: z.boolean().default(false),
+  category: category.optional(),       // Nested object (not categoryId)
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+
+export type Todo = z.infer<typeof todo>;
+```
+
+> **Tip**: Nesting preserves type safety and stores related data together in the document, which is natural for Cosmos DB's document model.
 
 ### 3. Generate CRUD Code
 
 ```bash
-npx swallowkit scaffold lib/models/todo.ts
+npx swallowkit scaffold shared/models/todo.ts
 ```
 
 This auto-generates:
@@ -90,7 +112,7 @@ npx swallowkit dev
 
 ```typescript
 import { api } from '@/lib/api/backend';
-import type { Todo } from '@/lib/models/todo';
+import type { Todo } from '@/shared/models/todo';
 
 // Get all - call BFF endpoint
 const todos = await api.get<Todo[]>('/api/todos');
@@ -159,15 +181,25 @@ await api.delete('/api/todos/123');
 
 Deploy your Next.js app to Azure Static Web Apps using standalone mode, and connect to independent Azure Functions for backend operations.
 
+**1. Provision resources (Bicep IaC)**
+
 ```bash
-# 1. Provision resources (Bicep IaC)
 npx swallowkit provision --resource-group my-app-rg --location japaneast
+```
 
-# 2. Configure CI/CD secrets (see deployment guide for details)
+After provisioning, the required CI/CD secret values are displayed in the terminal. Copy them.
 
-# 3. Push code for auto-deploy
+**2. Push code**
+
+```bash
 git push origin main
 ```
+
+**3. Cancel the auto-triggered CI/CD run** — it will fail because secrets are not registered yet.
+
+**4. Register the displayed secret values** in GitHub (Settings → Secrets) or Azure DevOps (Pipelines → Library).
+
+**5. Manually re-run the CI/CD workflow.**
 
 See **[Deployment Guide](./docs/deployment-guide.md)** for details.
 
