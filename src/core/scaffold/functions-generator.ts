@@ -210,7 +210,14 @@ app.http('${modelCamel}-delete', {
       }
 
       const { CosmosClient } = await import('@azure/cosmos');
-      const client = new CosmosClient(process.env.CosmosDBConnection!);
+      const endpoint = process.env.CosmosDBConnection__accountEndpoint;
+      let client: InstanceType<typeof CosmosClient>;
+      if (endpoint) {
+        const { DefaultAzureCredential } = await import('@azure/identity');
+        client = new CosmosClient({ endpoint, aadCredentials: new DefaultAzureCredential() });
+      } else {
+        client = new CosmosClient(process.env.CosmosDBConnection!);
+      }
       const database = client.database(process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase');
       const container = database.container(containerName);
 

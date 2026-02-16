@@ -701,6 +701,7 @@ async function createAzureFunctionsProject(projectDir: string) {
     dependencies: {
       '@azure/functions': '~4.5.0',
       '@azure/cosmos': '^4.0.0',
+      '@azure/identity': '^4.0.0',
       'zod': '>=3.25.0',
       [`@${path.basename(projectDir)}/shared`]: '*',
     },
