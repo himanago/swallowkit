@@ -103,13 +103,43 @@ export async function initCommand(options: InitOptions) {
 
     // Initialize Git repository and create initial commit
     try {
-      execSync('git init', { cwd: projectDir, stdio: 'ignore' });
-      execSync('git branch -M main', { cwd: projectDir, stdio: 'ignore' });
+      // Try git init with -b main (Git 2.28+), fallback to git init
+      try {
+        execSync('git init -b main', { cwd: projectDir, stdio: 'ignore' });
+      } catch {
+        // Fallback for older Git versions
+        execSync('git init', { cwd: projectDir, stdio: 'ignore' });
+      }
+      
+      // Configure git user if not set (required for commits)
+      try {
+        execSync('git config user.name', { cwd: projectDir, stdio: 'pipe' });
+        execSync('git config user.email', { cwd: projectDir, stdio: 'pipe' });
+      } catch {
+        // Not configured globally, set locally for this repository
+        execSync('git config user.name "SwallowKit"', { cwd: projectDir, stdio: 'ignore' });
+        execSync('git config user.email "swallowkit@example.com"', { cwd: projectDir, stdio: 'ignore' });
+      }
+      
       execSync('git add -A', { cwd: projectDir, stdio: 'ignore' });
       execSync('git commit -m "Initial commit from SwallowKit"', { cwd: projectDir, stdio: 'ignore' });
+      
+      // Rename branch to main if git init -b main didn't work
+      try {
+        const currentBranch = execSync('git branch --show-current', { cwd: projectDir, encoding: 'utf-8' }).trim();
+        if (currentBranch !== 'main') {
+          execSync('git branch -M main', { cwd: projectDir, stdio: 'ignore' });
+        }
+      } catch {
+        // Ignore errors - branch renaming is not critical
+      }
+      
       console.log('✅ Git repository initialized with initial commit\n');
     } catch (error) {
       console.warn('⚠️  Could not initialize Git repository (is git installed?)');
+      if (error instanceof Error) {
+        console.warn(`    Error: ${error.message}`);
+      }
     }
 
     console.log(`\n✅ Project "${options.name}" created successfully!`);
