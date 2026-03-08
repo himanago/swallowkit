@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { SwallowKitConfig } from "../types";
+import { detectFromProject, getCommands } from "../utils/package-manager";
 
 /**
  * デフォルト設定
@@ -203,7 +204,8 @@ export function ensureSwallowKitProject(commandName: string, projectRoot?: strin
     for (const marker of SWALLOWKIT_PROJECT_MARKERS) {
       console.error(`     - ${marker}`);
     }
-    console.error(`\n💡 Tip: Run 'npx swallowkit init' first to create a new SwallowKit project,`);
+    const pmCmd = getCommands(detectFromProject());
+    console.error(`\n💡 Tip: Run '${pmCmd.dlx} swallowkit init' first to create a new SwallowKit project,`);
     console.error(`   or navigate to an existing SwallowKit project directory.`);
     process.exit(1);
   }

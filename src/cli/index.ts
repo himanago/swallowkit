@@ -1,5 +1,12 @@
 #!/usr/bin/env node
 
+// Ensure UTF-8 console output on Windows (fixes emoji/Unicode garbling in PowerShell 5.1)
+if (process.platform === 'win32') {
+  try {
+    require('child_process').execSync('chcp 65001', { stdio: 'ignore' });
+  } catch { /* ignore — non-critical */ }
+}
+
 import { Command } from "commander";
 import { initCommand, devCommand, scaffoldCommand, createModelCommand } from "./commands";
 import { provisionCommand } from "./commands/provision";
@@ -17,11 +24,17 @@ program
   .description("Initialize a new SwallowKit project")
   .option("--template <template>", "Template to use", "default")
   .option("--next-version <version>", "Next.js version to install (e.g., 16.0.7, latest)", "latest")
+  .option("--cicd <provider>", "CI/CD provider: github | azure | skip")
+  .option("--cosmos-db-mode <mode>", "Cosmos DB mode: freetier | serverless")
+  .option("--vnet <option>", "Network security: outbound | none")
   .action((projectName, options) => {
     initCommand({
       name: projectName || "swallowkit-app",
       template: options.template,
       nextVersion: options.nextVersion,
+      cicd: options.cicd,
+      cosmosDbMode: options.cosmosDbMode,
+      vnet: options.vnet,
     });
   });
 

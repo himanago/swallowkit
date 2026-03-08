@@ -69,5 +69,6 @@
   "bugs": {
     "url": "https://github.com/himanago/swallowkit/issues"
   },
-  "homepage": "https://github.com/himanago/swallowkit#readme"
+  "homepage": "https://github.com/himanago/swallowkit#readme",
+  "packageManager": "pnpm@latest"
 }

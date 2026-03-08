@@ -40,8 +40,25 @@ Featuring Scaffold functionality to automatically generate CRUD operations from 
 
 ```bash
 npx swallowkit init my-app
+# or
+pnpm dlx swallowkit init my-app
 cd my-app
 ```
+
+The interactive prompts ask for CI/CD provider, Cosmos DB mode, and network settings. You can also specify them as flags to skip prompts entirely:
+
+```bash
+# Non-interactive mode (useful for VS Code extensions or automation)
+npx swallowkit init my-app --cicd github --cosmos-db-mode serverless --vnet outbound
+```
+
+| Flag | Values | Description |
+|------|--------|-------------|
+| `--cicd <provider>` | `github`, `azure`, `skip` | CI/CD provider |
+| `--cosmos-db-mode <mode>` | `freetier`, `serverless` | Cosmos DB pricing mode |
+| `--vnet <option>` | `outbound`, `none` | Network security |
+
+Omit any flag to be prompted for that value interactively.
 
 ### 2. Create Models
 
@@ -49,6 +66,8 @@ You can create multiple models at once:
 
 ```bash
 npx swallowkit create-model category todo
+# or
+pnpm dlx swallowkit create-model category todo
 ```
 
 This generates `shared/models/category.ts` and `shared/models/todo.ts`. Customize them by adding your required fields:
@@ -92,6 +111,8 @@ export type Todo = z.infer<typeof todo>;
 
 ```bash
 npx swallowkit scaffold shared/models/todo.ts
+# or
+pnpm dlx swallowkit scaffold shared/models/todo.ts
 ```
 
 This auto-generates:
@@ -103,6 +124,8 @@ This auto-generates:
 
 ```bash
 npx swallowkit dev
+# or
+pnpm dlx swallowkit dev
 ```
 
 - Next.js: http://localhost:3000
@@ -172,6 +195,8 @@ await api.delete('/api/todos/123');
 ## 📦 Prerequisites
 
 - Node.js 22.x
+- **pnpm** (recommended): `corepack enable` or `npm install -g pnpm`
+  - npm also works — SwallowKit auto-detects the package manager (if pnpm is installed, it is always preferred)
 - Azure Cosmos DB Emulator (local development)
   - [Official documentation (vNext recommended)](https://learn.microsoft.com/en-us/azure/cosmos-db/emulator-linux)
     - Windows: [Download](https://aka.ms/cosmosdb-emulator)
@@ -185,6 +210,8 @@ Deploy your Next.js app to Azure Static Web Apps using standalone mode, and conn
 
 ```bash
 npx swallowkit provision --resource-group my-app-rg --location japaneast
+# or
+pnpm dlx swallowkit provision --resource-group my-app-rg --location japaneast
 ```
 
 After provisioning, the required CI/CD secret values are displayed in the terminal. Copy them.

@@ -17,6 +17,8 @@ Initialize a new SwallowKit project.
 
 ```bash
 npx swallowkit init [project-name] [options]
+# or
+pnpm dlx swallowkit init [project-name] [options]
 ```
 
 ### Arguments
@@ -25,12 +27,43 @@ npx swallowkit init [project-name] [options]
 
 ### Options
 
-Currently no options. Interactive prompts guide project setup.
+| Option | Description | Values | Default |
+|--------|-------------|--------|---------|
+| `--template <template>` | Template to use | `default` | `default` |
+| `--next-version <version>` | Next.js version | e.g. `16.0.7`, `latest` | `latest` |
+| `--cicd <provider>` | CI/CD provider | `github`, `azure`, `skip` | *(prompt)* |
+| `--cosmos-db-mode <mode>` | Cosmos DB mode | `freetier`, `serverless` | *(prompt)* |
+| `--vnet <option>` | Network security | `outbound`, `none` | *(prompt)* |
+
+### Interactive vs Non-Interactive Mode
+
+By default, `init` asks interactive prompts for CI/CD, Cosmos DB mode, and network settings.
+
+You can skip prompts by passing flags directly:
+
+```bash
+# Fully non-interactive (all three flags specified)
+npx swallowkit init my-app --cicd github --cosmos-db-mode serverless --vnet outbound
+
+# Partially non-interactive (only --cicd specified; the rest will prompt)
+npx swallowkit init my-app --cicd skip
+```
+
+This is especially useful when calling the CLI from VS Code extensions or scripts where stdin is not a TTY.
+
+Invalid flag values produce a clear error:
+
+```
+❌ Invalid --cicd value: "invalid". Must be: github, azure, skip
+```
 
 ### Interactive Prompts
 
-1. **CI/CD Provider**: GitHub Actions or Azure Pipelines
-2. **Project Configuration**: Automatically applies optimal settings
+When flags are not specified, the following prompts are shown:
+
+1. **CI/CD Provider**: GitHub Actions, Azure Pipelines, or Skip
+2. **Cosmos DB Mode**: Free Tier or Serverless
+3. **Network Security**: VNet Integration or None
 
 ### Generated Files
 
@@ -72,18 +105,29 @@ my-app/
 └── package.json
 ```
 
+### Package Manager Detection
+
+SwallowKit automatically selects the package manager:
+
+- If **pnpm** is installed on the system, pnpm is always preferred
+- Otherwise, **npm** is used
+
+The generated project (lockfiles, workspace config, CI/CD scripts) matches the detected package manager.
+
 ### Examples
 
 ```bash
-# Initialize in current directory
-npx swallowkit init
-
-# Initialize in new directory
+# Initialize in new directory (interactive)
 npx swallowkit init my-awesome-app
+
+# Initialize in new directory (non-interactive)
+npx swallowkit init my-awesome-app --cicd github --cosmos-db-mode serverless --vnet outbound
+
+# Using pnpm
+pnpm dlx swallowkit init my-awesome-app
 
 # After initialization
 cd my-awesome-app
-npm install
 ```
 
 ## swallowkit dev
@@ -94,6 +138,8 @@ Start development servers (Next.js + Azure Functions).
 
 ```bash
 npx swallowkit dev [options]
+# or
+pnpm dlx swallowkit dev [options]
 ```
 
 ### Options
@@ -154,6 +200,8 @@ Error: Azure Functions Core Tools not found
 Solution:
 ```bash
 npm install -g azure-functions-core-tools@4
+# or
+pnpm add -g azure-functions-core-tools@4
 ```
 
 **Port in use:**
@@ -174,6 +222,8 @@ Auto-generate CRUD operations from Zod schemas.
 
 ```bash
 npx swallowkit scaffold <model-file> [options]
+# or
+pnpm dlx swallowkit scaffold <model-file> [options]
 ```
 
 ### Arguments
@@ -292,6 +342,8 @@ Provision Azure resources using Bicep.
 
 ```bash
 npx swallowkit provision [options]
+# or
+pnpm dlx swallowkit provision [options]
 ```
 
 ### Options

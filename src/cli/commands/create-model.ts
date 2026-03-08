@@ -8,6 +8,7 @@ import * as path from "path";
 import * as readline from "readline";
 import { toPascalCase } from "../../core/scaffold/model-parser";
 import { ensureSwallowKitProject } from "../../core/config";
+import { detectFromProject, getCommands } from "../../utils/package-manager";
 
 interface CreateModelOptions {
   names: string[]; // モデル名のリスト（例: ["todo", "user", "post"]）
@@ -114,7 +115,7 @@ export async function createModelCommand(options: CreateModelOptions) {
   if (created.length > 0) {
     console.log("\n📝 Next steps:");
     console.log("  1. Customize the generated model fields in shared/models/");
-    console.log("  2. Run 'npx swallowkit scaffold <model>' to generate CRUD code");
+    console.log(`  2. Run '${getCommands(detectFromProject()).dlx} swallowkit scaffold <model>' to generate CRUD code`);
   }
 }
 

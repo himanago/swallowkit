@@ -478,8 +478,12 @@ if (isObject) {
     writeFileSync(tempScript, scriptCode, 'utf8');
     
     try {
-      // プロジェクトルートでtsxを実行
-      const result = execSync(`npx tsx "${tempScript}"`, {
+      // プロジェクトルートでtsxを実行 (npm/pnpm 両対応)
+      // Detect package manager from project lockfile
+      const { detectFromProject, getCommands } = require('../../utils/package-manager');
+      const pm = detectFromProject(projectRoot);
+      const pmCmd = getCommands(pm);
+      const result = execSync(`${pmCmd.exec} tsx "${tempScript}"`, {
         encoding: 'utf8',
         cwd: projectRoot,
       });

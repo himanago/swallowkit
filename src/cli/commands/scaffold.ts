@@ -16,6 +16,7 @@ import {
   generateEditPage,
 } from "../../core/scaffold/ui-generator";
 import { ensureSwallowKitProject } from "../../core/config";
+import { detectFromProject, getCommands } from "../../utils/package-manager";
 
 interface ScaffoldOptions {
   model: string; // モデルファイルのパス（例: "lib/models/todo.ts" or "todo"）
@@ -95,7 +96,7 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     console.log(
       `  ${options.apiOnly ? '3' : '5'}. Configure CosmosDBConnection in functions/local.settings.json`
     );
-    console.log(`  ${options.apiOnly ? '4' : '6'}. Run 'npx swallowkit dev' to test the generated code`);
+    console.log(`  ${options.apiOnly ? '4' : '6'}. Run '${getCommands(detectFromProject()).dlx} swallowkit dev' to test the generated code`);
   } catch (error: any) {
     console.error("\n❌ Scaffold failed:", error.message);
     process.exit(1);
@@ -162,7 +163,7 @@ function readSharedPackageName(): string {
     throw new Error(
       "shared/package.json not found.\n" +
         "The shared package is required for model imports.\n" +
-        'Run "npx swallowkit init" to set up your project.'
+        `Run "${getCommands(detectFromProject()).dlx} swallowkit init" to set up your project.`
     );
   }
 

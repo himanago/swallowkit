@@ -2,11 +2,25 @@
 import * as path from "path";
 import { spawn, execSync } from "child_process";
 import prompts from "prompts";
+import {
+  type PackageManager,
+  detectFromUserAgent,
+  getCommands,
+  getWorkspaceConfig,
+  getCiSetupStep,
+  getAzurePipelinesSetup,
+  getBuildScript,
+  getFunctionsPrestart,
+  getFunctionsStartScript,
+} from "../../utils/package-manager";
 
 interface InitOptions {
   name: string;
   template: string;
   nextVersion?: string;
+  cicd?: CiCdProvider;
+  cosmosDbMode?: CosmosDbMode;
+  vnet?: VNetOption;
 }
 
 type CiCdProvider = 'github' | 'azure' | 'skip';
@@ -63,9 +77,36 @@ async function promptAzureConfig(): Promise<AzureConfig> {
   };
 }
 
+const VALID_CICD: CiCdProvider[] = ['github', 'azure', 'skip'];
+const VALID_COSMOS_DB_MODE: CosmosDbMode[] = ['freetier', 'serverless'];
+const VALID_VNET: VNetOption[] = ['none', 'outbound'];
+
+function validateInitFlags(options: InitOptions): void {
+  if (options.cicd && !VALID_CICD.includes(options.cicd)) {
+    console.error(`❌ Invalid --cicd value: "${options.cicd}". Must be: ${VALID_CICD.join(', ')}`);
+    process.exit(1);
+  }
+  if (options.cosmosDbMode && !VALID_COSMOS_DB_MODE.includes(options.cosmosDbMode)) {
+    console.error(`❌ Invalid --cosmos-db-mode value: "${options.cosmosDbMode}". Must be: ${VALID_COSMOS_DB_MODE.join(', ')}`);
+    process.exit(1);
+  }
+  if (options.vnet && !VALID_VNET.includes(options.vnet)) {
+    console.error(`❌ Invalid --vnet value: "${options.vnet}". Must be: ${VALID_VNET.join(', ')}`);
+    process.exit(1);
+  }
+}
+
 export async function initCommand(options: InitOptions) {
+  // Validate flag values before doing anything
+  validateInitFlags(options);
+
   console.log(`🚀 Initializing SwallowKit project: ${options.name}`);
   console.log(`📋 Template: ${options.template}`);
+
+  // Detect package manager from invocation context (npx → npm, pnpm dlx → pnpm)
+  const pm: PackageManager = detectFromUserAgent();
+  const pmCmd = getCommands(pm);
+  console.log(`📦 Package manager: ${pm}`);
 
   const projectDir = path.join(process.cwd(), options.name);
 
@@ -76,29 +117,30 @@ export async function initCommand(options: InitOptions) {
       process.exit(1);
     }
 
-    // Ask for CI/CD choice FIRST (before long operations)
-    const cicdProvider = await promptCiCd();
-    
-    // Ask for Azure infrastructure configuration
-    const azureConfig = await promptAzureConfig();
+    // Use flag values if provided, otherwise prompt interactively
+    const cicdProvider: CiCdProvider = options.cicd || await promptCiCd();
+
+    const azureConfig: AzureConfig = (options.cosmosDbMode && options.vnet)
+      ? { cosmosDbMode: options.cosmosDbMode, vnetOption: options.vnet }
+      : await promptAzureConfig();
 
     // Create Next.js project with create-next-app
-    await createNextJsProject(options.name);
+    await createNextJsProject(options.name, pm);
 
     // Upgrade Next.js to specified version (or latest) to avoid cached old versions
-    await upgradeNextJs(projectDir, options.nextVersion || 'latest');
+    await upgradeNextJs(projectDir, options.nextVersion || 'latest', pm);
 
     // Add SwallowKit specific files
-    await addSwallowKitFiles(projectDir, options, cicdProvider, azureConfig);
+    await addSwallowKitFiles(projectDir, options, cicdProvider, azureConfig, pm);
     
     // Create infrastructure files (Bicep)
     await createInfrastructure(projectDir, options.name, azureConfig);
     
     // Create CI/CD files based on choice
     if (cicdProvider === 'github') {
-      await createGitHubActionsWorkflows(projectDir, azureConfig);
+      await createGitHubActionsWorkflows(projectDir, azureConfig, pm);
     } else if (cicdProvider === 'azure') {
-      await createAzurePipelines(projectDir);
+      await createAzurePipelines(projectDir, pm);
     }
 
     // Initialize Git repository and create initial commit
@@ -145,11 +187,11 @@ export async function initCommand(options: InitOptions) {
     console.log(`\n✅ Project "${options.name}" created successfully!`);
     console.log("\n📝 Next steps:");
     console.log(`  cd ${options.name}`);
-    console.log("  npx swallowkit create-model <name>  # Create your first model");
-    console.log("  npx swallowkit scaffold lib/models/<name>.ts  # Generate CRUD code");
-    console.log("  npx swallowkit dev  # Start development servers");
+    console.log(`  ${pmCmd.dlx} swallowkit create-model <name>  # Create your first model`);
+    console.log(`  ${pmCmd.dlx} swallowkit scaffold lib/models/<name>.ts  # Generate CRUD code`);
+    console.log(`  ${pmCmd.dlx} swallowkit dev  # Start development servers`);
     console.log("\n🚀 Deploy to Azure:");
-    console.log("  npx swallowkit provision --resource-group <name>");
+    console.log(`  ${pmCmd.dlx} swallowkit provision --resource-group <name>`);
     if (cicdProvider !== 'skip') {
       console.log("  Configure CI/CD secrets and push to repository");
     }
@@ -163,26 +205,36 @@ export async function initCommand(options: InitOptions) {
   }
 }
 
-async function createNextJsProject(projectName: string): Promise<void> {
+async function createNextJsProject(projectName: string, pm: PackageManager): Promise<void> {
   return new Promise((resolve, reject) => {
     console.log('\n📦 Creating Next.js project with create-next-app...\n');
+
+    const pmCmd = getCommands(pm);
     
+    // Build args: for pnpm use "pnpm dlx create-next-app@latest ... --use-pnpm"
+    //             for npm use "npx create-next-app@latest ..."
+    const baseArgs = pm === 'pnpm'
+      ? ['dlx', 'create-next-app@latest']
+      : ['create-next-app@latest'];
+    
+    const args = [
+      ...baseArgs,
+      projectName,
+      '--typescript',
+      '--tailwind',
+      '--app',
+      '--no-src',
+      '--disable-git',
+      '--import-alias',
+      '@/*',
+      ...(pmCmd.createNextAppFlag ? [pmCmd.createNextAppFlag] : []),
+      '--yes'
+    ];
+
     // Run create-next-app with recommended options for Azure
     const createNextApp = spawn(
-      'npx',
-      [
-        'create-next-app@latest',
-        projectName,
-        '--typescript',
-        '--tailwind',
-        '--app',
-        '--no-src',
-        '--disable-git',
-        '--import-alias',
-        '@/*',
-        '--use-npm',
-        '--yes'
-      ],
+      pm === 'pnpm' ? 'pnpm' : 'npx',
+      args,
       {
         stdio: 'inherit',
         shell: true,
@@ -204,19 +256,18 @@ async function createNextJsProject(projectName: string): Promise<void> {
   });
 }
 
-async function upgradeNextJs(projectDir: string, version: string): Promise<void> {
+async function upgradeNextJs(projectDir: string, version: string, pm: PackageManager): Promise<void> {
   return new Promise((resolve, reject) => {
     console.log(`\n📦 Installing Next.js ${version} (to ensure latest security patches)...\n`);
     
-    const npmInstall = spawn(
-      'npm',
-      [
-        'install',
-        `next@${version}`,
-        `react@latest`,
-        `react-dom@latest`,
-        '--save-exact'
-      ],
+    // pnpm: pnpm add next@... ; npm: npm install next@...
+    const args = pm === 'pnpm'
+      ? ['add', `next@${version}`, `react@latest`, `react-dom@latest`, '--save-exact']
+      : ['install', `next@${version}`, `react@latest`, `react-dom@latest`, '--save-exact'];
+
+    const child = spawn(
+      pm,
+      args,
       {
         cwd: projectDir,
         stdio: 'inherit',
@@ -224,27 +275,27 @@ async function upgradeNextJs(projectDir: string, version: string): Promise<void>
       }
     );
 
-    npmInstall.on('close', (code: number | null) => {
+    child.on('close', (code: number | null) => {
       if (code !== 0) {
-        reject(new Error(`npm install next@${version} exited with code ${code}`));
+        reject(new Error(`${pm} add next@${version} exited with code ${code}`));
       } else {
         console.log(`\n✅ Next.js ${version} installed\n`);
         resolve();
       }
     });
 
-    npmInstall.on('error', (error: Error) => {
+    child.on('error', (error: Error) => {
       reject(error);
     });
   });
 }
 
-async function installDependencies(projectDir: string): Promise<void> {
+async function installDependencies(projectDir: string, pm: PackageManager = 'pnpm'): Promise<void> {
   return new Promise((resolve, reject) => {
     console.log('\n📦 Installing dependencies...\n');
     
-    const npmInstall = spawn(
-      'npm',
+    const child = spawn(
+      pm,
       ['install'],
       {
         cwd: projectDir,
@@ -253,22 +304,22 @@ async function installDependencies(projectDir: string): Promise<void> {
       }
     );
 
-    npmInstall.on('close', (code: number | null) => {
+    child.on('close', (code: number | null) => {
       if (code !== 0) {
-        reject(new Error(`npm install exited with code ${code}`));
+        reject(new Error(`${pm} install exited with code ${code}`));
       } else {
         console.log('\n✅ Dependencies installed\n');
         resolve();
       }
     });
 
-    npmInstall.on('error', (error: Error) => {
+    child.on('error', (error: Error) => {
       reject(error);
     });
   });
 }
 
-async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicdChoice: string, azureConfig: AzureConfig) {
+async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicdChoice: string, azureConfig: AzureConfig, pm: PackageManager) {
   console.log('📦 Adding SwallowKit files...\n');
   
   const projectName = options.name;
@@ -289,19 +340,35 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
   
   packageJson.scripts = {
     ...packageJson.scripts,
-    'build': 'npm run build -w shared && next build --webpack && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/',
+    'build': getBuildScript(pm),
     'start': 'next start',
-    'functions:start': 'cd functions && npm start',
+    'functions:start': getFunctionsStartScript(pm),
   };
+
+  if (pm === 'pnpm') {
+    packageJson.packageManager = 'pnpm@latest';
+  }
   
   packageJson.engines = {
     node: '20.x',
   };
 
-  // npm workspaces: shared package for Zod models, functions for Azure Functions
-  packageJson.workspaces = ['shared', 'functions'];
+  // Workspace configuration depends on package manager
+  const wsConfig = getWorkspaceConfig(pm, ['shared', 'functions']);
+  if (wsConfig.type === 'file') {
+    // pnpm: workspaces are defined in pnpm-workspace.yaml
+    delete packageJson.workspaces;
+  } else {
+    // npm: workspaces are defined in package.json
+    packageJson.workspaces = wsConfig.value;
+  }
   
   fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+
+  // Create workspace config file if needed (pnpm-workspace.yaml)
+  if (wsConfig.type === 'file') {
+    fs.writeFileSync(path.join(projectDir, wsConfig.filename), wsConfig.content);
+  }
 
   // Don't install yet — wait until all workspace packages (shared, functions) are created
 
@@ -593,22 +660,22 @@ export async function register() {
   );
 
   // 14. Create Azure Functions project
-  await createAzureFunctionsProject(projectDir);
+  await createAzureFunctionsProject(projectDir, pm);
 
   // 15. Create BFF API route to call Azure Functions
   await createBffApiRoute(projectDir);
 
   // 16. Create home page
-  await createHomePage(projectDir);
+  await createHomePage(projectDir, pm);
 
   // 17. Install all workspace dependencies (root + shared + functions)
   console.log('📦 Installing workspace dependencies...\n');
-  await installDependencies(projectDir);
+  await installDependencies(projectDir, pm);
 
   console.log('✅ Project structure created\n');
 
   // 18. Create README.md
-  createReadme(projectDir, projectName, cicdChoice, azureConfig);
+  createReadme(projectDir, projectName, cicdChoice, azureConfig, pm);
 }
 
 async function createSharedPackage(projectDir: string, projectName: string) {
@@ -681,7 +748,7 @@ async function createSharedPackage(projectDir: string, projectName: string) {
   console.log('✅ Shared package created\n');
 }
 
-async function createAzureFunctionsProject(projectDir: string) {
+async function createAzureFunctionsProject(projectDir: string, pm: PackageManager = 'pnpm') {
   console.log('📦 Creating Azure Functions project...\n');
   
   const functionsDir = path.join(projectDir, 'functions');
@@ -696,7 +763,7 @@ async function createAzureFunctionsProject(projectDir: string) {
     scripts: {
       start: 'func start',
       build: 'tsc',
-      prestart: 'npm run build'
+      prestart: getFunctionsPrestart(pm)
     },
     dependencies: {
       '@azure/functions': '~4.5.0',
@@ -865,7 +932,7 @@ app.http('greet', {
 `;
   fs.writeFileSync(path.join(srcDir, 'greet.ts'), greetFunction);
 
-  // Dependencies are installed via workspace root 'npm install'
+  // Dependencies are installed via workspace root install
 
   console.log('✅ Azure Functions project created\n');
 }
@@ -943,8 +1010,10 @@ export async function POST(request: NextRequest) {
   console.log('✅ BFF API route created\n');
 }
 
-async function createHomePage(projectDir: string) {
+async function createHomePage(projectDir: string, pm: PackageManager = 'pnpm') {
   console.log('📦 Creating home page...\n');
+  
+  const pmCmd = getCommands(pm);
   
   const pageContent = `'use client'
 
@@ -1038,7 +1107,7 @@ export default function Home() {
                 Create your first model with Zod and generate CRUD operations automatically.
               </p>
               <code className="block bg-gray-100 dark:bg-gray-900 p-4 rounded text-left text-sm">
-                npx swallowkit scaffold lib/models/your-model.ts
+                ${pmCmd.dlx} swallowkit scaffold lib/models/your-model.ts
               </code>
             </div>
           </section>
@@ -1071,7 +1140,7 @@ export default function Home() {
 
 export const scaffoldConfig = {
   models: [
-    // Scaffolded models will be added here by 'npx swallowkit scaffold' command
+    // Scaffolded models will be added here by 'swallowkit scaffold' command
   ] as ScaffoldModel[]
 };
 `;
@@ -1080,9 +1149,10 @@ export const scaffoldConfig = {
   console.log('✅ Scaffold config created\n');
 }
 
-function createReadme(projectDir: string, projectName: string, cicdChoice: string, azureConfig: AzureConfig) {
+function createReadme(projectDir: string, projectName: string, cicdChoice: string, azureConfig: AzureConfig, pm: PackageManager) {
   console.log('📝 Creating README.md...\n');
 
+  const pmCmd = getCommands(pm);
   const cosmosDbModeLabel = azureConfig.cosmosDbMode === 'freetier' ? 'Free Tier (1000 RU/s)' : 'Serverless';
   const cicdLabel = cicdChoice === 'github' ? 'GitHub Actions' : cicdChoice === 'azure' ? 'Azure Pipelines' : 'None';
   const vnetLabel = azureConfig.vnetOption === 'none' ? 'None (public endpoints)' : 
@@ -1115,15 +1185,15 @@ This project was initialized with the following settings:
 
 Before you begin, ensure you have the following installed:
 
-1. **Node.js 18+**: [Download](https://nodejs.org/)
-2. **Azure CLI**: Required for provisioning Azure resources
+1. **Node.js 18+**: [Download](https://nodejs.org/)${pm === 'pnpm' ? `\n2. **pnpm**: \`corepack enable\` or \`npm install -g pnpm\`` : ''}
+${pm === 'pnpm' ? '3' : '2'}. **Azure CLI**: Required for provisioning Azure resources
    - Install: \`winget install Microsoft.AzureCLI\` (Windows)
    - Or: [Download](https://aka.ms/installazurecliwindows)
-3. **Azure Cosmos DB Emulator**: Required for local development
+${pm === 'pnpm' ? '4' : '3'}. **Azure Cosmos DB Emulator**: Required for local development
    - Windows: \`winget install Microsoft.Azure.CosmosEmulator\`
    - Or: [Download](https://aka.ms/cosmosdb-emulator)
    - Docker: \`docker pull mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator\`
-4. **Azure Functions Core Tools**: Automatically installed with project dependencies
+${pm === 'pnpm' ? '6' : '5'}. **Azure Functions Core Tools**: Automatically installed with project dependencies
 
 ## 📁 Project Structure
 
@@ -1152,7 +1222,7 @@ ${projectName}/
 Define your data model with Zod schema:
 
 \`\`\`bash
-npx swallowkit create-model <model-name>
+${pmCmd.dlx} swallowkit create-model <model-name>
 \`\`\`
 
 This creates a model file in \`lib/models/<model-name>.ts\`. Edit it to define your schema.
@@ -1162,7 +1232,7 @@ This creates a model file in \`lib/models/<model-name>.ts\`. Edit it to define y
 Generate complete CRUD operations (Functions, API routes, UI):
 
 \`\`\`bash
-npx swallowkit scaffold lib/models/<model-name>.ts
+${pmCmd.dlx} swallowkit scaffold lib/models/<model-name>.ts
 \`\`\`
 
 This generates:
@@ -1174,7 +1244,7 @@ This generates:
 ### 3. Start Development Servers
 
 \`\`\`bash
-npx swallowkit dev
+${pmCmd.dlx} swallowkit dev
 \`\`\`
 
 This starts:
@@ -1191,7 +1261,7 @@ This starts:
 Create all required Azure resources using Bicep:
 
 \`\`\`bash
-npx swallowkit provision --resource-group <rg-name>
+${pmCmd.dlx} swallowkit provision --resource-group <rg-name>
 \`\`\`
 
 This creates:
@@ -1234,23 +1304,23 @@ ${cicdChoice === 'github' ? `#### GitHub Actions
 
 **Deploy Static Web App:**
 \`\`\`bash
-npm run build
+${pmCmd.run} build
 az staticwebapp deploy --name swa-${projectName} --resource-group <rg-name> --app-location ./
 \`\`\`
 
 **Deploy Functions:**
 \`\`\`bash
 cd functions
-npm run build
+${pmCmd.run} build
 func azure functionapp publish func-${projectName}
 \`\`\``}
 
 ## 🔧 Available Commands
 
-- \`npx swallowkit create-model <name>\` - Create a new data model
-- \`npx swallowkit scaffold <model-file>\` - Generate CRUD code
-- \`npx swallowkit dev\` - Start development servers
-- \`npx swallowkit provision -g <rg-name>\` - Provision Azure resources
+- \`${pmCmd.dlx} swallowkit create-model <name>\` - Create a new data model
+- \`${pmCmd.dlx} swallowkit scaffold <model-file>\` - Generate CRUD code
+- \`${pmCmd.dlx} swallowkit dev\` - Start development servers
+- \`${pmCmd.dlx} swallowkit provision -g <rg-name>\` - Provision Azure resources
 ${azureConfig.vnetOption !== 'none' ? `
 ## 🔒 Network Security (VNet Configuration)
 
@@ -2086,9 +2156,11 @@ output privateDnsZoneId string = privateDnsZone.id
   console.log('✅ Infrastructure files created\n');
 }
 
-async function createGitHubActionsWorkflows(projectDir: string, azureConfig: AzureConfig) {
+async function createGitHubActionsWorkflows(projectDir: string, azureConfig: AzureConfig, pm: PackageManager) {
   console.log('📦 Creating GitHub Actions workflows...\n');
   
+  const pmCmd = getCommands(pm);
+  const pnpmSetupStep = getCiSetupStep(pm);
   const workflowsDir = path.join(projectDir, '.github', 'workflows');
   fs.mkdirSync(workflowsDir, { recursive: true });
 
@@ -2177,25 +2249,25 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      
+${pnpmSetupStep ? `\n${pnpmSetupStep}\n` : ''}
       - name: Install dependencies
         run: |
-          npm ci
+          ${pmCmd.ci}
       
       - name: Build shared package
         run: |
-          npm run build -w shared
+          ${pmCmd.runFilter('shared')} build
       
       - name: Build Functions
         run: |
-          npm run build -w functions
+          ${pmCmd.runFilter('functions')} build
       
       - name: Prepare functions for deployment
         run: |
           SHARED_PKG_NAME=$(node -p "require('./shared/package.json').name")
           mkdir -p /tmp/fn-deps
           node -e "const p=JSON.parse(require('fs').readFileSync('./functions/package.json','utf8'));Object.keys(p.dependencies).filter(k=>k.endsWith('/shared')).forEach(k=>delete p.dependencies[k]);require('fs').writeFileSync('/tmp/fn-deps/package.json',JSON.stringify(p,null,2));"
-          cd /tmp/fn-deps && npm install --omit=dev && cd -
+          cd /tmp/fn-deps && ${pmCmd.installProd} && cd -
           rm -rf ./functions/node_modules
           mv /tmp/fn-deps/node_modules ./functions/node_modules
           SHARED_DEST="./functions/node_modules/$SHARED_PKG_NAME"
@@ -2217,9 +2289,11 @@ jobs:
   console.log('✅ GitHub Actions workflows created\n');
 }
 
-async function createAzurePipelines(projectDir: string) {
+async function createAzurePipelines(projectDir: string, pm: PackageManager) {
   console.log('📦 Creating Azure Pipelines...\n');
   
+  const pmCmd = getCommands(pm);
+  const azPipelinesSetup = getAzurePipelinesSetup(pm);
   const pipelinesDir = path.join(projectDir, 'pipelines');
   fs.mkdirSync(pipelinesDir, { recursive: true });
 
@@ -2263,13 +2337,13 @@ steps:
     inputs:
       versionSpec: '22.x'
     displayName: 'Install Node.js'
-
+${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
   - script: |
-      npm ci
+      ${pmCmd.ci}
     displayName: 'Install dependencies'
 
   - script: |
-      npm run build
+      ${pmCmd.run} build
     env:
       NODE_ENV: production
     displayName: 'Build Next.js app'
@@ -2315,24 +2389,24 @@ steps:
     inputs:
       versionSpec: '22.x'
     displayName: 'Install Node.js'
-
+${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
   - script: |
-      npm ci
+      ${pmCmd.ci}
     displayName: 'Install workspace dependencies'
 
   - script: |
-      npm run build -w shared
+      ${pmCmd.runFilter('shared')} build
     displayName: 'Build shared package'
 
   - script: |
-      npm run build -w functions
+      ${pmCmd.runFilter('functions')} build
     displayName: 'Build Functions'
 
   - script: |
       SHARED_PKG_NAME=$(node -p "require('./shared/package.json').name")
       mkdir -p /tmp/fn-deps
       node -e "const p=JSON.parse(require('fs').readFileSync('./functions/package.json','utf8'));Object.keys(p.dependencies).filter(k=>k.endsWith('/shared')).forEach(k=>delete p.dependencies[k]);require('fs').writeFileSync('/tmp/fn-deps/package.json',JSON.stringify(p,null,2));"
-      cd /tmp/fn-deps && npm install --omit=dev && cd -
+      cd /tmp/fn-deps && ${pmCmd.installProd} && cd -
       rm -rf ./functions/node_modules
       mv /tmp/fn-deps/node_modules ./functions/node_modules
       SHARED_DEST="./functions/node_modules/$SHARED_PKG_NAME"

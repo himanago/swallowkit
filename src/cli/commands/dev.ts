@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { CosmosClient, PartitionKeyKind } from '@azure/cosmos';
 import { ensureSwallowKitProject } from '../../core/config';
+import { detectFromProject, getCommands } from '../../utils/package-manager';
 
 interface DevOptions {
   port?: string;
@@ -198,6 +199,10 @@ async function startDevEnvironment(options: DevOptions) {
   const port = options.port || '3000';
   const functionsPort = options.functionsPort || '7071';
   
+  // Detect package manager from project lockfile
+  const pm = detectFromProject();
+  const pmCmd = getCommands(pm);
+  
   // プロセスを管理する配列
   const processes: ChildProcess[] = [];
 
@@ -259,7 +264,7 @@ async function startDevEnvironment(options: DevOptions) {
           console.log('📦 Installing Azure Functions Core Tools...');
           console.log('   This may take a few minutes.');
           
-          const installProcess = spawn('npm', ['install', '-g', 'azure-functions-core-tools@4'], {
+          const installProcess = spawn(pm, pm === 'pnpm' ? ['add', '-g', 'azure-functions-core-tools@4'] : ['install', '-g', 'azure-functions-core-tools@4'], {
             shell: true,
             stdio: 'inherit',
           });
@@ -272,7 +277,7 @@ async function startDevEnvironment(options: DevOptions) {
               } else {
                 console.error('❌ Installation failed.');
                 console.log('💡 Please install manually:');
-                console.log('   npm install -g azure-functions-core-tools@4');
+                console.log(`   ${pmCmd.addGlobal} azure-functions-core-tools@4`);
                 reject(new Error(`Installation failed with code ${code}`));
               }
             });
@@ -282,7 +287,7 @@ async function startDevEnvironment(options: DevOptions) {
           console.log('');
           console.log('ℹ️  Skipping Azure Functions startup.');
           console.log('💡 To install later:');
-          console.log('   npm install -g azure-functions-core-tools@4');
+          console.log(`   ${pmCmd.addGlobal} azure-functions-core-tools@4`);
           console.log('');
           // Skip Azure Functions startup
           options.noFunctions = true;
@@ -315,25 +320,25 @@ async function startDevEnvironment(options: DevOptions) {
         console.log('');
         console.log('🚀 Starting Azure Functions...');
         
-        // Check if npm install has been run in functions directory
+        // Check if pnpm install has been run in functions directory
         const functionsNodeModules = path.join(functionsDir, 'node_modules');
         if (!fs.existsSync(functionsNodeModules)) {
           console.log('📦 Installing Azure Functions dependencies...');
-          const npmInstall = spawn('npm', ['install'], {
+          const depInstall = spawn(pm, ['install'], {
             cwd: functionsDir,
             shell: true,
             stdio: 'inherit',
           });
           
           await new Promise<void>((resolve, reject) => {
-            npmInstall.on('close', (code) => {
+            depInstall.on('close', (code) => {
               if (code === 0) {
                 resolve();
               } else {
-                reject(new Error(`npm install failed with code ${code}`));
+                reject(new Error(`${pm} install failed with code ${code}`));
               }
             });
-            npmInstall.on('error', reject);
+            depInstall.on('error', reject);
           });
         }
       }
@@ -344,7 +349,10 @@ async function startDevEnvironment(options: DevOptions) {
       const sharedDir = path.join(process.cwd(), 'shared');
       if (fs.existsSync(sharedDir) && fs.existsSync(path.join(sharedDir, 'package.json'))) {
         console.log('📦 Building shared package...');
-        const sharedBuild = spawn('npm', ['run', 'build', '-w', 'shared'], {
+        const filterArgs = pm === 'pnpm'
+          ? ['run', '--filter', 'shared', 'build']
+          : ['run', '--workspace=shared', 'build'];
+        const sharedBuild = spawn(pm, filterArgs, {
           cwd: process.cwd(),
           shell: true,
           stdio: 'inherit',
@@ -366,7 +374,7 @@ async function startDevEnvironment(options: DevOptions) {
       // Azure Functions を起動
       const funcEnv: NodeJS.ProcessEnv = { ...process.env, FUNCTIONS_PORT: functionsPort };
       
-      const funcProcess = spawn('npm', ['start'], {
+      const funcProcess = spawn(pm, ['start'], {
         cwd: functionsDir,
         shell: true,
         stdio: 'pipe', // Always pipe to capture output
@@ -400,7 +408,7 @@ async function startDevEnvironment(options: DevOptions) {
       funcProcess.on('error', (error) => {
         console.error('⚠️  Azure Functions startup error:', error.message);
         console.log('💡 Please ensure Azure Functions Core Tools is installed');
-        console.log('   npm install -g azure-functions-core-tools@4');
+        console.log(`   ${pmCmd.addGlobal} azure-functions-core-tools@4`);
       });
 
       funcProcess.on('close', (code) => {
@@ -422,7 +430,9 @@ async function startDevEnvironment(options: DevOptions) {
     console.log('🚀 Starting Next.js development server...');
 
     // 5. Start Next.js development server
-    const nextArgs = ['next', 'dev', '--port', port];
+    const nextArgs = pm === 'pnpm'
+      ? ['exec', 'next', 'dev', '--port', port]
+      : ['next', 'dev', '--port', port];
     
     if (options.open) {
       // Next.js 14+ deprecated --open option, so we open browser manually
@@ -436,7 +446,7 @@ async function startDevEnvironment(options: DevOptions) {
       }, 3000);
     }
 
-    const nextProcess = spawn('npx', nextArgs, {
+    const nextProcess = spawn(pm === 'pnpm' ? 'pnpm' : 'npx', nextArgs, {
       cwd: process.cwd(),
       shell: true,
       stdio: options.verbose ? 'inherit' : 'inherit',
