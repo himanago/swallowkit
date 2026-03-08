@@ -16,7 +16,7 @@ const program = new Command();
 program
   .name("swallowkit")
   .description("Next.js framework optimized for Azure deployment - Automatically splits SSR into individual Azure Functions")
-  .version("0.2.0");
+  .version("1.0.0-beta.5");
 
 // Register commands
 program
