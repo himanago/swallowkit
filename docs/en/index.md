@@ -6,7 +6,7 @@ hero:
   text: "Type-Safe Azure Dev Toolkit"
   tagline: Schema-driven full-stack development for Next.js on Azure. End-to-end type safety with shared Zod schemas.
   image:
-    src: /logo.svg
+    src: /logo.png
     alt: SwallowKit
   actions:
     - theme: brand

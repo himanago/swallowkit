@@ -6,7 +6,7 @@ hero:
   text: "型安全 Azure 開発ツールキット"
   tagline: Azure 上の Next.js アプリのためのスキーマ駆動フルスタック開発。Zod スキーマ共有でエンドツーエンド型安全を実現。
   image:
-    src: /logo.svg
+    src: /logo.png
     alt: SwallowKit
   actions:
     - theme: brand

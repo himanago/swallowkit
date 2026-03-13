@@ -10,7 +10,7 @@ export default defineConfig({
   ignoreDeadLinks: [/^http:\/\/localhost/],
 
   head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }],
+    ['link', { rel: 'icon', type: 'image/png', href: '/logo.png' }],
     ['meta', { name: 'theme-color', content: '#0078d4' }],
     [
       'meta',
@@ -22,7 +22,7 @@ export default defineConfig({
   ],
 
   themeConfig: {
-    logo: '/logo.svg',
+    logo: '/logo.png',
     siteTitle: 'SwallowKit',
 
     socialLinks: [
