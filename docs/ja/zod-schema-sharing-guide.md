@@ -47,7 +47,7 @@ export type User = z.infer<typeof user>;
 - ✅ エラーメッセージ
 - ✅ デフォルト値
 
-💡 **実践的な使い方**: SwallowKit で Zod スキーマから CRUD 操作を自動生成する方法については、**[Scaffold ガイド](./scaffold-guide.ja.md)** をご参照ください。
+💡 **実践的な使い方**: SwallowKit で Zod スキーマから CRUD 操作を自動生成する方法については、**[Scaffold ガイド](./scaffold-guide)** をご参照ください。
 
 ## レイヤー間での使用
 
@@ -100,7 +100,7 @@ export default function UsersPage() {
 }
 ```
 
-💡 **自動生成について**: `scaffold` コマンドを使用すると、フォーム検証を含む完全な UI コンポーネントが自動生成されます。詳細は **[Scaffold ガイド](./scaffold-guide.ja.md#生成されるファイル)** をご参照ください。
+💡 **自動生成について**: `scaffold` コマンドを使用すると、フォーム検証を含む完全な UI コンポーネントが自動生成されます。詳細は **[Scaffold ガイド](./scaffold-guide#生成されるファイル)** をご参照ください。
 
 ### レイヤー 2: Next.js BFF API Routes（自動生成）
 
@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
 }
 ```
 
-📚 **参考情報**: 生成される API ルートの完全な例については、**[Scaffold ガイド](./scaffold-guide.ja.md)** をご参照ください。
+📚 **参考情報**: 生成される API ルートの完全な例については、**[Scaffold ガイド](./scaffold-guide)** をご参照ください。
 
 ### レイヤー 3: Azure Functions と Cosmos DB（自動生成）
 
@@ -185,7 +185,7 @@ app.http('createUser', {
 });
 ```
 
-📚 **参考情報**: 完全な CRUD 操作を含む Azure Functions の生成例については、**[Scaffold ガイド](./scaffold-guide.ja.md)** をご参照ください。
+📚 **参考情報**: 完全な CRUD 操作を含む Azure Functions の生成例については、**[Scaffold ガイド](./scaffold-guide)** をご参照ください。
 
 ## 高度なパターン
 
@@ -217,7 +217,7 @@ const userWithAddress = user.extend({
 export type UserWithAddress = z.infer<typeof userWithAddress>;
 ```
 
-> **推奨**: 親子関係を表現する場合は、ID による外部キー参照ではなく、ネスト型のスキーマ参照を使用してください。詳細は [Scaffold ガイド](./scaffold-guide.ja.md#ネスト型のスキーマ参照) をご参照ください。
+> **推奨**: 親子関係を表現する場合は、ID による外部キー参照ではなく、ネスト型のスキーマ参照を使用してください。詳細は [Scaffold ガイド](./scaffold-guide#ネスト型のスキーマ参照) をご参照ください。
 
 ```typescript
 // ❌ 非推奨: ID による外部キー参照
@@ -334,7 +334,7 @@ SwallowKit の scaffold コマンドは適切な UI を自動生成します：
 - オプショナルフィールドはフォームで必須マークがつかない
 - デフォルト値は事前入力される
 
-📚 **参考情報**: 型に応じた UI 生成の詳細については、**[Scaffold ガイド](./scaffold-guide.ja.md#型に応じた-ui-生成)** をご参照ください。
+📚 **参考情報**: 型に応じた UI 生成の詳細については、**[Scaffold ガイド](./scaffold-guide#型に応じた-ui-生成)** をご参照ください。
 
 ### 5. 外部キーの命名規約
 
@@ -350,7 +350,7 @@ const todoSchema = z.object({
 
 **パターン**: `<モデル名>Id` → `<モデル名>` モデルを参照
 
-📚 **参考情報**: 外部キーリレーションシップの詳細については、**[Scaffold ガイド](./scaffold-guide.ja.md#外部キーリレーションシップ)** をご参照ください。
+📚 **参考情報**: 外部キーリレーションシップの詳細については、**[Scaffold ガイド](./scaffold-guide#外部キーリレーションシップ)** をご参照ください。
 
 ## まとめ
 
@@ -368,4 +368,4 @@ SwallowKit の Zod スキーマ共有が提供するもの：
 
 - **[Scaffold ガイド](./scaffold-guide.md)** - Zod スキーマから完全な CRUD 操作を生成
 - **[Zod ドキュメント](https://zod.dev/)** - Zod の高度な機能とパターンを学ぶ
-- **[README](../README.ja.md)** - SwallowKit を始める
+- **[README](https://github.com/himanago/swallowkit/blob/main/README.ja.md)** - SwallowKit を始める

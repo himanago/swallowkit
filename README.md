@@ -29,10 +29,12 @@ Featuring Scaffold functionality to automatically generate CRUD operations from 
 
 ## 📚 Documentation
 
-- **[CLI Reference](./docs/cli-reference.md)** - All commands in detail
-- **[Scaffold Guide](./docs/scaffold-guide.md)** - CRUD code generation
-- **[Zod Schema Sharing Guide](./docs/zod-schema-sharing-guide.md)** - Schema design
-- **[Deployment Guide](./docs/deployment-guide.md)** - Deploy to Azure
+Visit the **[SwallowKit Documentation](https://himanago.github.io/swallowkit/)** for the full docs (also available in [日本語](https://himanago.github.io/swallowkit/ja/)).
+
+- **[CLI Reference](https://himanago.github.io/swallowkit/en/cli-reference)** - All commands in detail
+- **[Scaffold Guide](https://himanago.github.io/swallowkit/en/scaffold-guide)** - CRUD code generation
+- **[Zod Schema Sharing Guide](https://himanago.github.io/swallowkit/en/zod-schema-sharing-guide)** - Schema design
+- **[Deployment Guide](https://himanago.github.io/swallowkit/en/deployment-guide)** - Deploy to Azure
 
 ## 🚀 Quick Start
 
@@ -228,7 +230,7 @@ git push origin main
 
 **5. Manually re-run the CI/CD workflow.**
 
-See **[Deployment Guide](./docs/deployment-guide.md)** for details.
+See **[Deployment Guide](https://himanago.github.io/swallowkit/en/deployment-guide)** for details.
 
 ##  License
 

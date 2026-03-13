@@ -28,10 +28,12 @@ Zod スキーマから自動的に CRUD 操作を生成する Scaffold 機能を
 
 ## 📚 ドキュメント
 
-- **[CLI リファレンス](./docs/cli-reference.ja.md)** - 全コマンドの詳細
-- **[Scaffold ガイド](./docs/scaffold-guide.ja.md)** - CRUD コード生成
-- **[Zod スキーマ共有ガイド](./docs/zod-schema-sharing-guide.ja.md)** - スキーマ設計
-- **[デプロイガイド](./docs/deployment-guide.ja.md)** - Azure へのデプロイ
+**[SwallowKit ドキュメント](https://himanago.github.io/swallowkit/ja/)** で完全なドキュメントをご覧ください（[English](https://himanago.github.io/swallowkit/en/) もあります）。
+
+- **[CLI リファレンス](https://himanago.github.io/swallowkit/ja/cli-reference)** - 全コマンドの詳細
+- **[Scaffold ガイド](https://himanago.github.io/swallowkit/ja/scaffold-guide)** - CRUD コード生成
+- **[Zod スキーマ共有ガイド](https://himanago.github.io/swallowkit/ja/zod-schema-sharing-guide)** - スキーマ設計
+- **[デプロイガイド](https://himanago.github.io/swallowkit/ja/deployment-guide)** - Azure へのデプロイ
 
 ## 🚀 クイックスタート
 
@@ -227,7 +229,7 @@ git push origin main
 
 **5. CI/CD ワークフローを手動で再実行します。**
 
-詳細は **[デプロイガイド](./docs/deployment-guide.ja.md)** を参照してください。
+詳細は **[デプロイガイド](https://himanago.github.io/swallowkit/ja/deployment-guide)** を参照してください。
 
 ##  ライセンス
 

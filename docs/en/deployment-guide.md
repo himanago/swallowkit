@@ -335,6 +335,5 @@ az cosmosdb sql role assignment list \
 
 ## Next Steps
 
-- [Architecture Guide](./architecture.md) - System design details
 - [CLI Reference](./cli-reference.md) - All commands
 - [Scaffold Guide](./scaffold-guide.md) - CRUD code generation
