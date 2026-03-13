@@ -335,6 +335,5 @@ az cosmosdb sql role assignment list \
 
 ## 次のステップ
 
-- [アーキテクチャガイド](./architecture.ja.md) - システム設計の詳細
-- [CLI リファレンス](./cli-reference.ja.md) - 全コマンドの詳細
-- [Scaffold ガイド](./scaffold-guide.ja.md) - CRUD コード生成
+- [CLI リファレンス](./cli-reference) - 全コマンドの詳細
+- [Scaffold ガイド](./scaffold-guide) - CRUD コード生成

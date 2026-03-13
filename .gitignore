@@ -58,3 +58,7 @@ logs
 # Temporary folders
 tmp/
 temp/
+
+# VitePress build output
+docs/.vitepress/dist
+docs/.vitepress/cache

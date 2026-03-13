@@ -356,4 +356,4 @@ This approach eliminates type drift, reduces bugs, and improves developer produc
 
 - **[Scaffold Guide](./scaffold-guide.md)** - Generate complete CRUD operations from your Zod schemas
 - **[Zod Documentation](https://zod.dev/)** - Learn advanced Zod features and patterns
-- **[README](../README.md)** - Get started with SwallowKit
+- **[README](https://github.com/himanago/swallowkit#readme)** - Get started with SwallowKit

@@ -344,7 +344,7 @@ await api.delete('/api/todos/123');
 
 ### 詳細
 
-詳しくは [Scaffold ガイド](./scaffold-guide.ja.md) を参照してください。
+詳しくは [Scaffold ガイド](./scaffold-guide) を参照してください。
 
 ## swallowkit provision
 
@@ -497,6 +497,5 @@ CLI の動作を環境変数で制御:
 
 ## 次のステップ
 
-- [デプロイガイド](./deployment-guide.ja.md) - Azure へのデプロイ
-- [Scaffold ガイド](./scaffold-guide.ja.md) - CRUD コード生成の詳細
-- [アーキテクチャガイド](./architecture.ja.md) - システム設計
+- [デプロイガイド](./deployment-guide) - Azure へのデプロイ
+- [Scaffold ガイド](./scaffold-guide) - CRUD コード生成の詳細

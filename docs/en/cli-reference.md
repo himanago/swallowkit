@@ -487,4 +487,3 @@ Control CLI behavior with environment variables:
 
 - [Deployment Guide](./deployment-guide.md) - Deploy to Azure
 - [Scaffold Guide](./scaffold-guide.md) - CRUD code generation details
-- [Architecture Guide](./architecture.md) - System design
