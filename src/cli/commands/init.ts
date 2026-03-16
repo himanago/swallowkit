@@ -1407,7 +1407,6 @@ ${projectName}/
 │   ├── models/            # Zod schema definitions (single source of truth)
 │   └── index.ts           # Re-exports all models
 ├── lib/
-│   ├── models/            # Symlink/copy target for Zod schemas
 │   └── api/               # API client utilities (backend.ts, call-function.ts)
 ├── components/            # Shared React components
 ├── infra/                 # Bicep infrastructure-as-code files
