@@ -38,6 +38,9 @@ features:
   - icon: 🚀
     title: ゼロ設定デプロイ
     details: Bicep IaC で Azure リソースをプロビジョニングし、GitHub Actions または Azure Pipelines の CI/CD ワークフローを自動生成。
+  - icon: 🤖
+    title: AI フレンドリー
+    details: 自動生成される指示ファイル（<code>AGENTS.md</code>、<code>CLAUDE.md</code>、<code>.github/copilot-instructions.md</code>）とレイヤー別ルールにより、GitHub Copilot・Claude Code・OpenAI Codex がプロジェクトのアーキテクチャと規約に従ってコードを生成・修正。
 ---
 
 <div class="vp-doc" style="max-width: 960px; margin: 0 auto; padding: 48px 24px;">

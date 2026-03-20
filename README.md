@@ -26,6 +26,7 @@ Featuring Scaffold functionality to automatically generate CRUD operations from 
 - **🎯 BFF Pattern** - Next.js API Routes as BFF layer with auto-validation and resource inference
 - **☁️ Azure Optimized** - Minimal-cost architecture with Static Web Apps + Functions + Cosmos DB
 - **🚀 Easy Deployment** - Auto-generated Bicep IaC + CI/CD workflows
+- **🤖 AI-Friendly** - Auto-generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) and layer-specific rules help GitHub Copilot, Claude Code, and OpenAI Codex follow project conventions
 
 ## 📚 Documentation
 

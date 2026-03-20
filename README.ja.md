@@ -24,6 +24,7 @@ Zod スキーマから自動的に CRUD 操作を生成する Scaffold 機能を
 - **🎯 BFF パターン** - Next.js API Routes が BFF レイヤーとして機能、自動検証・リソース名推論
 - **☁️ Azure 最適化** - Static Web Apps + Functions + Cosmos DB で最小コスト構成
 - **🚀 簡単デプロイ** - Bicep IaC + CI/CD ワークフローを自動生成
+- **🤖 AI フレンドリー** - 自動生成される指示ファイル（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）とレイヤー別ルールにより、GitHub Copilot・Claude Code・OpenAI Codex がプロジェクト規約に従ってコードを生成
 
 
 ## 📚 ドキュメント

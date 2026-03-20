@@ -1,0 +1,445 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`generateCompactAzureFunctionsCRUD generates correct CRUD code for a basic model 1`] = `
+"import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
+import { z } from 'zod/v4';
+import crypto from 'crypto';
+import { todoSchema } from '@myapp/shared';
+
+const containerName = 'Todos';
+
+// GET /api/todo - 全件取得
+app.http('todo-get-all', {
+  methods: ['GET'],
+  route: 'todo',
+  authLevel: 'anonymous',
+  extraInputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosInput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+      sqlQuery: 'SELECT * FROM c',
+    },
+  ],
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const documents = context.extraInputs.get('cosmosInput') as any[];
+
+      if (!documents || !Array.isArray(documents)) {
+        return { status: 200, jsonBody: [] };
+      }
+
+      const validated = z.array(todoSchema).parse(documents);
+      context.log(\`Fetched \${validated.length} items from \${containerName}\`);
+
+      return { status: 200, jsonBody: validated };
+    } catch (error) {
+      context.error(\`Error fetching from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to fetch items' } };
+    }
+  },
+});
+
+// GET /api/todo/{id} - ID指定取得
+app.http('todo-get-by-id', {
+  methods: ['GET'],
+  route: 'todo/{id}',
+  authLevel: 'anonymous',
+  extraInputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosInput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+      id: '{id}',
+      partitionKey: '{id}',
+    },
+  ],
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const document = context.extraInputs.get('cosmosInput');
+
+      if (!document) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+
+      const validated = todoSchema.parse(document);
+      return { status: 200, jsonBody: validated };
+    } catch (error) {
+      context.error(\`Error fetching item from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to fetch item' } };
+    }
+  },
+});
+
+// POST /api/todo - 新規作成
+app.http('todo-create', {
+  methods: ['POST'],
+  route: 'todo',
+  authLevel: 'anonymous',
+  extraOutputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosOutput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+      createIfNotExists: true,
+    },
+  ],
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const body = await request.json() as any;
+
+      const { id, createdAt, updatedAt, ...userData } = body;
+      const now = new Date().toISOString();
+      const dataWithManagedFields = {
+        ...userData,
+        id: id || crypto.randomUUID(),
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const result = todoSchema.safeParse(dataWithManagedFields);
+
+      if (!result.success) {
+        context.error('Validation failed:', result.error.issues);
+        return { status: 400, jsonBody: { error: 'Validation failed', details: result.error.issues } };
+      }
+
+      context.extraOutputs.set('cosmosOutput', result.data);
+      return { status: 201, jsonBody: result.data };
+    } catch (error) {
+      context.error(\`Error creating item in \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to create item' } };
+    }
+  },
+});
+
+// PUT /api/todo/{id} - 更新
+app.http('todo-update', {
+  methods: ['PUT'],
+  route: 'todo/{id}',
+  authLevel: 'anonymous',
+  extraInputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosInput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+      id: '{id}',
+      partitionKey: '{id}',
+    },
+  ],
+  extraOutputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosOutput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+    },
+  ],
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const id = request.params.id;
+      if (!id) {
+        return { status: 400, jsonBody: { error: 'ID is required' } };
+      }
+
+      const existingDocument = context.extraInputs.get('cosmosInput') as any;
+      if (!existingDocument) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+
+      const body = await request.json() as any;
+      const { createdAt, updatedAt, ...userData } = body;
+
+      const dataWithManagedFields = {
+        ...userData,
+        id,
+        createdAt: existingDocument.createdAt,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const result = todoSchema.safeParse(dataWithManagedFields);
+
+      if (!result.success) {
+        context.error('Validation failed:', result.error.issues);
+        return { status: 400, jsonBody: { error: 'Validation failed', details: result.error.issues } };
+      }
+
+      context.extraOutputs.set('cosmosOutput', result.data);
+      return { status: 200, jsonBody: result.data };
+    } catch (error) {
+      context.error(\`Error updating item in \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to update item' } };
+    }
+  },
+});
+
+// DELETE /api/todo/{id} - 削除
+app.http('todo-delete', {
+  methods: ['DELETE'],
+  route: 'todo/{id}',
+  authLevel: 'anonymous',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const id = request.params.id;
+      if (!id) {
+        return { status: 400, jsonBody: { error: 'ID is required' } };
+      }
+
+      const { CosmosClient } = await import('@azure/cosmos');
+      const endpoint = process.env.CosmosDBConnection__accountEndpoint;
+      let client: InstanceType<typeof CosmosClient>;
+      if (endpoint) {
+        const { DefaultAzureCredential } = await import('@azure/identity');
+        client = new CosmosClient({ endpoint, aadCredentials: new DefaultAzureCredential() });
+      } else {
+        client = new CosmosClient(process.env.CosmosDBConnection!);
+      }
+      const database = client.database(process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase');
+      const container = database.container(containerName);
+
+      await container.item(id, id).delete();
+      context.log(\`Deleted item \${id} from \${containerName}\`);
+
+      return { status: 204 };
+    } catch (error: any) {
+      if (error.code === 404) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+      context.error(\`Error deleting item from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to delete item' } };
+    }
+  },
+});
+"
+`;
+
+exports[`generateCompactAzureFunctionsCRUD generates correct CRUD code for a model with enum fields 1`] = `
+"import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
+import { z } from 'zod/v4';
+import crypto from 'crypto';
+import { issueSchema } from '@myapp/shared';
+
+const containerName = 'Issues';
+
+// GET /api/issue - 全件取得
+app.http('issue-get-all', {
+  methods: ['GET'],
+  route: 'issue',
+  authLevel: 'anonymous',
+  extraInputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosInput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+      sqlQuery: 'SELECT * FROM c',
+    },
+  ],
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const documents = context.extraInputs.get('cosmosInput') as any[];
+
+      if (!documents || !Array.isArray(documents)) {
+        return { status: 200, jsonBody: [] };
+      }
+
+      const validated = z.array(issueSchema).parse(documents);
+      context.log(\`Fetched \${validated.length} items from \${containerName}\`);
+
+      return { status: 200, jsonBody: validated };
+    } catch (error) {
+      context.error(\`Error fetching from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to fetch items' } };
+    }
+  },
+});
+
+// GET /api/issue/{id} - ID指定取得
+app.http('issue-get-by-id', {
+  methods: ['GET'],
+  route: 'issue/{id}',
+  authLevel: 'anonymous',
+  extraInputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosInput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+      id: '{id}',
+      partitionKey: '{id}',
+    },
+  ],
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const document = context.extraInputs.get('cosmosInput');
+
+      if (!document) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+
+      const validated = issueSchema.parse(document);
+      return { status: 200, jsonBody: validated };
+    } catch (error) {
+      context.error(\`Error fetching item from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to fetch item' } };
+    }
+  },
+});
+
+// POST /api/issue - 新規作成
+app.http('issue-create', {
+  methods: ['POST'],
+  route: 'issue',
+  authLevel: 'anonymous',
+  extraOutputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosOutput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+      createIfNotExists: true,
+    },
+  ],
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const body = await request.json() as any;
+
+      const { id, createdAt, updatedAt, ...userData } = body;
+      const now = new Date().toISOString();
+      const dataWithManagedFields = {
+        ...userData,
+        id: id || crypto.randomUUID(),
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const result = issueSchema.safeParse(dataWithManagedFields);
+
+      if (!result.success) {
+        context.error('Validation failed:', result.error.issues);
+        return { status: 400, jsonBody: { error: 'Validation failed', details: result.error.issues } };
+      }
+
+      context.extraOutputs.set('cosmosOutput', result.data);
+      return { status: 201, jsonBody: result.data };
+    } catch (error) {
+      context.error(\`Error creating item in \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to create item' } };
+    }
+  },
+});
+
+// PUT /api/issue/{id} - 更新
+app.http('issue-update', {
+  methods: ['PUT'],
+  route: 'issue/{id}',
+  authLevel: 'anonymous',
+  extraInputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosInput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+      id: '{id}',
+      partitionKey: '{id}',
+    },
+  ],
+  extraOutputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosOutput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+    },
+  ],
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const id = request.params.id;
+      if (!id) {
+        return { status: 400, jsonBody: { error: 'ID is required' } };
+      }
+
+      const existingDocument = context.extraInputs.get('cosmosInput') as any;
+      if (!existingDocument) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+
+      const body = await request.json() as any;
+      const { createdAt, updatedAt, ...userData } = body;
+
+      const dataWithManagedFields = {
+        ...userData,
+        id,
+        createdAt: existingDocument.createdAt,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const result = issueSchema.safeParse(dataWithManagedFields);
+
+      if (!result.success) {
+        context.error('Validation failed:', result.error.issues);
+        return { status: 400, jsonBody: { error: 'Validation failed', details: result.error.issues } };
+      }
+
+      context.extraOutputs.set('cosmosOutput', result.data);
+      return { status: 200, jsonBody: result.data };
+    } catch (error) {
+      context.error(\`Error updating item in \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to update item' } };
+    }
+  },
+});
+
+// DELETE /api/issue/{id} - 削除
+app.http('issue-delete', {
+  methods: ['DELETE'],
+  route: 'issue/{id}',
+  authLevel: 'anonymous',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const id = request.params.id;
+      if (!id) {
+        return { status: 400, jsonBody: { error: 'ID is required' } };
+      }
+
+      const { CosmosClient } = await import('@azure/cosmos');
+      const endpoint = process.env.CosmosDBConnection__accountEndpoint;
+      let client: InstanceType<typeof CosmosClient>;
+      if (endpoint) {
+        const { DefaultAzureCredential } = await import('@azure/identity');
+        client = new CosmosClient({ endpoint, aadCredentials: new DefaultAzureCredential() });
+      } else {
+        client = new CosmosClient(process.env.CosmosDBConnection!);
+      }
+      const database = client.database(process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase');
+      const container = database.container(containerName);
+
+      await container.item(id, id).delete();
+      context.log(\`Deleted item \${id} from \${containerName}\`);
+
+      return { status: 204 };
+    } catch (error: any) {
+      if (error.code === 404) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+      context.error(\`Error deleting item from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to delete item' } };
+    }
+  },
+});
+"
+`;
