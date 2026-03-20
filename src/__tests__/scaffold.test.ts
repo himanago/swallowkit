@@ -1,3 +1,4 @@
+import * as path from "path";
 import { getCSharpSchemaArtifactPruneTargets, getOpenApiGeneratorArgs } from "../cli/commands/scaffold";
 
 describe("getOpenApiGeneratorArgs", () => {
@@ -23,9 +24,9 @@ describe("getOpenApiGeneratorArgs", () => {
     const targets = getCSharpSchemaArtifactPruneTargets("C:\\temp\\generated\\csharp-models");
 
     expect(targets).toEqual([
-      "C:\\temp\\generated\\csharp-models\\src\\SwallowKitBackendModels.Test",
-      "C:\\temp\\generated\\csharp-models\\src\\SwallowKitBackendModels\\Api",
-      "C:\\temp\\generated\\csharp-models\\src\\SwallowKitBackendModels\\Extensions",
+      path.join("C:\\temp\\generated\\csharp-models", "src", "SwallowKitBackendModels.Test"),
+      path.join("C:\\temp\\generated\\csharp-models", "src", "SwallowKitBackendModels", "Api"),
+      path.join("C:\\temp\\generated\\csharp-models", "src", "SwallowKitBackendModels", "Extensions"),
     ]);
   });
 
