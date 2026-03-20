@@ -597,7 +597,7 @@ export function toKebabCase(str: string): string {
 
 /**
  * models ディレクトリから全てのモデル情報を取得
- * @param modelsDir モデルディレクトリのパス（デフォルト: "lib/models"）
+ * @param modelsDir モデルディレクトリのパス（デフォルト: "shared/models"）
  * @returns モデル情報の配列
  */
 export async function getAllModels(modelsDir: string = "shared/models"): Promise<ModelInfo[]> {

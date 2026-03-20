@@ -20,7 +20,7 @@ import { z } from 'zod/v4';
  */
 
 function getFunctionsBaseUrl(): string {
-  return process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
+  return process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
 }
 
 interface CallFunctionConfig<TInput = any, TOutput = any> {

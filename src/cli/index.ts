@@ -25,6 +25,7 @@ program
   .option("--template <template>", "Template to use", "default")
   .option("--next-version <version>", "Next.js version to install (e.g., 16.0.7, latest)", "latest")
   .option("--cicd <provider>", "CI/CD provider: github | azure | skip")
+  .option("--backend-language <language>", "Azure Functions backend language: typescript | csharp | python")
   .option("--cosmos-db-mode <mode>", "Cosmos DB mode: freetier | serverless")
   .option("--vnet <option>", "Network security: outbound | none")
   .action((projectName, options) => {
@@ -33,6 +34,7 @@ program
       template: options.template,
       nextVersion: options.nextVersion,
       cicd: options.cicd,
+      backendLanguage: options.backendLanguage,
       cosmosDbMode: options.cosmosDbMode,
       vnet: options.vnet,
     });

@@ -1,13 +1,18 @@
 import * as fs from "fs";
 import * as path from "path";
-import { SwallowKitConfig } from "../types";
+import { BackendLanguage, SwallowKitConfig } from "../types";
 import { detectFromProject, getCommands } from "../utils/package-manager";
+
+const VALID_BACKEND_LANGUAGES: BackendLanguage[] = ["typescript", "csharp", "python"];
 
 /**
  * デフォルト設定
  */
 const DEFAULT_CONFIG: SwallowKitConfig = {
   database: {},
+  backend: {
+    language: "typescript",
+  },
   api: {
     endpoint: "/api/_swallowkit",
     cors: {
@@ -64,6 +69,10 @@ function mergeConfig(defaultConfig: SwallowKitConfig, userConfig: Partial<Swallo
       ...defaultConfig.database,
       ...userConfig.database,
     },
+    backend: {
+      ...defaultConfig.backend,
+      ...userConfig.backend,
+    },
     api: {
       ...defaultConfig.api,
       ...userConfig.api,
@@ -84,6 +93,9 @@ export function generateConfig(outputPath: string = "swallowkit.config.json"): v
     database: {
       connectionString: "your-cosmos-connection-string",
       databaseName: "SwallowKitDB",
+    },
+    backend: {
+      language: "typescript",
     },
     api: {
       endpoint: "/api/_swallowkit",
@@ -127,7 +139,23 @@ export function loadConfigFromEnv(): Partial<SwallowKitConfig> {
     };
   }
 
+  if (process.env.SWALLOWKIT_BACKEND_LANGUAGE) {
+    config.backend = {
+      ...config.backend,
+      language: process.env.SWALLOWKIT_BACKEND_LANGUAGE as BackendLanguage,
+    };
+  }
+
   return config;
+}
+
+export function getBackendLanguage(configPath?: string): BackendLanguage {
+  const language = getFullConfig(configPath).backend?.language;
+  if (language && VALID_BACKEND_LANGUAGES.includes(language)) {
+    return language;
+  }
+
+  return "typescript";
 }
 
 /**
@@ -154,6 +182,10 @@ export function validateConfig(config: SwallowKitConfig): { valid: boolean; erro
   // API設定の検証
   if (config.api?.endpoint && !config.api.endpoint.startsWith("/")) {
     errors.push("API endpoint must start with '/'");
+  }
+
+  if (config.backend?.language && !VALID_BACKEND_LANGUAGES.includes(config.backend.language)) {
+    errors.push("Backend language must be one of: typescript, csharp, python");
   }
 
   return {

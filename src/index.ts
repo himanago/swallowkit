@@ -8,11 +8,18 @@ export type {
   UseServerFnOptions,
   UseServerFnResult,
   ServerFnMode,
+  BackendLanguage,
   SwallowKitConfig,
 } from "./types";
 
 // Configuration
-export { loadConfig, generateConfig, getFullConfig, validateConfig } from "./core/config";
+export {
+  loadConfig,
+  generateConfig,
+  getBackendLanguage,
+  getFullConfig,
+  validateConfig,
+} from "./core/config";
 
 // Database - Zod-based schema sharing between frontend, backend, and Cosmos DB
 export { DatabaseClient, getDatabaseClient } from "./database/client";

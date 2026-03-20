@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
+import { BackendLanguage } from "../types";
 
 /**
  * Supported package managers
@@ -192,10 +193,12 @@ export function getAzurePipelinesSetup(pm: PackageManager): string {
  * Build script for generated package.json (depends on workspace command syntax)
  */
 export function getBuildScript(pm: PackageManager): string {
+  const copyStandaloneAssets = `node -e "const fs=require('fs');fs.mkdirSync('.next/standalone/.next',{recursive:true});if(fs.existsSync('.next/static'))fs.cpSync('.next/static','.next/standalone/.next/static',{recursive:true});if(fs.existsSync('public'))fs.cpSync('public','.next/standalone/public',{recursive:true});"`;
+
   if (pm === "pnpm") {
-    return "pnpm run --filter shared build && next build --webpack && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/";
+    return `pnpm run --filter shared build && next build --webpack && ${copyStandaloneAssets}`;
   }
-  return "npm run --workspace=shared build && next build --webpack && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/";
+  return `npm run --workspace=shared build && next build --webpack && ${copyStandaloneAssets}`;
 }
 
 /**
@@ -211,9 +214,16 @@ export function getFunctionsPrestart(pm: PackageManager): string {
 /**
  * Functions:start script for root package.json
  */
-export function getFunctionsStartScript(pm: PackageManager): string {
-  if (pm === "pnpm") {
-    return "cd functions && pnpm start";
+export function getFunctionsStartScript(
+  pm: PackageManager,
+  backendLanguage: BackendLanguage = "typescript"
+): string {
+  if (backendLanguage === "typescript") {
+    if (pm === "pnpm") {
+      return "cd functions && pnpm start";
+    }
+    return "cd functions && npm start";
   }
-  return "cd functions && npm start";
+
+  return "cd functions && func start";
 }

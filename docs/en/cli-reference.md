@@ -32,18 +32,19 @@ pnpm dlx swallowkit init [project-name] [options]
 | `--template <template>` | Template to use | `default` | `default` |
 | `--next-version <version>` | Next.js version | e.g. `16.0.7`, `latest` | `latest` |
 | `--cicd <provider>` | CI/CD provider | `github`, `azure`, `skip` | *(prompt)* |
+| `--backend-language <language>` | Azure Functions backend language | `typescript`, `csharp`, `python` | *(prompt)* |
 | `--cosmos-db-mode <mode>` | Cosmos DB mode | `freetier`, `serverless` | *(prompt)* |
 | `--vnet <option>` | Network security | `outbound`, `none` | *(prompt)* |
 
 ### Interactive vs Non-Interactive Mode
 
-By default, `init` asks interactive prompts for CI/CD, Cosmos DB mode, and network settings.
+By default, `init` asks interactive prompts for CI/CD, Azure Functions backend language, Cosmos DB mode, and network settings.
 
 You can skip prompts by passing flags directly:
 
 ```bash
-# Fully non-interactive (all three flags specified)
-npx swallowkit init my-app --cicd github --cosmos-db-mode serverless --vnet outbound
+# Fully non-interactive
+npx swallowkit init my-app --cicd github --backend-language csharp --cosmos-db-mode serverless --vnet outbound
 
 # Partially non-interactive (only --cicd specified; the rest will prompt)
 npx swallowkit init my-app --cicd skip
@@ -62,12 +63,18 @@ Invalid flag values produce a clear error:
 When flags are not specified, the following prompts are shown:
 
 1. **CI/CD Provider**: GitHub Actions, Azure Pipelines, or Skip
-2. **Cosmos DB Mode**: Free Tier or Serverless
-3. **Network Security**: VNet Integration or None
+2. **Backend Language**: TypeScript, C#, or Python
+3. **Cosmos DB Mode**: Free Tier or Serverless
+4. **Network Security**: VNet Integration or None
+
+### Backend Language Notes
+
+- `typescript`: Functions consume the shared Zod package directly.
+- `csharp` / `python`: `swallowkit scaffold` exports OpenAPI into `functions/openapi/` and generates backend schema assets into `functions/generated/`.
 
 ### Generated Files
 
-```
+``` 
 my-app/
 ├── app/                      # Next.js App Router
 │   ├── api/greet/            # BFF sample
@@ -82,11 +89,13 @@ my-app/
 │   ├── models/               # Data models
 │   └── schemas/              # Zod schemas
 ├── functions/                # Azure Functions
-│   ├── src/functions/
-│   │   └── greet.ts          # Sample HTTP trigger
+│   ├── src/                  # TypeScript handlers
+│   ├── Crud/                 # C# handlers
+│   ├── blueprints/           # Python handlers
+│   ├── generated/            # OpenAPI-derived schema assets for C#/Python
+│   ├── openapi/              # Exported OpenAPI specs for C#/Python
 │   ├── host.json
-│   ├── local.settings.json
-│   └── package.json
+│   └── local.settings.json
 ├── infra/                    # Bicep IaC
 │   ├── main.bicep
 │   ├── main.parameters.json

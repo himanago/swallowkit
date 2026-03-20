@@ -18,9 +18,11 @@ Zod スキーマから自動的に CRUD 操作を生成する Scaffold 機能を
 
 ## ✨ 主な特徴
 
-- **🔄 Zod スキーマ共有** - フロントエンド、BFF、Azure Functions、Cosmos DB で同じスキーマを使用
+- **🔄 Zod スキーマ共有** - フロントエンド、BFF、Azure Functions、Cosmos DB をまたいで Zod を唯一のソースとして維持
 - **⚡ CRUD コード生成** - `swallowkit scaffold` で Azure Functions + Next.js コードを自動生成
-- **🛡️ 完全な型安全性** - クライアントからデータベースまでエンドツーエンド TypeScript
+- **🌐 Functions バックエンド多言語対応** - `init` 時に Azure Functions の言語として TypeScript、C#、Python を選択可能
+- **🧬 OpenAPI スキーマブリッジ** - C#/Python バックエンドでは `scaffold` が Zod から OpenAPI を出力し、各言語向けスキーマ資産を生成
+- **🛡️ 契約安全性** - 共有 Zod または OpenAPI 由来のモデルにより、フロント/BFF とバックエンドの契約を整合
 - **🎯 BFF パターン** - Next.js API Routes が BFF レイヤーとして機能、自動検証・リソース名推論
 - **☁️ Azure 最適化** - Static Web Apps + Functions + Cosmos DB で最小コスト構成
 - **🚀 簡単デプロイ** - Bicep IaC + CI/CD ワークフローを自動生成
@@ -47,16 +49,17 @@ pnpm dlx swallowkit init my-app
 cd my-app
 ```
 
-対話プロンプトで CI/CD プロバイダー、Cosmos DB モード、ネットワーク設定を選択します。フラグで直接指定するとプロンプトをスキップできます：
+対話プロンプトで CI/CD プロバイダー、Azure Functions のバックエンド言語、Cosmos DB モード、ネットワーク設定を選択します。フラグで直接指定するとプロンプトをスキップできます：
 
 ```bash
 # 非対話モード（VS Code 拡張機能や自動化に便利）
-npx swallowkit init my-app --cicd github --cosmos-db-mode serverless --vnet outbound
+npx swallowkit init my-app --cicd github --backend-language python --cosmos-db-mode serverless --vnet outbound
 ```
 
 | フラグ | 値 | 説明 |
 |------|-----|------|
 | `--cicd <provider>` | `github`, `azure`, `skip` | CI/CD プロバイダー |
+| `--backend-language <language>` | `typescript`, `csharp`, `python` | Azure Functions のバックエンド言語 |
 | `--cosmos-db-mode <mode>` | `freetier`, `serverless` | Cosmos DB 課金モード |
 | `--vnet <option>` | `outbound`, `none` | ネットワークセキュリティ |
 
@@ -121,6 +124,8 @@ pnpm dlx swallowkit scaffold shared/models/todo.ts
 - ✅ Azure Functions (CRUD エンドポイント + Cosmos DB バインディング)
 - ✅ Next.js BFF API Routes (自動検証・リソース名推論)
 - ✅ React コンポーネント (型安全なフォーム)
+
+`init` で `csharp` または `python` を選んだ場合、`swallowkit scaffold` はあわせて `functions/openapi/` に OpenAPI ドキュメントを出力し、`functions/generated/` に各言語向けスキーマ資産を生成します。
 
 ### 4. 開発サーバー起動
 
@@ -190,8 +195,9 @@ await api.delete('/api/todos/123');
 
 **重要なパターン:**
 - **BFF (Backend For Frontend)**: Next.js API Routes が Azure Functions へのプロキシ
-- **共有スキーマ**: Zod スキーマをフロントエンド・BFF・Functions・DB で共有
-- **型安全性**: Zod から TypeScript 型を自動推論
+- **共有スキーマ**: `shared/models/` の Zod スキーマを唯一のソースとして扱う
+- **C#/Python 向け OpenAPI ブリッジ**: TypeScript 以外の Functions は `functions/generated/` の生成資産を利用
+- **契約安全性**: 共有 Zod または生成モデルで BFF とバックエンドの整合を保つ
 - **マネージド ID**: サービス間の安全な接続（接続文字列不要）
 
 ## 📦 前提条件

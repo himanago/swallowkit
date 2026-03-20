@@ -2,7 +2,7 @@
 
 ## Overview
 
-SwallowKit Scaffold is a powerful code generation tool that automatically creates complete CRUD (Create, Read, Update, Delete) operations from your Zod schema definitions. It generates Azure Functions, Next.js API routes, and type-safe UI components with minimal configuration.
+SwallowKit Scaffold is a powerful code generation tool that automatically creates complete CRUD (Create, Read, Update, Delete) operations from your Zod schema definitions. It generates Azure Functions, Next.js API routes, and type-safe UI components with minimal configuration. When your project uses a C# or Python Functions backend, it also exports OpenAPI and generates backend schema assets from the shared Zod models.
 
 💡 **Reference**: For more information about schema sharing concepts and benefits, please see the **[Zod Schema Sharing Guide](./zod-schema-sharing-guide.md)**.
 
@@ -16,7 +16,7 @@ Use the `create-model` command to generate a model template with `id`, `createdA
 npx swallowkit create-model product
 ```
 
-This generates `lib/models/product.ts`:
+This generates `shared/models/product.ts`:
 
 ```typescript
 import { z } from 'zod';
@@ -43,7 +43,7 @@ npx swallowkit create-model user post comment
 Edit the generated file to add your required fields:
 
 ```typescript
-// lib/models/product.ts
+// shared/models/product.ts
 import { z } from 'zod';
 
 export const product = z.object({
@@ -84,7 +84,7 @@ This ensures timestamp consistency and prevents clients from setting incorrect v
 ### 3. Run Scaffold Command
 
 ```bash
-npx swallowkit scaffold lib/models/product.ts
+npx swallowkit scaffold shared/models/product.ts
 ```
 
 ### 4. Generated Files
@@ -92,12 +92,11 @@ npx swallowkit scaffold lib/models/product.ts
 The scaffold command generates the following files:
 
 **Azure Functions (Backend):**
-- `functions/src/lib/crud-factory.ts` - CRUD factory (first time only)
-- `functions/src/models/product.ts` - Model definition
-- `functions/src/product.ts` - CRUD Azure Functions
+- TypeScript backend: `functions/src/product.ts` - CRUD Azure Functions
+- C# backend: `functions/Crud/ProductFunctions.cs` - starter CRUD handlers
+- Python backend: `functions/blueprints/product.py` - starter CRUD blueprint
 
 **Next.js BFF API Routes:**
-- `lib/api/crud-factory.ts` - BFF CRUD factory (first time only)
 - `app/api/product/route.ts` - GET (list) and POST (create) endpoints
 - `app/api/product/[id]/route.ts` - GET, PUT, DELETE endpoints for single item
 
@@ -110,6 +109,16 @@ The scaffold command generates the following files:
 
 **Configuration:**
 - `lib/scaffold-config.ts` - Navigation menu configuration
+
+**OpenAPI bridge for C#/Python backends:**
+- `functions/openapi/product.openapi.json` - OpenAPI exported from the Zod model graph
+- `functions/generated/csharp-models/` or `functions/generated/python-models/` - generated backend schema assets
+
+### Backend Language Behavior
+
+- `typescript`: the generated Functions handlers import the shared Zod schema package directly.
+- `csharp` / `python`: the frontend and BFF still use Zod in `shared/models/`, and the backend consumes generated assets derived from the OpenAPI export.
+- Re-run `swallowkit scaffold shared/models/<name>.ts` whenever the schema changes so `functions/openapi/` and `functions/generated/` stay in sync.
 
 ### 4. Access Your Application
 

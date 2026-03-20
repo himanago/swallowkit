@@ -12,7 +12,7 @@ import { detectFromProject, getCommands } from "../../utils/package-manager";
 
 interface CreateModelOptions {
   names: string[]; // モデル名のリスト（例: ["todo", "user", "post"]）
-  modelsDir?: string; // モデルディレクトリ（デフォルト: "lib/models"）
+  modelsDir?: string; // モデルディレクトリ（デフォルト: "shared/models"）
 }
 
 /**

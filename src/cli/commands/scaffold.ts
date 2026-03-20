@@ -5,9 +5,16 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { parseModelFile, toKebabCase, toPascalCase } from "../../core/scaffold/model-parser";
-import { generateCompactAzureFunctionsCRUD } from "../../core/scaffold/functions-generator";
+import { spawn } from "child_process";
+import { getBackendLanguage, ensureSwallowKitProject } from "../../core/config";
+import { ModelInfo, parseModelFile, toKebabCase, toPascalCase } from "../../core/scaffold/model-parser";
+import {
+  generateCSharpAzureFunctionsCRUD,
+  generateCompactAzureFunctionsCRUD,
+  generatePythonAzureFunctionsCRUD,
+} from "../../core/scaffold/functions-generator";
 import { generateCompactBFFRoutes, generateBFFCallFunction } from "../../core/scaffold/nextjs-generator";
+import { generateOpenApiDocument } from "../../core/scaffold/openapi-generator";
 import {
   generateListPage,
   generateDetailPage,
@@ -15,8 +22,8 @@ import {
   generateNewPage,
   generateEditPage,
 } from "../../core/scaffold/ui-generator";
-import { ensureSwallowKitProject } from "../../core/config";
 import { detectFromProject, getCommands } from "../../utils/package-manager";
+import { BackendLanguage } from "../../types";
 
 interface ScaffoldOptions {
   model: string; // モデルファイルのパス（例: "lib/models/todo.ts" or "todo"）
@@ -40,6 +47,9 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     console.log("🔍 Parsing model file...");
     const modelInfo = await parseModelFile(modelPath);
     console.log(`✅ Model parsed: ${modelInfo.name} (${modelInfo.schemaName})`);
+
+    const backendLanguage = getBackendLanguage();
+    console.log(`🧠 Backend language: ${backendLanguage}`);
     
     // ネストスキーマ参照があれば表示
     if (modelInfo.nestedSchemaRefs.length > 0) {
@@ -61,12 +71,19 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     // 4. Read shared package name
     const functionsDir = options.functionsDir || "functions";
     const sharedPackageName = readSharedPackageName();
+    const relatedModels = backendLanguage === "typescript"
+      ? [modelInfo]
+      : await collectModelGraph(modelPath);
 
     // 5. Generate BFF callFunction helper
     await generateCallFunctionHelper();
 
     // 6. Generate Azure Functions code
-    await generateFunctionsCode(modelInfo, functionsDir, sharedPackageName);
+    await generateFunctionsCode(modelInfo, functionsDir, sharedPackageName, backendLanguage);
+
+    if (backendLanguage !== "typescript") {
+      await generateLanguageSchemaArtifacts(relatedModels, modelInfo, functionsDir, backendLanguage);
+    }
 
     // 7. Generate Next.js BFF API Routes
     const apiDir = options.apiDir || "app/api";
@@ -83,20 +100,21 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
 
     console.log("\n✅ Scaffold completed successfully!");
     console.log("\n📝 Next steps:");
-    console.log(
-      `  1. Review generated files in ${functionsDir}/src/ and ${apiDir}/`
-    );
+    console.log(`  1. Review generated files in ${describeFunctionsOutputPath(functionsDir, backendLanguage)} and ${apiDir}/`);
     if (!options.apiOnly) {
       console.log(`  2. Check the generated UI pages in app/${toKebabCase(modelInfo.name)}/`);
       console.log("  3. Navigate to the model from the homepage menu");
     }
+    if (backendLanguage !== "typescript") {
+      console.log(`  ${options.apiOnly ? "2" : "4"}. Review generated OpenAPI assets in ${functionsDir}/openapi/ and ${functionsDir}/generated/`);
+    }
     console.log(
-      `  ${options.apiOnly ? '2' : '4'}. Ensure FUNCTIONS_BASE_URL is set in your .env.local file`
+      `  ${options.apiOnly ? (backendLanguage === "typescript" ? "2" : "3") : (backendLanguage === "typescript" ? "4" : "5")}. Ensure BACKEND_FUNCTIONS_BASE_URL is set in your .env.local file`
     );
     console.log(
-      `  ${options.apiOnly ? '3' : '5'}. Configure CosmosDBConnection in functions/local.settings.json`
+      `  ${options.apiOnly ? (backendLanguage === "typescript" ? "3" : "4") : (backendLanguage === "typescript" ? "5" : "6")}. Configure CosmosDBConnection in functions/local.settings.json`
     );
-    console.log(`  ${options.apiOnly ? '4' : '6'}. Run '${getCommands(detectFromProject()).dlx} swallowkit dev' to test the generated code`);
+    console.log(`  ${options.apiOnly ? (backendLanguage === "typescript" ? "4" : "5") : (backendLanguage === "typescript" ? "6" : "7")}. Run '${getCommands(detectFromProject()).dlx} swallowkit dev' to test the generated code`);
   } catch (error: any) {
     console.error("\n❌ Scaffold failed:", error.message);
     process.exit(1);
@@ -195,33 +213,236 @@ async function generateCallFunctionHelper(): Promise<void> {
  * Generate Azure Functions CRUD code
  */
 async function generateFunctionsCode(
-  modelInfo: any,
+  modelInfo: ModelInfo,
   functionsDir: string,
-  sharedPackageName: string
+  sharedPackageName: string,
+  backendLanguage: BackendLanguage
 ): Promise<void> {
   console.log("\n🔨 Generating Azure Functions CRUD code...");
 
   const modelKebab = toKebabCase(modelInfo.name);
-  const functionFilePath = path.join(
-    process.cwd(),
-    functionsDir,
-    "src",
-    `${modelKebab}.ts`
-  );
+  if (backendLanguage === "typescript") {
+    const functionFilePath = path.join(
+      process.cwd(),
+      functionsDir,
+      "src",
+      `${modelKebab}.ts`
+    );
 
-  // ディレクトリを作成
-  const functionDir = path.dirname(functionFilePath);
-  if (!fs.existsSync(functionDir)) {
-    fs.mkdirSync(functionDir, { recursive: true });
+    const functionDir = path.dirname(functionFilePath);
+    if (!fs.existsSync(functionDir)) {
+      fs.mkdirSync(functionDir, { recursive: true });
+    }
+
+    const code = generateCompactAzureFunctionsCRUD(modelInfo, sharedPackageName);
+    fs.writeFileSync(functionFilePath, code, "utf-8");
+    console.log(`✅ Created: ${functionFilePath}`);
+    return;
   }
 
-  // コードを生成
-  const code = generateCompactAzureFunctionsCRUD(modelInfo, sharedPackageName);
+  if (backendLanguage === "csharp") {
+    const functionFilePath = path.join(
+      process.cwd(),
+      functionsDir,
+      "Crud",
+      `${modelInfo.name}Functions.cs`
+    );
+    fs.mkdirSync(path.dirname(functionFilePath), { recursive: true });
+    fs.writeFileSync(functionFilePath, generateCSharpAzureFunctionsCRUD(modelInfo), "utf-8");
+    console.log(`✅ Created: ${functionFilePath}`);
+    return;
+  }
 
-  // ファイルに書き込み
-  fs.writeFileSync(functionFilePath, code, "utf-8");
+  const blueprintsDir = path.join(process.cwd(), functionsDir, "blueprints");
+  const blueprintPath = path.join(blueprintsDir, `${modelKebab.replace(/-/g, "_")}.py`);
+  fs.mkdirSync(blueprintsDir, { recursive: true });
 
-  console.log(`✅ Created: ${functionFilePath}`);
+  const { blueprint, registration } = generatePythonAzureFunctionsCRUD(modelInfo);
+  fs.writeFileSync(blueprintPath, blueprint, "utf-8");
+  updatePythonFunctionRegistrations(path.join(process.cwd(), functionsDir, "function_app.py"), registration);
+  console.log(`✅ Created: ${blueprintPath}`);
+}
+
+async function collectModelGraph(modelPath: string, seen = new Map<string, ModelInfo>()): Promise<ModelInfo[]> {
+  const resolvedPath = path.resolve(modelPath);
+  if (seen.has(resolvedPath)) {
+    return Array.from(seen.values());
+  }
+
+  const modelInfo = await parseModelFile(resolvedPath);
+  seen.set(resolvedPath, modelInfo);
+
+  for (const ref of modelInfo.nestedSchemaRefs) {
+    const nestedPath = resolveNestedModelPath(resolvedPath, ref.importPath);
+    await collectModelGraph(nestedPath, seen);
+  }
+
+  return Array.from(seen.values());
+}
+
+function resolveNestedModelPath(modelPath: string, importPath: string): string {
+  let resolvedPath = path.resolve(path.dirname(modelPath), importPath);
+  if (!resolvedPath.endsWith(".ts")) {
+    resolvedPath += ".ts";
+  }
+  return resolvedPath;
+}
+
+function describeFunctionsOutputPath(functionsDir: string, backendLanguage: BackendLanguage): string {
+  if (backendLanguage === "typescript") {
+    return `${functionsDir}/src/`;
+  }
+  if (backendLanguage === "csharp") {
+    return `${functionsDir}/Crud/`;
+  }
+  return `${functionsDir}/blueprints/`;
+}
+
+async function generateLanguageSchemaArtifacts(
+  models: ModelInfo[],
+  rootModel: ModelInfo,
+  functionsDir: string,
+  backendLanguage: Exclude<BackendLanguage, "typescript">
+): Promise<void> {
+  console.log("\n🧬 Generating OpenAPI-backed schema artifacts...");
+
+  const openApiDir = path.join(process.cwd(), functionsDir, "openapi");
+  fs.mkdirSync(openApiDir, { recursive: true });
+
+  const specPath = path.join(openApiDir, `${toKebabCase(rootModel.name)}.openapi.json`);
+  fs.writeFileSync(specPath, generateOpenApiDocument(models, rootModel), "utf-8");
+  console.log(`✅ Created: ${specPath}`);
+
+  const outputDir = path.join(
+    process.cwd(),
+    functionsDir,
+    "generated",
+    backendLanguage === "csharp" ? "csharp-models" : "python-models"
+  );
+
+  fs.mkdirSync(outputDir, { recursive: true });
+  await runOpenApiGenerator(specPath, outputDir, backendLanguage);
+  if (backendLanguage === "csharp") {
+    pruneGeneratedCSharpArtifacts(outputDir);
+  }
+  console.log(`✅ Generated ${backendLanguage} schema assets: ${outputDir}`);
+}
+
+async function runOpenApiGenerator(
+  specPath: string,
+  outputDir: string,
+  backendLanguage: Exclude<BackendLanguage, "typescript">
+): Promise<void> {
+  const pm = detectFromProject();
+  const command = pm === "pnpm" ? "pnpm" : "npx";
+  const args = pm === "pnpm"
+    ? ["exec", "openapi-generator-cli", ...getOpenApiGeneratorArgs(specPath, outputDir, backendLanguage)]
+    : ["openapi-generator-cli", ...getOpenApiGeneratorArgs(specPath, outputDir, backendLanguage)];
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: process.cwd(),
+      shell: true,
+      stdio: "inherit",
+    });
+
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new Error(`OpenAPI generator exited with code ${code}`));
+    });
+
+    child.on("error", reject);
+  });
+}
+
+export function getOpenApiGeneratorArgs(
+  specPath: string,
+  outputDir: string,
+  backendLanguage: Exclude<BackendLanguage, "typescript">
+): string[] {
+  const globalProperty = backendLanguage === "csharp"
+    ? "models,supportingFiles,apis=false,modelDocs=false,modelTests=false"
+    : "models,apis=false,supportingFiles=false,modelDocs=false,modelTests=false";
+
+  const baseArgs = [
+    "generate",
+    "-i",
+    specPath,
+    "-o",
+    outputDir,
+    "--global-property",
+    globalProperty,
+  ];
+
+  if (backendLanguage === "csharp") {
+    return [
+      ...baseArgs,
+      "-g",
+      "csharp",
+      "--additional-properties",
+      "packageName=SwallowKitBackendModels,targetFramework=net8.0,nullableReferenceTypes=true",
+    ];
+  }
+
+  return [
+    ...baseArgs,
+    "-g",
+    "python",
+    "--additional-properties",
+    "packageName=backend_models,projectName=backend-models",
+  ];
+}
+
+export function getCSharpSchemaArtifactPruneTargets(outputDir: string): string[] {
+  return [
+    path.join(outputDir, "src", "SwallowKitBackendModels.Test"),
+    path.join(outputDir, "src", "SwallowKitBackendModels", "Api"),
+    path.join(outputDir, "src", "SwallowKitBackendModels", "Extensions"),
+  ];
+}
+
+function pruneGeneratedCSharpArtifacts(outputDir: string): void {
+  for (const target of getCSharpSchemaArtifactPruneTargets(outputDir)) {
+    if (fs.existsSync(target)) {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  }
+
+  const clientDir = path.join(outputDir, "src", "SwallowKitBackendModels", "Client");
+  if (!fs.existsSync(clientDir)) {
+    return;
+  }
+
+  for (const entry of fs.readdirSync(clientDir, { withFileTypes: true })) {
+    if (!entry.isFile() || entry.name === "Option.cs") {
+      continue;
+    }
+
+    fs.rmSync(path.join(clientDir, entry.name), { force: true });
+  }
+}
+
+function updatePythonFunctionRegistrations(functionAppPath: string, registration: string): void {
+  if (!fs.existsSync(functionAppPath)) {
+    throw new Error(`Python Functions entrypoint not found: ${functionAppPath}`);
+  }
+
+  const content = fs.readFileSync(functionAppPath, "utf-8");
+  if (content.includes(registration)) {
+    return;
+  }
+
+  const marker = "# SwallowKit scaffold registrations";
+  if (!content.includes(marker)) {
+    throw new Error(`Could not find scaffold registration marker in ${functionAppPath}`);
+  }
+
+  const updated = content.replace(marker, `${registration}\n${marker}`);
+  fs.writeFileSync(functionAppPath, updated, "utf-8");
 }
 
 /**

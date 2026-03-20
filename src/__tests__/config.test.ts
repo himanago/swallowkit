@@ -5,6 +5,7 @@ describe("validateConfig", () => {
   it("returns valid for a complete config", () => {
     const config: SwallowKitConfig = {
       database: { connectionString: "AccountEndpoint=https://..." },
+      backend: { language: "typescript" },
       api: { endpoint: "/api/_swallowkit" },
     };
     const result = validateConfig(config);
@@ -15,6 +16,7 @@ describe("validateConfig", () => {
   it("returns error when connectionString is missing", () => {
     const config: SwallowKitConfig = {
       database: {},
+      backend: { language: "typescript" },
       api: { endpoint: "/api/_swallowkit" },
     };
     const result = validateConfig(config);
@@ -25,6 +27,7 @@ describe("validateConfig", () => {
   it("returns error when endpoint does not start with /", () => {
     const config: SwallowKitConfig = {
       database: { connectionString: "AccountEndpoint=https://..." },
+      backend: { language: "typescript" },
       api: { endpoint: "api/_swallowkit" },
     };
     const result = validateConfig(config);
@@ -35,11 +38,21 @@ describe("validateConfig", () => {
   it("returns multiple errors for multiple issues", () => {
     const config: SwallowKitConfig = {
       database: {},
+      backend: { language: "typescript" },
       api: { endpoint: "bad-endpoint" },
     };
     const result = validateConfig(config);
     expect(result.valid).toBe(false);
     expect(result.errors).toHaveLength(2);
+  });
+
+  it("returns error when backend language is invalid", () => {
+    const config: SwallowKitConfig = {
+      backend: { language: "ruby" as never },
+    };
+    const result = validateConfig(config);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("Backend language must be one of: typescript, csharp, python");
   });
 
   it("accepts config without database or api (no validation errors for absent sections)", () => {
@@ -89,6 +102,12 @@ describe("loadConfigFromEnv", () => {
     process.env.SWALLOWKIT_API_ENDPOINT = "/api/custom";
     const config = loadConfigFromEnv();
     expect(config.api?.endpoint).toBe("/api/custom");
+  });
+
+  it("reads backend language from env", () => {
+    process.env.SWALLOWKIT_BACKEND_LANGUAGE = "python";
+    const config = loadConfigFromEnv();
+    expect(config.backend?.language).toBe("python");
   });
 
   it("reads all env vars together", () => {

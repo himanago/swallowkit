@@ -2,7 +2,7 @@
 
 ## 概要
 
-SwallowKit Scaffold は、Zod スキーマ定義から完全な CRUD（Create, Read, Update, Delete）操作を自動生成する強力なコード生成ツールです。Azure Functions、Next.js API ルート、型安全な UI コンポーネントを最小限の設定で生成します。
+SwallowKit Scaffold は、Zod スキーマ定義から完全な CRUD（Create, Read, Update, Delete）操作を自動生成する強力なコード生成ツールです。Azure Functions、Next.js API ルート、型安全な UI コンポーネントを最小限の設定で生成します。さらに、Functions バックエンドに C# または Python を選んだ場合は、共有 Zod モデルから OpenAPI を出力し、各言語向けのバックエンド用スキーマ資産も生成します。
 
 💡 **参考情報**: スキーマ共有の概念やメリットについては、**[Zod スキーマ共有ガイド](./zod-schema-sharing-guide)** もご参照ください。
 
@@ -16,7 +16,7 @@ SwallowKit Scaffold は、Zod スキーマ定義から完全な CRUD（Create, R
 npx swallowkit create-model product
 ```
 
-これにより `lib/models/product.ts` が生成されます：
+これにより `shared/models/product.ts` が生成されます：
 
 ```typescript
 import { z } from 'zod';
@@ -43,7 +43,7 @@ npx swallowkit create-model user post comment
 生成されたファイルを編集して、必要なフィールドを追加します：
 
 ```typescript
-// lib/models/product.ts
+// shared/models/product.ts
 import { z } from 'zod';
 
 export const product = z.object({
@@ -84,7 +84,7 @@ export type Product = z.infer<typeof product>;
 ### 3. Scaffold コマンドを実行
 
 ```bash
-npx swallowkit scaffold lib/models/product.ts
+npx swallowkit scaffold shared/models/product.ts
 ```
 
 ### 4. 生成されるファイル
@@ -92,12 +92,11 @@ npx swallowkit scaffold lib/models/product.ts
 scaffold コマンドは以下のファイルを生成します：
 
 **Azure Functions（バックエンド）:**
-- `functions/src/lib/crud-factory.ts` - CRUD ファクトリー（初回のみ）
-- `functions/src/models/product.ts` - モデル定義
-- `functions/src/product.ts` - CRUD Azure Functions
+- TypeScript バックエンド: `functions/src/product.ts` - CRUD Azure Functions
+- C# バックエンド: `functions/Crud/ProductFunctions.cs` - CRUD スターターハンドラー
+- Python バックエンド: `functions/blueprints/product.py` - CRUD スターターブループリント
 
 **Next.js BFF API Routes:**
-- `lib/api/crud-factory.ts` - BFF CRUD ファクトリー（初回のみ）
 - `app/api/product/route.ts` - GET（一覧）と POST（作成）エンドポイント
 - `app/api/product/[id]/route.ts` - GET、PUT、DELETE エンドポイント（単一アイテム）
 
@@ -110,6 +109,16 @@ scaffold コマンドは以下のファイルを生成します：
 
 **設定:**
 - `lib/scaffold-config.ts` - ナビゲーションメニュー設定
+
+**C#/Python バックエンド向け OpenAPI ブリッジ:**
+- `functions/openapi/product.openapi.json` - Zod モデルグラフから出力された OpenAPI
+- `functions/generated/csharp-models/` または `functions/generated/python-models/` - 生成されたバックエンド用スキーマ資産
+
+### バックエンド言語ごとの動作
+
+- `typescript`: 生成された Functions ハンドラーは共有 Zod パッケージを直接 import します。
+- `csharp` / `python`: フロントエンドと BFF は引き続き `shared/models/` の Zod を使い、バックエンドは OpenAPI 由来の生成資産を利用します。
+- スキーマを変更したら、`functions/openapi/` と `functions/generated/` を同期させるために `swallowkit scaffold shared/models/<name>.ts` を再実行してください。
 
 ### 4. アプリケーションにアクセス
 

@@ -20,9 +20,11 @@ Featuring Scaffold functionality to automatically generate CRUD operations from 
 
 ## ✨ Key Features
 
-- **🔄 Zod Schema Sharing** - Same schema across frontend, BFF, Azure Functions, and Cosmos DB
+- **🔄 Zod Schema Sharing** - Keep Zod as the source of truth across frontend, BFF, Azure Functions, and Cosmos DB
 - **⚡ CRUD Code Generation** - Auto-generate Azure Functions + Next.js code with `swallowkit scaffold`
-- **🛡️ Full Type Safety** - End-to-end TypeScript from client to database
+- **🌐 Multi-language Functions Backends** - Choose TypeScript, C#, or Python for Azure Functions during `init`
+- **🧬 OpenAPI Schema Bridge** - For C#/Python backends, `scaffold` exports OpenAPI from Zod and generates backend schema assets
+- **🛡️ Contract Safety** - Keep frontend/BFF contracts aligned with backend implementations through shared Zod or generated OpenAPI-derived models
 - **🎯 BFF Pattern** - Next.js API Routes as BFF layer with auto-validation and resource inference
 - **☁️ Azure Optimized** - Minimal-cost architecture with Static Web Apps + Functions + Cosmos DB
 - **🚀 Easy Deployment** - Auto-generated Bicep IaC + CI/CD workflows
@@ -48,16 +50,17 @@ pnpm dlx swallowkit init my-app
 cd my-app
 ```
 
-The interactive prompts ask for CI/CD provider, Cosmos DB mode, and network settings. You can also specify them as flags to skip prompts entirely:
+The interactive prompts ask for CI/CD provider, Azure Functions backend language, Cosmos DB mode, and network settings. You can also specify them as flags to skip prompts entirely:
 
 ```bash
 # Non-interactive mode (useful for VS Code extensions or automation)
-npx swallowkit init my-app --cicd github --cosmos-db-mode serverless --vnet outbound
+npx swallowkit init my-app --cicd github --backend-language python --cosmos-db-mode serverless --vnet outbound
 ```
 
 | Flag | Values | Description |
 |------|--------|-------------|
 | `--cicd <provider>` | `github`, `azure`, `skip` | CI/CD provider |
+| `--backend-language <language>` | `typescript`, `csharp`, `python` | Azure Functions backend language |
 | `--cosmos-db-mode <mode>` | `freetier`, `serverless` | Cosmos DB pricing mode |
 | `--vnet <option>` | `outbound`, `none` | Network security |
 
@@ -122,6 +125,8 @@ This auto-generates:
 - ✅ Azure Functions (CRUD endpoints + Cosmos DB bindings)
 - ✅ Next.js BFF API Routes (auto-validation + resource inference)
 - ✅ React Components (type-safe forms)
+
+If you selected `csharp` or `python` at `init` time, `swallowkit scaffold` also writes an OpenAPI document under `functions/openapi/` and generates backend schema assets under `functions/generated/`.
 
 ### 4. Start Development Server
 
@@ -191,8 +196,9 @@ await api.delete('/api/todos/123');
 
 **Key Patterns:**
 - **BFF (Backend For Frontend)**: Next.js API Routes proxy to Azure Functions
-- **Shared Schemas**: Zod schemas used across frontend, BFF, Functions, and DB
-- **Type Safety**: TypeScript types auto-inferred from Zod
+- **Shared Schemas**: Zod schemas stay in `shared/models/` as the source of truth
+- **OpenAPI Bridge for C#/Python**: Non-TypeScript Functions consume generated assets under `functions/generated/`
+- **Contract Safety**: BFF and backend stay aligned through shared Zod or generated backend models
 - **Managed Identity**: Secure service connections (no connection strings)
 
 ## 📦 Prerequisites

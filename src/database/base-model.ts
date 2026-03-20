@@ -9,7 +9,7 @@ import { ensureServerSide } from "./runtime-check.js";
  * 
  * @example
  * ```typescript
- * // lib/models/user.ts
+ * // shared/models/user.ts
  * import { z } from 'zod';
  * 
  * export const userSchema = z.object({
@@ -23,7 +23,7 @@ import { ensureServerSide } from "./runtime-check.js";
  * 
  * Then use the scaffold command to generate CRUD operations:
  * ```bash
- * npx swallowkit scaffold lib/models/user.ts
+ * npx swallowkit scaffold shared/models/user.ts
  * ```
  * 
  * This will generate:
@@ -34,7 +34,7 @@ import { ensureServerSide } from "./runtime-check.js";
  * Use the generated API from frontend:
  * ```typescript
  * import { api } from '@/lib/api/backend';
- * import type { UserType } from '@/lib/models/user';
+ * import type { UserType } from '@myapp/shared';
  * 
  * const users = await api.get<UserType[]>('/api/users');
  * await api.post<UserType>('/api/users', { email: 'test@example.com', name: 'Test' });

@@ -5,6 +5,8 @@
 // サーバー関数の実行モード
 export type ServerFnMode = "auto" | "force-server" | "force-client";
 
+export type BackendLanguage = "typescript" | "csharp" | "python";
+
 // useServerFn のオプション
 export interface UseServerFnOptions {
   mode?: ServerFnMode;
@@ -29,6 +31,9 @@ export interface SwallowKitConfig {
   database?: {
     connectionString?: string;
     databaseName?: string;
+  };
+  backend?: {
+    language?: BackendLanguage;
   };
   api?: {
     endpoint?: string;

@@ -139,10 +139,12 @@ describe("getAzurePipelinesSetup", () => {
 describe("getBuildScript", () => {
   it("uses pnpm run --filter for pnpm", () => {
     expect(getBuildScript("pnpm")).toContain("pnpm run --filter shared build");
+    expect(getBuildScript("pnpm")).toContain("fs.cpSync");
   });
 
   it("uses npm run --workspace for npm", () => {
     expect(getBuildScript("npm")).toContain("npm run --workspace=shared build");
+    expect(getBuildScript("npm")).toContain("fs.cpSync");
   });
 });
 
@@ -163,6 +165,14 @@ describe("getFunctionsStartScript", () => {
 
   it("uses npm start for npm", () => {
     expect(getFunctionsStartScript("npm")).toContain("npm start");
+  });
+
+  it("uses func start for csharp backends", () => {
+    expect(getFunctionsStartScript("pnpm", "csharp")).toBe("cd functions && func start");
+  });
+
+  it("uses func start for python backends", () => {
+    expect(getFunctionsStartScript("npm", "python")).toBe("cd functions && func start");
   });
 });
 

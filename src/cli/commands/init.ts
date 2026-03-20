@@ -2,6 +2,7 @@
 import * as path from "path";
 import { spawn, execSync } from "child_process";
 import prompts from "prompts";
+import { BackendLanguage } from "../../types";
 import {
   type PackageManager,
   detectFromUserAgent,
@@ -19,6 +20,7 @@ interface InitOptions {
   template: string;
   nextVersion?: string;
   cicd?: CiCdProvider;
+  backendLanguage?: BackendLanguage;
   cosmosDbMode?: CosmosDbMode;
   vnet?: VNetOption;
 }
@@ -30,6 +32,52 @@ type VNetOption = 'none' | 'outbound';
 interface AzureConfig {
   cosmosDbMode: CosmosDbMode;
   vnetOption: VNetOption;
+}
+
+const BACKEND_LANGUAGE_CHOICES: Array<{ title: string; value: BackendLanguage }> = [
+  { title: "TypeScript", value: "typescript" },
+  { title: "C#", value: "csharp" },
+  { title: "Python", value: "python" },
+];
+
+function usesNodeFunctionsProject(backendLanguage: BackendLanguage): boolean {
+  return backendLanguage === "typescript";
+}
+
+function getBackendLanguageLabel(backendLanguage: BackendLanguage): string {
+  return BACKEND_LANGUAGE_CHOICES.find((choice) => choice.value === backendLanguage)?.title || backendLanguage;
+}
+
+function getFunctionsWorkerRuntime(backendLanguage: BackendLanguage): string {
+  if (backendLanguage === "csharp") {
+    return "dotnet-isolated";
+  }
+  if (backendLanguage === "python") {
+    return "python";
+  }
+  return "node";
+}
+
+function getFunctionsRuntimeConfig(backendLanguage: BackendLanguage): { name: string; version: string } {
+  if (backendLanguage === "csharp") {
+    return { name: "dotnet-isolated", version: "8.0" };
+  }
+  if (backendLanguage === "python") {
+    return { name: "python", version: "3.11" };
+  }
+  return { name: "node", version: "22" };
+}
+
+async function promptBackendLanguage(): Promise<BackendLanguage> {
+  const response = await prompts({
+    type: "select",
+    name: "backendLanguage",
+    message: "Azure Functions backend language:",
+    choices: BACKEND_LANGUAGE_CHOICES,
+    initial: 0,
+  });
+
+  return response.backendLanguage || "typescript";
 }
 
 async function promptCiCd(): Promise<CiCdProvider> {
@@ -78,12 +126,17 @@ async function promptAzureConfig(): Promise<AzureConfig> {
 }
 
 const VALID_CICD: CiCdProvider[] = ['github', 'azure', 'skip'];
+const VALID_BACKEND_LANGUAGE: BackendLanguage[] = ['typescript', 'csharp', 'python'];
 const VALID_COSMOS_DB_MODE: CosmosDbMode[] = ['freetier', 'serverless'];
 const VALID_VNET: VNetOption[] = ['none', 'outbound'];
 
 function validateInitFlags(options: InitOptions): void {
   if (options.cicd && !VALID_CICD.includes(options.cicd)) {
     console.error(`❌ Invalid --cicd value: "${options.cicd}". Must be: ${VALID_CICD.join(', ')}`);
+    process.exit(1);
+  }
+  if (options.backendLanguage && !VALID_BACKEND_LANGUAGE.includes(options.backendLanguage)) {
+    console.error(`❌ Invalid --backend-language value: "${options.backendLanguage}". Must be: ${VALID_BACKEND_LANGUAGE.join(', ')}`);
     process.exit(1);
   }
   if (options.cosmosDbMode && !VALID_COSMOS_DB_MODE.includes(options.cosmosDbMode)) {
@@ -119,6 +172,7 @@ export async function initCommand(options: InitOptions) {
 
     // Use flag values if provided, otherwise prompt interactively
     const cicdProvider: CiCdProvider = options.cicd || await promptCiCd();
+    const backendLanguage: BackendLanguage = options.backendLanguage || await promptBackendLanguage();
 
     const azureConfig: AzureConfig = (options.cosmosDbMode && options.vnet)
       ? { cosmosDbMode: options.cosmosDbMode, vnetOption: options.vnet }
@@ -131,16 +185,16 @@ export async function initCommand(options: InitOptions) {
     await upgradeNextJs(projectDir, options.nextVersion || 'latest', pm);
 
     // Add SwallowKit specific files
-    await addSwallowKitFiles(projectDir, options, cicdProvider, azureConfig, pm);
+    await addSwallowKitFiles(projectDir, options, cicdProvider, azureConfig, pm, backendLanguage);
     
     // Create infrastructure files (Bicep)
-    await createInfrastructure(projectDir, options.name, azureConfig);
+    await createInfrastructure(projectDir, options.name, azureConfig, backendLanguage);
     
     // Create CI/CD files based on choice
     if (cicdProvider === 'github') {
-      await createGitHubActionsWorkflows(projectDir, azureConfig, pm);
+      await createGitHubActionsWorkflows(projectDir, azureConfig, pm, backendLanguage);
     } else if (cicdProvider === 'azure') {
-      await createAzurePipelines(projectDir, pm);
+      await createAzurePipelines(projectDir, pm, backendLanguage);
     }
 
     // Initialize Git repository and create initial commit
@@ -188,7 +242,7 @@ export async function initCommand(options: InitOptions) {
     console.log("\n📝 Next steps:");
     console.log(`  cd ${options.name}`);
     console.log(`  ${pmCmd.dlx} swallowkit create-model <name>  # Create your first model`);
-    console.log(`  ${pmCmd.dlx} swallowkit scaffold lib/models/<name>.ts  # Generate CRUD code`);
+    console.log(`  ${pmCmd.dlx} swallowkit scaffold shared/models/<name>.ts  # Generate CRUD code`);
     console.log(`  ${pmCmd.dlx} swallowkit dev  # Start development servers`);
     console.log("\n🚀 Deploy to Azure:");
     console.log(`  ${pmCmd.dlx} swallowkit provision --resource-group <name>`);
@@ -319,7 +373,65 @@ async function installDependencies(projectDir: string, pm: PackageManager = 'pnp
   });
 }
 
-async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicdChoice: string, azureConfig: AzureConfig, pm: PackageManager) {
+export function injectSwallowKitNextConfig(nextConfigContent: string, projectName: string): string {
+  return nextConfigContent.replace(
+    /(const\s+nextConfig[:\s]*(?::\s*NextConfig\s*)?=\s*\{)(\s*\/\*[^*]*\*\/)?/,
+    `$1\n  output: 'standalone',\n  transpilePackages: ['@${projectName}/shared'],\n  serverExternalPackages: ['applicationinsights', 'diagnostic-channel-publishers'],$2`
+  );
+}
+
+export function buildCSharpFunctionsProgramSource(): string {
+  return `using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+var host = new HostBuilder()
+    .ConfigureFunctionsWorkerDefaults()
+    .ConfigureServices(services =>
+    {
+        services.AddApplicationInsightsTelemetryWorkerService();
+    })
+    .Build();
+
+host.Run();
+`;
+}
+
+export function buildCSharpFunctionsProjectSource(): string {
+  return `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AzureFunctionsVersion>v4</AzureFunctionsVersion>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="generated\\**\\bin\\**\\*.cs;generated\\**\\obj\\**\\*.cs" />
+    <EmbeddedResource Remove="generated\\**\\bin\\**;generated\\**\\obj\\**" />
+    <None Remove="generated\\**\\bin\\**;generated\\**\\obj\\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.47.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Azure.Identity" Version="1.13.2" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="1.23.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.2.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="1.18.0" OutputItemType="Analyzer" />
+    <PackageReference Include="Microsoft.ApplicationInsights.WorkerService" Version="2.22.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="1.2.0" />
+  </ItemGroup>
+</Project>
+`;
+}
+
+async function addSwallowKitFiles(
+  projectDir: string,
+  options: InitOptions,
+  cicdChoice: string,
+  azureConfig: AzureConfig,
+  pm: PackageManager,
+  backendLanguage: BackendLanguage
+) {
   console.log('📦 Adding SwallowKit files...\n');
   
   const projectName = options.name;
@@ -337,12 +449,19 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
     'applicationinsights': '^3.3.0',
     [`@${projectName}/shared`]: '*',
   };
+
+  if (backendLanguage !== "typescript") {
+    packageJson.devDependencies = {
+      ...packageJson.devDependencies,
+      '@openapitools/openapi-generator-cli': '^2.21.0',
+    };
+  }
   
   packageJson.scripts = {
     ...packageJson.scripts,
     'build': getBuildScript(pm),
     'start': 'next start',
-    'functions:start': getFunctionsStartScript(pm),
+    'functions:start': getFunctionsStartScript(pm, backendLanguage),
   };
 
   if (pm === 'pnpm') {
@@ -354,7 +473,8 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
   };
 
   // Workspace configuration depends on package manager
-  const wsConfig = getWorkspaceConfig(pm, ['shared', 'functions']);
+  const workspacePackages = usesNodeFunctionsProject(backendLanguage) ? ['shared', 'functions'] : ['shared'];
+  const wsConfig = getWorkspaceConfig(pm, workspacePackages);
   if (wsConfig.type === 'file') {
     // pnpm: workspaces are defined in pnpm-workspace.yaml
     delete packageJson.workspaces;
@@ -382,14 +502,9 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
   if (fs.existsSync(nextConfigPath)) {
     let nextConfigContent = fs.readFileSync(nextConfigPath, 'utf-8');
     
-    // Add output: 'standalone', experimental.turbopackUseSystemTlsCerts, and serverExternalPackages
+    // Add output, transpiled workspace package, and server externals for standalone deployment
     if (!nextConfigContent.includes("output:") && !nextConfigContent.includes('output =')) {
-      // Handle TypeScript config format: const nextConfig: NextConfig = {
-      // Handle JavaScript config format: const nextConfig = {
-      nextConfigContent = nextConfigContent.replace(
-        /(const\s+nextConfig[:\s]*(?::\s*NextConfig\s*)?=\s*\{)(\s*\/\*[^*]*\*\/)?/,
-        `$1\n  output: 'standalone',\n  transpilePackages: ['@${projectName}/shared'],\n  experimental: {\n    turbopackUseSystemTlsCerts: true,\n  },\n  serverExternalPackages: ['applicationinsights', 'diagnostic-channel-publishers'],$2`
-      );
+      nextConfigContent = injectSwallowKitNextConfig(nextConfigContent, projectName);
       fs.writeFileSync(nextConfigPath, nextConfigContent);
     }
   }
@@ -413,8 +528,11 @@ async function addSwallowKitFiles(projectDir: string, options: InitOptions, cicd
   // 3. Create SwallowKit config
   const swallowkitConfig = `/** @type {import('swallowkit').SwallowKitConfig} */
 module.exports = {
+  backend: {
+    language: '${backendLanguage}',
+  },
   functions: {
-    baseUrl: process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071',
+    baseUrl: process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071',
   },
   deployment: {
     resourceGroup: process.env.AZURE_RESOURCE_GROUP || '',
@@ -437,7 +555,7 @@ module.exports = {
   // Create backend utility for calling Azure Functions
   const backendUtilContent = `// Get Functions base URL at runtime (not at build time)
 function getFunctionsBaseUrl(): string {
-  return process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071';
+  return process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
 }
 
 /**
@@ -544,7 +662,7 @@ export const api = {
 
   // 6. Create .env.example
   const envExample = `# Azure Functions Backend URL
-FUNCTIONS_BASE_URL=http://localhost:7071
+BACKEND_FUNCTIONS_BASE_URL=http://localhost:7071
 
 # Azure Configuration
 AZURE_RESOURCE_GROUP=your-resource-group
@@ -629,7 +747,7 @@ export async function register() {
   // 8. Create .env.local for local development
   const envLocalContent = [
     '# Azure Functions Backend URL (Local)',
-    'FUNCTIONS_BASE_URL=http://localhost:7071',
+    'BACKEND_FUNCTIONS_BASE_URL=http://localhost:7071',
     ''
   ].join('\n');
   fs.writeFileSync(path.join(projectDir, '.env.local'), envLocalContent);
@@ -660,7 +778,7 @@ export async function register() {
   );
 
   // 14. Create Azure Functions project
-  await createAzureFunctionsProject(projectDir, pm);
+  await createAzureFunctionsProject(projectDir, pm, backendLanguage);
 
   // 15. Create BFF API route to call Azure Functions
   await createBffApiRoute(projectDir);
@@ -675,10 +793,10 @@ export async function register() {
   console.log('✅ Project structure created\n');
 
   // 18. Create README.md
-  createReadme(projectDir, projectName, cicdChoice, azureConfig, pm);
+  createReadme(projectDir, projectName, cicdChoice, azureConfig, pm, backendLanguage);
 
   // 19. Create AI agent instruction files (AGENTS.md, CLAUDE.md, .github/copilot-instructions.md, etc.)
-  createAiAgentFiles(projectDir, projectName);
+  createAiAgentFiles(projectDir, projectName, backendLanguage);
 }
 
 async function createSharedPackage(projectDir: string, projectName: string) {
@@ -751,13 +869,104 @@ async function createSharedPackage(projectDir: string, projectName: string) {
   console.log('✅ Shared package created\n');
 }
 
-async function createAzureFunctionsProject(projectDir: string, pm: PackageManager = 'pnpm') {
-  console.log('📦 Creating Azure Functions project...\n');
-  
+async function createAzureFunctionsProject(
+  projectDir: string,
+  pm: PackageManager = 'pnpm',
+  backendLanguage: BackendLanguage = 'typescript'
+) {
+  console.log(`📦 Creating Azure Functions project (${getBackendLanguageLabel(backendLanguage)})...\n`);
+
   const functionsDir = path.join(projectDir, 'functions');
   fs.mkdirSync(functionsDir, { recursive: true });
 
-  // Create functions package.json
+  const projectName = path.basename(projectDir);
+  const databaseName = `${projectName.charAt(0).toUpperCase() + projectName.slice(1)}Database`;
+
+  createFunctionsHostFiles(functionsDir, databaseName, backendLanguage);
+
+  if (backendLanguage === 'typescript') {
+    createTypeScriptFunctionsProject(projectDir, functionsDir, pm);
+  } else if (backendLanguage === 'csharp') {
+    createCSharpFunctionsProject(projectDir, functionsDir);
+  } else {
+    createPythonFunctionsProject(projectDir, functionsDir);
+  }
+
+  console.log('✅ Azure Functions project created\n');
+}
+
+function createFunctionsHostFiles(functionsDir: string, databaseName: string, backendLanguage: BackendLanguage): void {
+  const hostJson = {
+    version: '2.0',
+    logging: {
+      applicationInsights: {
+        samplingSettings: {
+          isEnabled: true,
+          maxTelemetryItemsPerSecond: 20,
+        },
+      },
+    },
+    extensionBundle: {
+      id: 'Microsoft.Azure.Functions.ExtensionBundle',
+      version: '[4.0.0, 4.10.0)',
+    },
+  };
+  fs.writeFileSync(path.join(functionsDir, 'host.json'), JSON.stringify(hostJson, null, 2));
+
+  const localSettings = {
+    IsEncrypted: false,
+    Values: {
+      AzureWebJobsStorage: '',
+      FUNCTIONS_WORKER_RUNTIME: getFunctionsWorkerRuntime(backendLanguage),
+      AzureWebJobsFeatureFlags: 'EnableWorkerIndexing',
+      CosmosDBConnection: 'AccountEndpoint=http://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==',
+      COSMOS_DB_DATABASE_NAME: databaseName,
+      NODE_TLS_REJECT_UNAUTHORIZED: '0',
+    },
+  };
+  fs.writeFileSync(path.join(functionsDir, 'local.settings.json'), JSON.stringify(localSettings, null, 2));
+
+  const gitignoreLines = [
+    'local.settings.json',
+    '*.log',
+    '.vscode',
+    '.DS_Store',
+  ];
+
+  if (backendLanguage === 'typescript') {
+    gitignoreLines.unshift('node_modules', 'dist');
+    fs.writeFileSync(path.join(functionsDir, '.funcignore'), `node_modules
+.git
+.vscode
+local.settings.json
+test
+tsconfig.json
+*.ts
+!dist/**/*.js
+`);
+  } else if (backendLanguage === 'python') {
+    gitignoreLines.unshift('.venv', '__pycache__', '.python_packages');
+    fs.writeFileSync(path.join(functionsDir, '.funcignore'), `.venv
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+local.settings.json
+tests
+`);
+  } else {
+    gitignoreLines.unshift('bin', 'obj');
+    fs.writeFileSync(path.join(functionsDir, '.funcignore'), `bin
+obj
+local.settings.json
+tests
+`);
+  }
+
+  fs.writeFileSync(path.join(functionsDir, '.gitignore'), `${gitignoreLines.join('\n')}\n`);
+}
+
+function createTypeScriptFunctionsProject(projectDir: string, functionsDir: string, pm: PackageManager): void {
   const functionsPackageJson = {
     name: 'functions',
     version: '1.0.0',
@@ -766,26 +975,22 @@ async function createAzureFunctionsProject(projectDir: string, pm: PackageManage
     scripts: {
       start: 'func start',
       build: 'tsc',
-      prestart: getFunctionsPrestart(pm)
+      prestart: getFunctionsPrestart(pm),
     },
     dependencies: {
       '@azure/functions': '~4.5.0',
       '@azure/cosmos': '^4.0.0',
       '@azure/identity': '^4.0.0',
-      'zod': '>=3.25.0',
+      zod: '>=3.25.0',
       [`@${path.basename(projectDir)}/shared`]: '*',
     },
     devDependencies: {
       '@types/node': '^20.0.0',
-      'typescript': '^5.0.0'
-    }
+      typescript: '^5.0.0',
+    },
   };
-  fs.writeFileSync(
-    path.join(functionsDir, 'package.json'),
-    JSON.stringify(functionsPackageJson, null, 2)
-  );
+  fs.writeFileSync(path.join(functionsDir, 'package.json'), JSON.stringify(functionsPackageJson, null, 2));
 
-  // Create functions tsconfig.json
   const sharedPkgName = `@${path.basename(projectDir)}/shared`;
   const functionsTsConfig = {
     compilerOptions: {
@@ -805,85 +1010,15 @@ async function createAzureFunctionsProject(projectDir: string, pm: PackageManage
       },
     },
     include: ['src/**/*'],
-    exclude: ['node_modules', 'dist']
+    exclude: ['node_modules', 'dist'],
   };
-  fs.writeFileSync(
-    path.join(functionsDir, 'tsconfig.json'),
-    JSON.stringify(functionsTsConfig, null, 2)
-  );
+  fs.writeFileSync(path.join(functionsDir, 'tsconfig.json'), JSON.stringify(functionsTsConfig, null, 2));
 
-  // Create host.json
-  const hostJson = {
-    version: '2.0',
-    logging: {
-      applicationInsights: {
-        samplingSettings: {
-          isEnabled: true,
-          maxTelemetryItemsPerSecond: 20
-        }
-      }
-    },
-    extensionBundle: {
-      id: 'Microsoft.Azure.Functions.ExtensionBundle',
-      version: '[4.0.0, 4.10.0)'
-    }
-  };
-  fs.writeFileSync(
-    path.join(functionsDir, 'host.json'),
-    JSON.stringify(hostJson, null, 2)
-  );
-
-  // Create .funcignore
-  const funcignore = `node_modules
-.git
-.vscode
-local.settings.json
-test
-tsconfig.json
-*.ts
-!dist/**/*.js
-`;
-  fs.writeFileSync(path.join(functionsDir, '.funcignore'), funcignore);
-
-  // Create .gitignore for functions directory
-  const functionsGitignore = `node_modules
-dist
-local.settings.json
-*.log
-.vscode
-.DS_Store
-`;
-  fs.writeFileSync(path.join(functionsDir, '.gitignore'), functionsGitignore);
-
-  // Create local.settings.json
-  const projectName = path.basename(projectDir);
-  const databaseName = `${projectName.charAt(0).toUpperCase() + projectName.slice(1)}Database`;
-  const localSettings = {
-    IsEncrypted: false,
-    Values: {
-      AzureWebJobsStorage: '',
-      FUNCTIONS_WORKER_RUNTIME: 'node',
-      AzureWebJobsFeatureFlags: 'EnableWorkerIndexing',
-      CosmosDBConnection: 'AccountEndpoint=http://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==',
-      COSMOS_DB_DATABASE_NAME: databaseName,
-      NODE_TLS_REJECT_UNAUTHORIZED: '0'
-    }
-  };
-  fs.writeFileSync(
-    path.join(functionsDir, 'local.settings.json'),
-    JSON.stringify(localSettings, null, 2)
-  );
-
-  // Create src directory
   const srcDir = path.join(functionsDir, 'src');
   fs.mkdirSync(srcDir, { recursive: true });
-
-  // Create greet function directly in src
-
-  const greetFunction = `import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
+  fs.writeFileSync(path.join(srcDir, 'greet.ts'), `import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { z } from 'zod/v4';
 
-// Zod schema for request validation
 const greetRequestSchema = z.object({
   name: z.string().min(1, 'Name is required').max(50, 'Name must be less than 50 characters'),
 });
@@ -892,12 +1027,9 @@ export async function greet(request: HttpRequest, context: InvocationContext): P
   context.log('HTTP trigger function processed a request.');
 
   try {
-    // Get name from query or body
     const name = request.query.get('name') || (await request.text());
-    
-    // Validate with Zod
     const result = greetRequestSchema.safeParse({ name });
-    
+
     if (!result.success) {
       return {
         status: 400,
@@ -908,7 +1040,7 @@ export async function greet(request: HttpRequest, context: InvocationContext): P
     }
 
     const greeting = \`Hello, \${result.data.name}! This message is from Azure Functions.\`;
-    
+
     return {
       status: 200,
       jsonBody: {
@@ -932,12 +1064,98 @@ app.http('greet', {
   authLevel: 'anonymous',
   handler: greet
 });
-`;
-  fs.writeFileSync(path.join(srcDir, 'greet.ts'), greetFunction);
+`);
+}
 
-  // Dependencies are installed via workspace root install
+function createCSharpFunctionsProject(projectDir: string, functionsDir: string): void {
+  const projectBaseName = path.basename(projectDir);
+  const projectPascal = projectBaseName.charAt(0).toUpperCase() + projectBaseName.slice(1);
+  const csprojName = `${projectPascal}.Functions.csproj`;
 
-  console.log('✅ Azure Functions project created\n');
+  fs.writeFileSync(path.join(functionsDir, csprojName), buildCSharpFunctionsProjectSource());
+
+  fs.writeFileSync(path.join(functionsDir, 'Program.cs'), buildCSharpFunctionsProgramSource());
+
+  const crudDir = path.join(functionsDir, 'Crud');
+  fs.mkdirSync(crudDir, { recursive: true });
+  fs.writeFileSync(path.join(crudDir, 'GreetFunction.cs'), `using System.Net;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
+
+namespace SwallowKit.Functions;
+
+public sealed class GreetFunction
+{
+    [Function("greet")]
+    public async Task<HttpResponseData> Run(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = "greet")] HttpRequestData request)
+    {
+        var query = request.Url.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries);
+        var name = "SwallowKit";
+        foreach (var segment in query)
+        {
+            var parts = segment.Split('=', 2);
+            if (parts.Length == 2 && parts[0] == "name")
+            {
+                name = Uri.UnescapeDataString(parts[1]);
+                break;
+            }
+        }
+        var response = request.CreateResponse(HttpStatusCode.OK);
+        await response.WriteAsJsonAsync(new
+        {
+            message = $"Hello, {name}! This message is from Azure Functions.",
+            timestamp = DateTimeOffset.UtcNow.ToString("O"),
+        });
+        return response;
+    }
+}
+`);
+}
+
+function createPythonFunctionsProject(projectDir: string, functionsDir: string): void {
+  fs.writeFileSync(path.join(projectDir, '.python-version'), '3.11\n');
+
+  fs.writeFileSync(path.join(functionsDir, 'requirements.txt'), `azure-functions>=1.20.0
+azure-cosmos>=4.9.0
+azure-identity>=1.19.0
+`);
+
+  const blueprintsDir = path.join(functionsDir, 'blueprints');
+  fs.mkdirSync(blueprintsDir, { recursive: true });
+  fs.writeFileSync(path.join(blueprintsDir, '__init__.py'), '');
+
+  fs.writeFileSync(path.join(blueprintsDir, 'greet.py'), `import json
+from datetime import datetime, timezone
+
+import azure.functions as func
+
+bp = func.Blueprint()
+
+
+@bp.route(route="greet", methods=["GET", "POST"])
+def greet(req: func.HttpRequest) -> func.HttpResponse:
+    name = req.params.get("name") or "SwallowKit"
+    payload = {
+        "message": f"Hello, {name}! This message is from Azure Functions.",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    return func.HttpResponse(
+        body=json.dumps(payload, ensure_ascii=False),
+        status_code=200,
+        mimetype="application/json",
+    )
+`);
+
+  fs.writeFileSync(path.join(functionsDir, 'function_app.py'), `import azure.functions as func
+
+from blueprints.greet import bp as greet_bp
+
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+app.register_blueprint(greet_bp)
+# SwallowKit scaffold registrations
+`);
 }
 
 async function createBffApiRoute(projectDir: string) {
@@ -992,11 +1210,11 @@ export async function POST(request: NextRequest) {
 `;
   fs.writeFileSync(path.join(apiDir, 'route.ts'), apiRoute);
 
-  // Update .env.example to include FUNCTIONS_BASE_URL
+  // Update .env.example to include BACKEND_FUNCTIONS_BASE_URL
   const envExamplePath = path.join(projectDir, '.env.example');
   let envExample = fs.readFileSync(envExamplePath, 'utf-8');
   
-  if (!envExample.includes('FUNCTIONS_BASE_URL')) {
+  if (!envExample.includes('BACKEND_FUNCTIONS_BASE_URL')) {
     envExample += `\n# Azure Functions Backend URL\nBACKEND_FUNCTIONS_BASE_URL=http://localhost:7071\n`;
     fs.writeFileSync(envExamplePath, envExample);
   }
@@ -1005,7 +1223,7 @@ export async function POST(request: NextRequest) {
   const envLocalPath = path.join(projectDir, '.env.local');
   let envLocal = fs.readFileSync(envLocalPath, 'utf-8');
   
-  if (!envLocal.includes('FUNCTIONS_BASE_URL')) {
+  if (!envLocal.includes('BACKEND_FUNCTIONS_BASE_URL')) {
     envLocal += `\n# Azure Functions Backend URL (Local)\nBACKEND_FUNCTIONS_BASE_URL=http://localhost:7071\n`;
     fs.writeFileSync(envLocalPath, envLocal);
   }
@@ -1110,7 +1328,7 @@ export default function Home() {
                 Create your first model with Zod and generate CRUD operations automatically.
               </p>
               <code className="block bg-gray-100 dark:bg-gray-900 p-4 rounded text-left text-sm">
-                ${pmCmd.dlx} swallowkit scaffold lib/models/your-model.ts
+                ${pmCmd.dlx} swallowkit scaffold shared/models/your-model.ts
               </code>
             </div>
           </section>
@@ -1152,7 +1370,14 @@ export const scaffoldConfig = {
   console.log('✅ Scaffold config created\n');
 }
 
-function createReadme(projectDir: string, projectName: string, cicdChoice: string, azureConfig: AzureConfig, pm: PackageManager) {
+function createReadme(
+  projectDir: string,
+  projectName: string,
+  cicdChoice: string,
+  azureConfig: AzureConfig,
+  pm: PackageManager,
+  backendLanguage: BackendLanguage
+) {
   console.log('📝 Creating README.md...\n');
 
   const pmCmd = getCommands(pm);
@@ -1160,6 +1385,21 @@ function createReadme(projectDir: string, projectName: string, cicdChoice: strin
   const cicdLabel = cicdChoice === 'github' ? 'GitHub Actions' : cicdChoice === 'azure' ? 'Azure Pipelines' : 'None';
   const vnetLabel = azureConfig.vnetOption === 'none' ? 'None (public endpoints)' : 
                     'Outbound VNet (Cosmos DB Private Endpoint)';
+  const backendLanguageLabel = getBackendLanguageLabel(backendLanguage);
+  const schemaBridgeDescription = backendLanguage === 'typescript'
+    ? 'Zod (shared between frontend and backend)'
+    : `Zod + OpenAPI bridge (Zod in shared/, generated ${backendLanguageLabel} schemas in functions/generated/)`;
+  const functionsTree = backendLanguage === 'typescript'
+    ? `│   └── src/\n│       └── greet.ts      # Sample function`
+    : backendLanguage === 'csharp'
+      ? `│   ├── Crud/\n│   │   └── GreetFunction.cs\n│   └── generated/       # OpenAPI-derived C# models`
+      : `│   ├── blueprints/\n│   │   └── greet.py\n│   └── generated/       # OpenAPI-derived Python models`;
+  const backendScaffoldNote = backendLanguage === 'typescript'
+    ? '- Azure Functions CRUD endpoints'
+    : `- Azure Functions ${backendLanguageLabel} CRUD handlers\n- OpenAPI spec + generated ${backendLanguageLabel} schema assets`;
+  const pythonLocalDevNote = backendLanguage === 'python'
+    ? `\n**Python local dev note**: SwallowKit uses \`functions/.venv\` for local Azure Functions development. If \`uv\` is installed, \`swallowkit dev\` uses it to create/manage that virtual environment; otherwise it falls back to the standard \`venv\` + \`pip\` workflow. Keep \`functions/requirements.txt\` as the dependency source of truth for Azure Functions compatibility.\n`
+    : '';
 
   const readme = `# ${projectName}
 
@@ -1169,9 +1409,9 @@ A full-stack application built with **SwallowKit** - Next.js on Azure Static Web
 
 - **Frontend**: Next.js 15 (App Router), React, TypeScript, Tailwind CSS
 - **BFF (Backend for Frontend)**: Next.js API Routes
-- **Backend**: Azure Functions (TypeScript)
+- **Backend**: Azure Functions (${backendLanguageLabel})
 - **Database**: Azure Cosmos DB
-- **Schema Validation**: Zod (shared between frontend and backend)
+- **Schema Validation**: ${schemaBridgeDescription}
 - **Infrastructure**: Bicep (Infrastructure as Code)
 - **CI/CD**: ${cicdLabel}
 
@@ -1206,11 +1446,8 @@ ${projectName}/
 │   ├── api/               # BFF API routes (proxy to Functions)
 │   └── page.tsx           # Home page
 ├── functions/             # Azure Functions (backend)
-│   └── src/
-│       ├── models/        # Data models (copied from lib/models)
-│       └── hello.ts       # Sample function
+${functionsTree}
 ├── lib/
-│   ├── models/            # Shared Zod schemas
 │   └── api/               # API client utilities
 ├── infra/                 # Bicep infrastructure files
 │   ├── main.bicep
@@ -1228,18 +1465,18 @@ Define your data model with Zod schema:
 ${pmCmd.dlx} swallowkit create-model <model-name>
 \`\`\`
 
-This creates a model file in \`lib/models/<model-name>.ts\`. Edit it to define your schema.
+This creates a model file in \`shared/models/<model-name>.ts\`. Edit it to define your schema.
 
 ### 2. Generate CRUD Code
 
 Generate complete CRUD operations (Functions, API routes, UI):
 
 \`\`\`bash
-${pmCmd.dlx} swallowkit scaffold lib/models/<model-name>.ts
+${pmCmd.dlx} swallowkit scaffold shared/models/<model-name>.ts
 \`\`\`
 
 This generates:
-- Azure Functions CRUD endpoints
+${backendScaffoldNote}
 - Next.js BFF API routes
 - React UI components (list, detail, create, edit)
 - Navigation menu integration
@@ -1256,6 +1493,7 @@ This starts:
 - Cosmos DB Emulator check (must be running separately)
 
 **Note**: You need to start Cosmos DB Emulator manually before running \`swallowkit dev\`.
+${pythonLocalDevNote}
 
 ## ☁️ Deploy to Azure
 
@@ -1372,8 +1610,20 @@ This project was generated by SwallowKit. If you encounter any issues or have su
   console.log('✅ README.md created\n');
 }
 
-function createAiAgentFiles(projectDir: string, projectName: string) {
+function createAiAgentFiles(projectDir: string, projectName: string, backendLanguage: BackendLanguage) {
   console.log('🤖 Creating AI agent instruction files...\n');
+  const backendLanguageLabel = getBackendLanguageLabel(backendLanguage);
+  const functionsStructureLine = backendLanguage === 'typescript'
+    ? `│   └── src/               # HTTP trigger handlers with Cosmos DB bindings`
+    : backendLanguage === 'csharp'
+      ? `│   ├── Crud/              # C# HTTP trigger handlers\n│   └── generated/         # OpenAPI-derived C# schema assets`
+      : `│   ├── blueprints/        # Python HTTP trigger handlers\n│   └── generated/         # OpenAPI-derived Python schema assets`;
+  const backendSchemaNote = backendLanguage === 'typescript'
+    ? `- The shared package (\`@${projectName}/shared\`) is consumed by both Next.js and Azure Functions as a workspace dependency.`
+    : `- The frontend/BFF source of truth stays in \`shared/models/\` as Zod schemas.\n- \`swallowkit scaffold\` exports OpenAPI into \`functions/openapi/\` and generates ${backendLanguageLabel} schema assets into \`functions/generated/\` for backend use.`;
+  const backendRulesNote = backendLanguage === 'typescript'
+    ? `- All CRUD operations and business logic live in \`functions/src/\`.\n- Use Azure Functions Cosmos DB **input/output bindings** (\`extraInputs\`/\`extraOutputs\`) for reads and writes.\n- Use the Cosmos DB SDK client directly **only** for delete operations (bindings do not support delete).\n- Validate all data against Zod schemas before writing to Cosmos DB.\n- The backend auto-generates \`id\` (UUID), \`createdAt\`, and \`updatedAt\` — never trust client-sent values for these fields.`
+    : `- All business logic lives in \`functions/\` and the generated handlers perform real Cosmos DB CRUD.\n- Keep Zod schemas in \`shared/models/\` as the source of truth.\n- Regenerate backend contracts with \`swallowkit scaffold shared/models/<name>.ts\` whenever a schema changes.\n- Use the generated OpenAPI-derived models in \`functions/generated/\` to keep backend contracts aligned.\n- The backend should still own \`id\`, \`createdAt\`, and \`updatedAt\`.`;
 
   // ── 1. AGENTS.md (Codex / generic agents) ──────────────────────────
 
@@ -1384,14 +1634,14 @@ All coding agents **must** follow the architecture and conventions described bel
 
 ## Architecture Overview
 
-This is a full-stack TypeScript application deployed on Azure with the following layers:
+This is a full-stack application deployed on Azure with a TypeScript frontend/BFF and an Azure Functions backend in ${backendLanguageLabel}.
 
 \`\`\`
 Frontend (React / Next.js App Router)
   ↓ fetch('/api/{model}', ...)
 BFF Layer (Next.js API Routes)
   ↓ HTTP → Azure Functions
-Backend (Azure Functions with Cosmos DB bindings)
+Backend (Azure Functions)
   ↓
 Azure Cosmos DB (Document Database)
 \`\`\`
@@ -1404,7 +1654,7 @@ ${projectName}/
 │   ├── api/               # BFF API routes (proxy to Azure Functions)
 │   └── {model}/           # UI pages per model (list, detail, create, edit)
 ├── functions/             # Azure Functions (backend)
-│   └── src/               # HTTP trigger handlers with Cosmos DB bindings
+${functionsStructureLine}
 ├── shared/                # Shared workspace package
 │   ├── models/            # Zod schema definitions (single source of truth)
 │   └── index.ts           # Re-exports all models
@@ -1459,8 +1709,7 @@ export async function POST(request: NextRequest) {
 
 - All data models are defined **once** as Zod schemas in \`shared/models/\`.
 - TypeScript types are derived with \`z.infer<typeof Schema>\` — never define types separately.
-- The same schema is used in **all three layers**: frontend (validation), BFF (input/output validation), and Azure Functions (request/response validation + Cosmos DB documents).
-- The shared package (\`@${projectName}/shared\`) is consumed by both Next.js and Azure Functions as a workspace dependency.
+- ${backendSchemaNote}
 
 Model definition pattern:
 
@@ -1487,15 +1736,11 @@ Key rules:
 
 ### 3. Azure Functions Own All Business Logic and Data Access
 
-- All CRUD operations and business logic live in \`functions/src/\`.
-- Use Azure Functions Cosmos DB **input/output bindings** (\`extraInputs\`/\`extraOutputs\`) for reads and writes.
-- Use the Cosmos DB SDK client directly **only** for delete operations (bindings do not support delete).
-- Validate all data against Zod schemas before writing to Cosmos DB.
-- The backend auto-generates \`id\` (UUID), \`createdAt\`, and \`updatedAt\` — never trust client-sent values for these fields.
+- ${backendRulesNote}
 
-Azure Functions handler pattern:
+${backendLanguage === 'typescript' ? 'Azure Functions handler pattern:' : `Generated ${backendLanguageLabel} handlers live under \`functions/\`. Re-run \`swallowkit scaffold shared/models/<name>.ts\` after schema changes to keep generated CRUD handlers and \`functions/generated/\` in sync.`}
 
-\`\`\`typescript
+${backendLanguage === 'typescript' ? `\`\`\`typescript
 // functions/src/{model}.ts
 import { app } from '@azure/functions';
 import { ModelSchema } from '@${projectName}/shared';
@@ -1513,7 +1758,7 @@ app.http('{model}-get-all', {
     return { status: 200, jsonBody: validated };
   },
 });
-\`\`\`
+\`\`\`` : ''}
 
 ## Naming Conventions
 
@@ -1521,7 +1766,7 @@ app.http('{model}-get-all', {
 |------|-----------|---------|
 | Model schema file | \`shared/models/{kebab-case}.ts\` | \`shared/models/todo.ts\` |
 | Schema/type name | PascalCase (same name for both) | \`export const Todo = z.object({...}); export type Todo = z.infer<typeof Todo>;\` |
-| Functions handler file | \`functions/src/{kebab-case}.ts\` | \`functions/src/todo.ts\` |
+| Functions handler file | backend-language specific under \`functions/\` | \`${backendLanguage === 'typescript' ? 'functions/src/todo.ts' : backendLanguage === 'csharp' ? 'functions/Crud/TodoFunctions.cs' : 'functions/blueprints/todo.py'}\` |
 | Functions handler name | \`{camelCase}-{operation}\` | \`todo-get-all\`, \`todo-create\` |
 | API route path | \`/api/{camelCase}\` | \`/api/todo\`, \`/api/todo/{id}\` |
 | BFF route file | \`app/api/{kebab-case}/route.ts\` | \`app/api/todo/route.ts\` |
@@ -1554,7 +1799,7 @@ npx swallowkit scaffold shared/models/<name>.ts
 \`\`\`
 
 Generates:
-- Azure Functions handlers (\`functions/src/<name>.ts\`)
+- Azure Functions handlers (${backendLanguage === 'typescript' ? '\`functions/src/<name>.ts\`' : '\`functions/\` language-specific CRUD files + \`functions/generated/\` schema assets'})
 - BFF API routes (\`app/api/<name>/route.ts\`, \`app/api/<name>/[id]/route.ts\`)
 - UI pages (\`app/<name>/page.tsx\`, detail, create, edit pages)
 - Cosmos DB Bicep container config (\`infra/containers/<name>-container.bicep\`)
@@ -1596,7 +1841,7 @@ Deploys Bicep infrastructure: Static Web Apps, Functions, Cosmos DB, Storage, Ma
 
 - **Frontend**: Next.js (App Router), React, TypeScript, Tailwind CSS
 - **BFF**: Next.js API Routes (proxy only)
-- **Backend**: Azure Functions (TypeScript, Node.js)
+- **Backend**: Azure Functions (${backendLanguageLabel})
 - **Database**: Azure Cosmos DB (NoSQL)
 - **Schema**: Zod (shared across all layers via workspace package)
 - **Infrastructure**: Bicep (IaC)
@@ -1619,7 +1864,8 @@ This file is for Claude Code. Read AGENTS.md in the project root for the full ar
 - **Architecture**: Next.js (frontend) → BFF (API routes, proxy only) → Azure Functions (backend) → Cosmos DB
 - **Schema**: Zod schemas in \`shared/models/\` are the single source of truth. Never define types separately.
 - **BFF rule**: \`app/api/\` routes must ONLY proxy to Azure Functions via \`callFunction()\`. No business logic.
-- **Backend rule**: All business logic and Cosmos DB access lives in \`functions/src/\`.
+- **Backend language**: ${backendLanguageLabel}
+- **Backend rule**: Regenerate backend contracts with \`swallowkit scaffold\` after schema changes and keep \`functions/generated/\` in sync.
 
 ## SwallowKit CLI Commands
 
@@ -1660,13 +1906,13 @@ Frontend (Next.js App Router) → BFF (Next.js API Routes) → Backend (Azure Fu
 
 1. **BFF is proxy only** — \`app/api/\` routes call Azure Functions via \`callFunction()\`. No business logic, no direct DB access.
 2. **Zod = single source of truth** — Models live in \`shared/models/\`. Types are derived with \`z.infer<>\`. Never define types separately.
-3. **Backend owns data** — All CRUD, business logic, and Cosmos DB access is in \`functions/src/\`.
+3. **Backend owns data** — All CRUD and business logic stay in \`functions/\`, and generated contract assets under \`functions/generated/\` must stay aligned with \`shared/models/\`.
 4. **Use the CLI** — Run \`npx swallowkit create-model <name>\` then \`npx swallowkit scaffold shared/models/<name>.ts\` to add models. Do not create boilerplate manually.
 
 ## Naming
 
 - Schema/type: PascalCase, same name for both (\`export const Todo = z.object({...}); export type Todo = z.infer<typeof Todo>;\`)
-- Files: kebab-case (\`shared/models/todo.ts\`, \`functions/src/todo.ts\`)
+- Files: kebab-case (\`shared/models/todo.ts\`, backend handlers under \`functions/\`)
 - Cosmos DB containers: PascalCase + 's' (\`Todos\`), partition key always \`/id\`
 
 ## Managed Fields
@@ -1756,13 +2002,13 @@ applyTo: "functions/**"
 
 # Azure Functions — Backend Rules
 
-Files in \`functions/src/\` contain all business logic and data access for this application.
+Files in \`functions/\` contain all business logic and data access for this application.
 
 ## Rules
 
-- Use Cosmos DB **input/output bindings** (\`extraInputs\`/\`extraOutputs\`) for reads and writes.
-- Use the Cosmos DB SDK client directly **only** for delete operations.
-- Validate all request data against Zod schemas from \`@${projectName}/shared\` before writing.
+- Keep backend contracts aligned with \`shared/models/\` by rerunning \`swallowkit scaffold\` after schema changes.
+- For TypeScript backends, use Cosmos DB **input/output bindings** (\`extraInputs\`/\`extraOutputs\`) for reads and writes.
+- For C#/Python backends, consume the generated OpenAPI-derived assets in \`functions/generated/\`.
 - Auto-generate \`id\` (UUID), \`createdAt\`, and \`updatedAt\` on the backend. Never trust client-sent values.
 - Container names are PascalCase + 's' (e.g., \`Todos\`). Partition key is always \`/id\`.
 
@@ -1805,7 +2051,12 @@ app.http('{model}-get-all', {
   console.log('');
 }
 
-async function createInfrastructure(projectDir: string, projectName: string, azureConfig: AzureConfig) {
+async function createInfrastructure(
+  projectDir: string,
+  projectName: string,
+  azureConfig: AzureConfig,
+  backendLanguage: BackendLanguage
+) {
   console.log('📦 Creating infrastructure files (Bicep)...\n');
   
   const infraDir = path.join(projectDir, 'infra');
@@ -1813,6 +2064,7 @@ async function createInfrastructure(projectDir: string, projectName: string, azu
   fs.mkdirSync(modulesDir, { recursive: true });
 
   const enableVNet = azureConfig.vnetOption !== 'none';
+  const functionsRuntime = getFunctionsRuntimeConfig(backendLanguage);
 
   // main.bicep
   const mainBicep = `targetScope = 'resourceGroup'
@@ -1924,16 +2176,18 @@ module cosmosPrivateEndpoint 'modules/private-endpoint-cosmos.bicep' = if (enabl
 // Azure Functions (Flex Consumption) - Deploy AFTER Cosmos DB
 module functionsFlex 'modules/functions-flex.bicep' = {
   name: 'functionsApp'
-  params: {
-    name: 'func-\${projectName}'
-    location: location
-    storageAccountName: 'stg\${uniqueString(resourceGroup().id, projectName)}'
-    appInsightsConnectionString: appInsightsFunctions.outputs.connectionString
-    swaDefaultHostname: staticWebApp.outputs.defaultHostname
-    cosmosDbEndpoint: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.endpoint : cosmosDbServerless.outputs.endpoint
-    cosmosDbDatabaseName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.databaseName : cosmosDbServerless.outputs.databaseName
-    enableVNet: enableVNet
-    vnetSubnetId: enableVNet ? vnet.outputs.functionsSubnetId : ''
+    params: {
+      name: 'func-\${projectName}'
+      location: location
+      storageAccountName: 'stg\${uniqueString(resourceGroup().id, projectName)}'
+      appInsightsConnectionString: appInsightsFunctions.outputs.connectionString
+      swaDefaultHostname: staticWebApp.outputs.defaultHostname
+      cosmosDbEndpoint: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.endpoint : cosmosDbServerless.outputs.endpoint
+      cosmosDbDatabaseName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.databaseName : cosmosDbServerless.outputs.databaseName
+      functionsRuntimeName: '${functionsRuntime.name}'
+      functionsRuntimeVersion: '${functionsRuntime.version}'
+      enableVNet: enableVNet
+      vnetSubnetId: enableVNet ? vnet.outputs.functionsSubnetId : ''
   }
   dependsOn: [
     cosmosDbFreeTier
@@ -2171,6 +2425,12 @@ param enableVNet bool = false
 @description('VNet subnet ID for Functions (required if enableVNet is true)')
 param vnetSubnetId string = ''
 
+@description('Functions runtime name')
+param functionsRuntimeName string
+
+@description('Functions runtime version')
+param functionsRuntimeVersion string
+
 // Storage Account for Functions
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
@@ -2241,8 +2501,8 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         instanceMemoryMB: 2048
       }
       runtime: {
-        name: 'node'
-        version: '22'
+        name: functionsRuntimeName
+        version: functionsRuntimeVersion
       }
     }
     siteConfig: {
@@ -2592,11 +2852,372 @@ output privateDnsZoneId string = privateDnsZone.id
   console.log('✅ Infrastructure files created\n');
 }
 
-async function createGitHubActionsWorkflows(projectDir: string, azureConfig: AzureConfig, pm: PackageManager) {
+function getGitHubFunctionsWorkflow(pm: PackageManager, backendLanguage: BackendLanguage): string {
+  const pmCmd = getCommands(pm);
+  const pnpmSetupStep = getCiSetupStep(pm);
+
+  const commonSetup = `      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+${pnpmSetupStep ? `\n${pnpmSetupStep}\n` : ''}
+      - name: Install dependencies
+        run: |
+          ${pmCmd.ci}
+      
+      - name: Build shared package
+        run: |
+          ${pmCmd.runFilter('shared')} build
+`;
+
+  if (backendLanguage === 'typescript') {
+    return `name: Deploy Azure Functions
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'functions/**'
+      - 'shared/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'functions/**'
+      - 'shared/**'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    name: Build and Deploy Functions
+    
+    steps:
+${commonSetup}      - name: Build Functions
+        run: |
+          ${pmCmd.runFilter('functions')} build
+      
+      - name: Prepare functions for deployment
+        run: |
+          SHARED_PKG_NAME=$(node -p "require('./shared/package.json').name")
+          mkdir -p /tmp/fn-deps
+          node -e "const p=JSON.parse(require('fs').readFileSync('./functions/package.json','utf8'));Object.keys(p.dependencies).filter(k=>k.endsWith('/shared')).forEach(k=>delete p.dependencies[k]);require('fs').writeFileSync('/tmp/fn-deps/package.json',JSON.stringify(p,null,2));"
+          cd /tmp/fn-deps && ${pmCmd.installProd} && cd -
+          rm -rf ./functions/node_modules
+          mv /tmp/fn-deps/node_modules ./functions/node_modules
+          SHARED_DEST="./functions/node_modules/$SHARED_PKG_NAME"
+          mkdir -p "$SHARED_DEST"
+          cp -r ./shared/dist "$SHARED_DEST/dist"
+          cp ./shared/package.json "$SHARED_DEST/package.json"
+      
+      - name: Deploy to Azure Functions
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        uses: Azure/functions-action@v1
+        with:
+          app-name: \${{ secrets.AZURE_FUNCTIONAPP_NAME }}
+          package: './functions'
+          publish-profile: \${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+          sku: flexconsumption
+`;
+  }
+
+  if (backendLanguage === 'csharp') {
+    return `name: Deploy Azure Functions
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'functions/**'
+      - 'shared/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'functions/**'
+      - 'shared/**'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    name: Build and Deploy Functions
+    
+    steps:
+${commonSetup}      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish Functions
+        run: |
+          dotnet publish ./functions -c Release -o ./functions/publish
+      
+      - name: Deploy to Azure Functions
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        uses: Azure/functions-action@v1
+        with:
+          app-name: \${{ secrets.AZURE_FUNCTIONAPP_NAME }}
+          package: './functions/publish'
+          publish-profile: \${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+          sku: flexconsumption
+`;
+  }
+
+  return `name: Deploy Azure Functions
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'functions/**'
+      - 'shared/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'functions/**'
+      - 'shared/**'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    name: Build and Deploy Functions
+    
+    steps:
+${commonSetup}      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Functions dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r ./functions/requirements.txt --target "./functions/.python_packages/lib/site-packages"
+      
+      - name: Deploy to Azure Functions
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        uses: Azure/functions-action@v1
+        with:
+          app-name: \${{ secrets.AZURE_FUNCTIONAPP_NAME }}
+          package: './functions'
+          publish-profile: \${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+          sku: flexconsumption
+`;
+}
+
+function getAzureFunctionsPipeline(pm: PackageManager, backendLanguage: BackendLanguage): string {
+  const pmCmd = getCommands(pm);
+  const azPipelinesSetup = getAzurePipelinesSetup(pm);
+  const commonSetup = `  - task: NodeTool@0
+    inputs:
+      versionSpec: '22.x'
+    displayName: 'Install Node.js'
+${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
+  - script: |
+      ${pmCmd.ci}
+    displayName: 'Install workspace dependencies'
+
+  - script: |
+      ${pmCmd.runFilter('shared')} build
+    displayName: 'Build shared package'
+`;
+
+  if (backendLanguage === 'typescript') {
+    return `trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - functions/**
+      - shared/**
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - functions/**
+      - shared/**
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: azure-deployment
+
+steps:
+${commonSetup}  - script: |
+      ${pmCmd.runFilter('functions')} build
+    displayName: 'Build Functions'
+
+  - script: |
+      SHARED_PKG_NAME=$(node -p "require('./shared/package.json').name")
+      mkdir -p /tmp/fn-deps
+      node -e "const p=JSON.parse(require('fs').readFileSync('./functions/package.json','utf8'));Object.keys(p.dependencies).filter(k=>k.endsWith('/shared')).forEach(k=>delete p.dependencies[k]);require('fs').writeFileSync('/tmp/fn-deps/package.json',JSON.stringify(p,null,2));"
+      cd /tmp/fn-deps && ${pmCmd.installProd} && cd -
+      rm -rf ./functions/node_modules
+      mv /tmp/fn-deps/node_modules ./functions/node_modules
+      SHARED_DEST="./functions/node_modules/$SHARED_PKG_NAME"
+      mkdir -p "$SHARED_DEST"
+      cp -r ./shared/dist "$SHARED_DEST/dist"
+      cp ./shared/package.json "$SHARED_DEST/package.json"
+    displayName: 'Prepare functions for deployment'
+
+  - task: ArchiveFiles@2
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    inputs:
+      rootFolderOrFile: '$(System.DefaultWorkingDirectory)/functions'
+      includeRootFolder: false
+      archiveType: 'zip'
+      archiveFile: '$(Build.ArtifactStagingDirectory)/functions.zip'
+    displayName: 'Archive Functions'
+
+  - task: PublishBuildArtifacts@1
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    inputs:
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)/functions.zip'
+      ArtifactName: 'functions'
+    displayName: 'Publish Functions artifact'
+
+  - task: AzureFunctionApp@2
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    inputs:
+      azureSubscription: '$(AZURE_SUBSCRIPTION)'
+      appType: 'functionAppLinux'
+      appName: '$(AZURE_FUNCTIONAPP_NAME)'
+      package: '$(Build.ArtifactStagingDirectory)/functions.zip'
+    displayName: 'Deploy to Azure Functions'
+`;
+  }
+
+  if (backendLanguage === 'csharp') {
+    return `trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - functions/**
+      - shared/**
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - functions/**
+      - shared/**
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: azure-deployment
+
+steps:
+${commonSetup}  - task: UseDotNet@2
+    inputs:
+      version: '8.0.x'
+    displayName: 'Install .NET SDK'
+
+  - script: |
+      dotnet publish ./functions -c Release -o ./functions/publish
+    displayName: 'Publish Functions'
+
+  - task: ArchiveFiles@2
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    inputs:
+      rootFolderOrFile: '$(System.DefaultWorkingDirectory)/functions/publish'
+      includeRootFolder: false
+      archiveType: 'zip'
+      archiveFile: '$(Build.ArtifactStagingDirectory)/functions.zip'
+    displayName: 'Archive Functions'
+
+  - task: AzureFunctionApp@2
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    inputs:
+      azureSubscription: '$(AZURE_SUBSCRIPTION)'
+      appType: 'functionAppLinux'
+      appName: '$(AZURE_FUNCTIONAPP_NAME)'
+      package: '$(Build.ArtifactStagingDirectory)/functions.zip'
+    displayName: 'Deploy to Azure Functions'
+`;
+  }
+
+  return `trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - functions/**
+      - shared/**
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - functions/**
+      - shared/**
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: azure-deployment
+
+steps:
+${commonSetup}  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '3.11'
+    displayName: 'Install Python'
+
+  - script: |
+      python -m pip install --upgrade pip
+      python -m pip install -r ./functions/requirements.txt --target "./functions/.python_packages/lib/site-packages"
+    displayName: 'Install Functions dependencies'
+
+  - task: ArchiveFiles@2
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    inputs:
+      rootFolderOrFile: '$(System.DefaultWorkingDirectory)/functions'
+      includeRootFolder: false
+      archiveType: 'zip'
+      archiveFile: '$(Build.ArtifactStagingDirectory)/functions.zip'
+    displayName: 'Archive Functions'
+
+  - task: AzureFunctionApp@2
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    inputs:
+      azureSubscription: '$(AZURE_SUBSCRIPTION)'
+      appType: 'functionAppLinux'
+      appName: '$(AZURE_FUNCTIONAPP_NAME)'
+      package: '$(Build.ArtifactStagingDirectory)/functions.zip'
+    displayName: 'Deploy to Azure Functions'
+`;
+}
+
+async function createGitHubActionsWorkflows(
+  projectDir: string,
+  azureConfig: AzureConfig,
+  pm: PackageManager,
+  backendLanguage: BackendLanguage
+) {
   console.log('📦 Creating GitHub Actions workflows...\n');
   
   const pmCmd = getCommands(pm);
-  const pnpmSetupStep = getCiSetupStep(pm);
   const workflowsDir = path.join(projectDir, '.github', 'workflows');
   fs.mkdirSync(workflowsDir, { recursive: true });
 
@@ -2656,76 +3277,13 @@ jobs:
   fs.writeFileSync(path.join(workflowsDir, 'deploy-swa.yml'), swaWorkflow);
   
   // deploy-functions.yml
-  const functionsWorkflow = `name: Deploy Azure Functions
-
-on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'functions/**'
-      - 'shared/**'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'functions/**'
-      - 'shared/**'
-  workflow_dispatch:
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    name: Build and Deploy Functions
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-${pnpmSetupStep ? `\n${pnpmSetupStep}\n` : ''}
-      - name: Install dependencies
-        run: |
-          ${pmCmd.ci}
-      
-      - name: Build shared package
-        run: |
-          ${pmCmd.runFilter('shared')} build
-      
-      - name: Build Functions
-        run: |
-          ${pmCmd.runFilter('functions')} build
-      
-      - name: Prepare functions for deployment
-        run: |
-          SHARED_PKG_NAME=$(node -p "require('./shared/package.json').name")
-          mkdir -p /tmp/fn-deps
-          node -e "const p=JSON.parse(require('fs').readFileSync('./functions/package.json','utf8'));Object.keys(p.dependencies).filter(k=>k.endsWith('/shared')).forEach(k=>delete p.dependencies[k]);require('fs').writeFileSync('/tmp/fn-deps/package.json',JSON.stringify(p,null,2));"
-          cd /tmp/fn-deps && ${pmCmd.installProd} && cd -
-          rm -rf ./functions/node_modules
-          mv /tmp/fn-deps/node_modules ./functions/node_modules
-          SHARED_DEST="./functions/node_modules/$SHARED_PKG_NAME"
-          mkdir -p "$SHARED_DEST"
-          cp -r ./shared/dist "$SHARED_DEST/dist"
-          cp ./shared/package.json "$SHARED_DEST/package.json"
-      
-      - name: Deploy to Azure Functions
-        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-        uses: Azure/functions-action@v1
-        with:
-          app-name: \${{ secrets.AZURE_FUNCTIONAPP_NAME }}
-          package: './functions'
-          publish-profile: \${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
-          sku: flexconsumption
-`;
+  const functionsWorkflow = getGitHubFunctionsWorkflow(pm, backendLanguage);
   fs.writeFileSync(path.join(workflowsDir, 'deploy-functions.yml'), functionsWorkflow);
 
   console.log('✅ GitHub Actions workflows created\n');
 }
 
-async function createAzurePipelines(projectDir: string, pm: PackageManager) {
+async function createAzurePipelines(projectDir: string, pm: PackageManager, backendLanguage: BackendLanguage) {
   console.log('📦 Creating Azure Pipelines...\n');
   
   const pmCmd = getCommands(pm);
@@ -2796,86 +3354,7 @@ ${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
   fs.writeFileSync(path.join(pipelinesDir, 'swa.yml'), swaPipeline);
   
   // functions.yml
-  const functionsPipeline = `trigger:
-  branches:
-    include:
-      - main
-  paths:
-    include:
-      - functions/**
-      - shared/**
-
-pr:
-  branches:
-    include:
-      - main
-  paths:
-    include:
-      - functions/**
-      - shared/**
-
-pool:
-  vmImage: 'ubuntu-latest'
-
-variables:
-  - group: azure-deployment
-
-steps:
-  - task: NodeTool@0
-    inputs:
-      versionSpec: '22.x'
-    displayName: 'Install Node.js'
-${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
-  - script: |
-      ${pmCmd.ci}
-    displayName: 'Install workspace dependencies'
-
-  - script: |
-      ${pmCmd.runFilter('shared')} build
-    displayName: 'Build shared package'
-
-  - script: |
-      ${pmCmd.runFilter('functions')} build
-    displayName: 'Build Functions'
-
-  - script: |
-      SHARED_PKG_NAME=$(node -p "require('./shared/package.json').name")
-      mkdir -p /tmp/fn-deps
-      node -e "const p=JSON.parse(require('fs').readFileSync('./functions/package.json','utf8'));Object.keys(p.dependencies).filter(k=>k.endsWith('/shared')).forEach(k=>delete p.dependencies[k]);require('fs').writeFileSync('/tmp/fn-deps/package.json',JSON.stringify(p,null,2));"
-      cd /tmp/fn-deps && ${pmCmd.installProd} && cd -
-      rm -rf ./functions/node_modules
-      mv /tmp/fn-deps/node_modules ./functions/node_modules
-      SHARED_DEST="./functions/node_modules/$SHARED_PKG_NAME"
-      mkdir -p "$SHARED_DEST"
-      cp -r ./shared/dist "$SHARED_DEST/dist"
-      cp ./shared/package.json "$SHARED_DEST/package.json"
-    displayName: 'Prepare functions for deployment'
-
-  - task: ArchiveFiles@2
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-    inputs:
-      rootFolderOrFile: '$(System.DefaultWorkingDirectory)/functions'
-      includeRootFolder: false
-      archiveType: 'zip'
-      archiveFile: '$(Build.ArtifactStagingDirectory)/functions.zip'
-    displayName: 'Archive Functions'
-
-  - task: PublishBuildArtifacts@1
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-    inputs:
-      PathtoPublish: '$(Build.ArtifactStagingDirectory)/functions.zip'
-      ArtifactName: 'functions'
-    displayName: 'Publish Functions artifact'
-
-  - task: AzureFunctionApp@2
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-    inputs:
-      azureSubscription: '$(AZURE_SUBSCRIPTION)'
-      appType: 'functionAppLinux'
-      appName: '$(AZURE_FUNCTIONAPP_NAME)'
-      package: '$(Build.ArtifactStagingDirectory)/functions.zip'
-    displayName: 'Deploy to Azure Functions'
-`;
+  const functionsPipeline = getAzureFunctionsPipeline(pm, backendLanguage);
   fs.writeFileSync(path.join(pipelinesDir, 'functions.yml'), functionsPipeline);
 
   console.log('✅ Azure Pipelines created\n');

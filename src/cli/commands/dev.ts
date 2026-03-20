@@ -2,8 +2,10 @@ import { Command } from 'commander';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { CosmosClient, PartitionKeyKind } from '@azure/cosmos';
-import { ensureSwallowKitProject } from '../../core/config';
+import { ensureSwallowKitProject, getBackendLanguage } from '../../core/config';
+import { BackendLanguage } from '../../types';
 import { detectFromProject, getCommands } from '../../utils/package-manager';
 
 interface DevOptions {
@@ -15,24 +17,269 @@ interface DevOptions {
   noFunctions?: boolean;
 }
 
+export function buildFunctionsStartArgs(functionsPort: string): string[] {
+  return ['start', '--port', functionsPort];
+}
+
+export function buildNextDevArgs(pm: string, port: string): string[] {
+  const baseArgs = ['next', 'dev', '--port', port, '--webpack'];
+  return pm === 'pnpm' ? ['exec', ...baseArgs] : baseArgs;
+}
+
+export function getPythonVirtualEnvPaths(functionsDir: string): {
+  venvDir: string;
+  binDir: string;
+  pythonExecutable: string;
+} {
+  const venvDir = path.join(functionsDir, '.venv');
+  const binDir = process.platform === 'win32'
+    ? path.join(venvDir, 'Scripts')
+    : path.join(venvDir, 'bin');
+  const pythonExecutable = process.platform === 'win32'
+    ? path.join(binDir, 'python.exe')
+    : path.join(binDir, 'python');
+
+  return { venvDir, binDir, pythonExecutable };
+}
+
+export function buildPythonFunctionsEnv(baseEnv: NodeJS.ProcessEnv, functionsDir: string): NodeJS.ProcessEnv {
+  const { venvDir, binDir, pythonExecutable } = getPythonVirtualEnvPaths(functionsDir);
+  const pathKey = getPathEnvKey(baseEnv);
+  const currentPath = baseEnv[pathKey] || '';
+
+  return {
+    ...baseEnv,
+    [pathKey]: currentPath ? `${binDir}${path.delimiter}${currentPath}` : binDir,
+    VIRTUAL_ENV: venvDir,
+    languageWorkers__python__defaultExecutablePath: pythonExecutable,
+  };
+}
+
+function getPathEnvKey(env: NodeJS.ProcessEnv): string {
+  return Object.keys(env).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
+}
+
+function prependToPathEnv(env: NodeJS.ProcessEnv, entry: string): NodeJS.ProcessEnv {
+  const pathKey = getPathEnvKey(env);
+  const currentPath = env[pathKey] || '';
+
+  return {
+    ...env,
+    [pathKey]: currentPath ? `${entry}${path.delimiter}${currentPath}` : entry,
+  };
+}
+
 /**
  * Check if Azure Functions Core Tools is installed
  */
 async function checkCoreTools(): Promise<boolean> {
+  return checkCommand('func', ['--version']);
+}
+
+async function checkCommand(command: string, args: string[] = ['--version']): Promise<boolean> {
   return new Promise((resolve) => {
-    const checkProcess = spawn('func', ['--version'], {
-      shell: true,
+    const checkProcess = spawn(command, args, {
+      shell: false,
       stdio: 'pipe',
     });
-    
+
     checkProcess.on('close', (code) => {
       resolve(code === 0);
     });
-    
+
     checkProcess.on('error', () => {
       resolve(false);
     });
   });
+}
+
+async function resolvePythonBootstrapCommand(): Promise<{ command: string; argsPrefix: string[]; label: string }> {
+  const candidates = process.platform === 'win32'
+    ? [
+        { command: 'py', argsPrefix: ['-3.11'], label: 'py -3.11' },
+        { command: 'python', argsPrefix: [], label: 'python' },
+      ]
+    : [
+        { command: 'python3', argsPrefix: [], label: 'python3' },
+        { command: 'python', argsPrefix: [], label: 'python' },
+      ];
+
+  for (const candidate of candidates) {
+    if (await checkCommand(candidate.command, [...candidate.argsPrefix, '--version'])) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    'Python 3.11 was not found. Install Python 3.11 and make sure `python`, `python3`, or `py -3.11` is available.'
+  );
+}
+
+async function getCommandPath(command: string): Promise<string | null> {
+  const locator = process.platform === 'win32' ? 'where' : 'which';
+  const result = await captureCommandOutput(locator, [command]);
+  const firstLine = result
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+
+  return firstLine || null;
+}
+
+async function captureCommandOutput(
+  command: string,
+  args: string[],
+  cwd?: string,
+  env?: NodeJS.ProcessEnv
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout?.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(stderr || stdout || `${command} exited with code ${code}`));
+      }
+    });
+
+    child.on('error', reject);
+  });
+}
+
+async function resolvePythonRuntimeDetails(
+  functionsDir: string,
+  env: NodeJS.ProcessEnv
+): Promise<{ version: string; architecture: string }> {
+  const { pythonExecutable } = getPythonVirtualEnvPaths(functionsDir);
+  const output = await captureCommandOutput(
+    pythonExecutable,
+    [
+      '-c',
+      'import platform; import sys; print(str(sys.version_info.major) + "." + str(sys.version_info.minor)); print(platform.machine())',
+    ],
+    functionsDir,
+    env
+  );
+  const [version, architecture] = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+
+  if (!version || !architecture) {
+    throw new Error('Failed to determine Python runtime details.');
+  }
+
+  return { version, architecture };
+}
+
+async function bridgePythonCoreToolsForWindowsArm64(
+  functionsDir: string,
+  env: NodeJS.ProcessEnv
+): Promise<NodeJS.ProcessEnv> {
+  if (process.platform !== 'win32' || process.arch !== 'arm64') {
+    return env;
+  }
+
+  const funcPath = await getCommandPath('func');
+  if (!funcPath) {
+    return env;
+  }
+
+  const { version, architecture } = await resolvePythonRuntimeDetails(functionsDir, env);
+  if (architecture.toUpperCase() !== 'AMD64') {
+    return env;
+  }
+
+  const coreToolsRoot = path.dirname(funcPath);
+  const armWorkerDir = path.join(coreToolsRoot, 'workers', 'python', version, 'WINDOWS', 'Arm64');
+  if (fs.existsSync(armWorkerDir)) {
+    return env;
+  }
+
+  const x64WorkerDir = path.join(coreToolsRoot, 'workers', 'python', version, 'WINDOWS', 'X64');
+  if (!fs.existsSync(x64WorkerDir)) {
+    return env;
+  }
+
+  const patchedRoot = path.join(
+    process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+    'SwallowKit',
+    'azure-functions-core-tools-python-bridge'
+  );
+
+  if (!fs.existsSync(path.join(patchedRoot, 'func.exe'))) {
+    console.log('🩹 Creating a local Azure Functions Core Tools bridge for Windows Arm64 Python...');
+    fs.mkdirSync(path.dirname(patchedRoot), { recursive: true });
+    fs.cpSync(coreToolsRoot, patchedRoot, { recursive: true });
+  }
+
+  const patchedArmWorkerDir = path.join(patchedRoot, 'workers', 'python', version, 'WINDOWS', 'Arm64');
+  const patchedX64WorkerDir = path.join(patchedRoot, 'workers', 'python', version, 'WINDOWS', 'X64');
+  if (!fs.existsSync(patchedArmWorkerDir) && fs.existsSync(patchedX64WorkerDir)) {
+    fs.cpSync(patchedX64WorkerDir, patchedArmWorkerDir, { recursive: true });
+  }
+
+  console.log(`🩹 Using bridged Azure Functions Core Tools from ${patchedRoot}`);
+  return prependToPathEnv(env, patchedRoot);
+}
+
+async function preparePythonFunctionsEnvironment(functionsDir: string): Promise<NodeJS.ProcessEnv> {
+  const { pythonExecutable } = getPythonVirtualEnvPaths(functionsDir);
+  const hasUv = await checkCommand('uv', ['--version']);
+
+  if (!fs.existsSync(pythonExecutable)) {
+    if (hasUv) {
+      console.log('📦 Creating Python virtual environment with uv...');
+      await runCommand('uv', ['venv', '.venv', '--python', '3.11'], functionsDir, 'python virtual environment setup');
+    } else {
+      const bootstrap = await resolvePythonBootstrapCommand();
+      console.log(`📦 Creating Python virtual environment with ${bootstrap.label}...`);
+      await runCommand(
+        bootstrap.command,
+        [...bootstrap.argsPrefix, '-m', 'venv', '.venv'],
+        functionsDir,
+        'python virtual environment setup'
+      );
+    }
+  }
+
+  const pythonEnv = buildPythonFunctionsEnv(process.env, functionsDir);
+  console.log(`📦 Installing Python Azure Functions dependencies${hasUv ? ' with uv' : ''}...`);
+
+  if (hasUv) {
+    await runCommand(
+      'uv',
+      ['pip', 'install', '--python', pythonExecutable, '-r', 'requirements.txt'],
+      functionsDir,
+      'python dependency installation',
+      pythonEnv
+    );
+  } else {
+    await runCommand('python', ['-m', 'pip', 'install', '--upgrade', 'pip'], functionsDir, 'python pip upgrade', pythonEnv);
+    await runCommand(
+      'python',
+      ['-m', 'pip', 'install', '-r', 'requirements.txt'],
+      functionsDir,
+      'python dependency installation',
+      pythonEnv
+    );
+  }
+
+  return bridgePythonCoreToolsForWindowsArm64(functionsDir, pythonEnv);
 }
 
 /**
@@ -202,9 +449,11 @@ async function startDevEnvironment(options: DevOptions) {
   // Detect package manager from project lockfile
   const pm = detectFromProject();
   const pmCmd = getCommands(pm);
+  const backendLanguage = getBackendLanguage();
   
   // プロセスを管理する配列
   const processes: ChildProcess[] = [];
+  let functionsEnv: NodeJS.ProcessEnv = process.env;
 
   // Cleanup processes on Ctrl+C
   process.on('SIGINT', () => {
@@ -236,8 +485,7 @@ async function startDevEnvironment(options: DevOptions) {
 
     // 2. Check if Azure Functions exists
     const functionsDir = path.join(process.cwd(), 'functions');
-    const hasFunctions = fs.existsSync(functionsDir) && 
-                        fs.existsSync(path.join(functionsDir, 'package.json'));
+    const hasFunctions = fs.existsSync(functionsDir) && hasFunctionsProject(functionsDir, backendLanguage);
 
     if (hasFunctions && !options.noFunctions) {
       // Check if Azure Functions Core Tools is installed
@@ -319,27 +567,18 @@ async function startDevEnvironment(options: DevOptions) {
 
         console.log('');
         console.log('🚀 Starting Azure Functions...');
-        
-        // Check if pnpm install has been run in functions directory
-        const functionsNodeModules = path.join(functionsDir, 'node_modules');
-        if (!fs.existsSync(functionsNodeModules)) {
-          console.log('📦 Installing Azure Functions dependencies...');
-          const depInstall = spawn(pm, ['install'], {
-            cwd: functionsDir,
-            shell: true,
-            stdio: 'inherit',
-          });
-          
-          await new Promise<void>((resolve, reject) => {
-            depInstall.on('close', (code) => {
-              if (code === 0) {
-                resolve();
-              } else {
-                reject(new Error(`${pm} install failed with code ${code}`));
-              }
-            });
-            depInstall.on('error', reject);
-          });
+
+        if (backendLanguage === 'typescript') {
+          const functionsNodeModules = path.join(functionsDir, 'node_modules');
+          if (!fs.existsSync(functionsNodeModules)) {
+            console.log('📦 Installing Azure Functions dependencies...');
+            await runCommand(pm, ['install'], functionsDir, `${pm} install`);
+          }
+        } else if (backendLanguage === 'csharp') {
+          console.log('📦 Building C# Azure Functions project...');
+          await runCommand('dotnet', ['build'], functionsDir, 'dotnet build');
+        } else {
+          functionsEnv = await preparePythonFunctionsEnvironment(functionsDir);
         }
       }
     }
@@ -372,14 +611,13 @@ async function startDevEnvironment(options: DevOptions) {
       }
 
       // Azure Functions を起動
-      const funcEnv: NodeJS.ProcessEnv = { ...process.env, FUNCTIONS_PORT: functionsPort };
-      
-      const funcProcess = spawn(pm, ['start'], {
+      const funcProcess = spawn('func', buildFunctionsStartArgs(functionsPort), {
         cwd: functionsDir,
         shell: true,
         stdio: 'pipe', // Always pipe to capture output
-        env: funcEnv
+        env: functionsEnv
       });
+      let pythonWorkerMissing = false;
 
       // Functions の出力をそのまま表示（プレフィックス付き）
       if (funcProcess.stdout) {
@@ -388,6 +626,12 @@ async function startDevEnvironment(options: DevOptions) {
           // 各行にプレフィックスを付けて出力
           const lines = output.split('\n').filter((line: string) => line.trim());
           lines.forEach((line: string) => {
+            if (
+              backendLanguage === 'python' &&
+              (line.includes('WorkerConfig for runtime: python not found') || line.includes('DefaultWorkerPath:'))
+            ) {
+              pythonWorkerMissing = true;
+            }
             console.log(`[Functions] ${line}`);
           });
         });
@@ -398,6 +642,12 @@ async function startDevEnvironment(options: DevOptions) {
           const output = data.toString();
           const lines = output.split('\n').filter((line: string) => line.trim());
           lines.forEach((line: string) => {
+            if (
+              backendLanguage === 'python' &&
+              (line.includes('WorkerConfig for runtime: python not found') || line.includes('DefaultWorkerPath:'))
+            ) {
+              pythonWorkerMissing = true;
+            }
             console.error(`[Functions Error] ${line}`);
           });
         });
@@ -414,6 +664,11 @@ async function startDevEnvironment(options: DevOptions) {
       funcProcess.on('close', (code) => {
         if (code !== 0) {
           console.log(`\n⏹️  Azure Functions exited (exit code: ${code})`);
+          if (backendLanguage === 'python' && pythonWorkerMissing) {
+            console.log('💡 Your Azure Functions Core Tools installation is missing the Python worker for this OS/architecture.');
+            console.log('   Reinstall a matching Core Tools v4 package (Windows users should prefer the official x64/x86 MSI for their machine).');
+            console.log('   SwallowKit local Python dev uses functions/.venv and requirements.txt, but Core Tools still needs its own bundled Python worker.');
+          }
         }
       });
 
@@ -430,9 +685,7 @@ async function startDevEnvironment(options: DevOptions) {
     console.log('🚀 Starting Next.js development server...');
 
     // 5. Start Next.js development server
-    const nextArgs = pm === 'pnpm'
-      ? ['exec', 'next', 'dev', '--port', port]
-      : ['next', 'dev', '--port', port];
+    const nextArgs = buildNextDevArgs(pm, port);
     
     if (options.open) {
       // Next.js 14+ deprecated --open option, so we open browser manually
@@ -446,10 +699,17 @@ async function startDevEnvironment(options: DevOptions) {
       }, 3000);
     }
 
+    const nextEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      BACKEND_FUNCTIONS_BASE_URL: `http://${options.host || 'localhost'}:${functionsPort}`,
+      FUNCTIONS_BASE_URL: `http://${options.host || 'localhost'}:${functionsPort}`,
+    };
+
     const nextProcess = spawn(pm === 'pnpm' ? 'pnpm' : 'npx', nextArgs, {
       cwd: process.cwd(),
       shell: true,
       stdio: options.verbose ? 'inherit' : 'inherit',
+      env: nextEnv,
     });
 
     processes.push(nextProcess);
@@ -496,4 +756,39 @@ async function startDevEnvironment(options: DevOptions) {
     });
     process.exit(1);
   }
+}
+
+async function runCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  label: string,
+  env?: NodeJS.ProcessEnv
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      shell: true,
+      stdio: 'inherit',
+      env,
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`${label} failed with code ${code}`));
+      }
+    });
+
+    child.on('error', reject);
+  });
+}
+
+function hasFunctionsProject(functionsDir: string, backendLanguage: BackendLanguage): boolean {
+  if (backendLanguage === 'typescript') {
+    return fs.existsSync(path.join(functionsDir, 'package.json'));
+  }
+
+  return fs.existsSync(path.join(functionsDir, 'host.json'));
 }
