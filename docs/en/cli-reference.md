@@ -5,6 +5,7 @@ Comprehensive reference for all SwallowKit CLI commands and options.
 ## Table of Contents
 
 - [swallowkit init](#swallowkit-init)
+- [swallowkit create-model](#swallowkit-create-model)
 - [swallowkit dev](#swallowkit-dev)
 - [swallowkit scaffold](#swallowkit-scaffold)
 - [swallowkit create-dev-seeds](#swallowkit-create-dev-seeds)
@@ -445,6 +446,73 @@ pnpm dlx swallowkit init my-awesome-app
 # After initialization
 cd my-awesome-app
 ```
+
+## swallowkit create-model
+
+Create one or more Zod model template files under `shared/models/`.
+
+### Usage
+
+```bash
+npx swallowkit create-model <names...> [options]
+# or
+pnpm dlx swallowkit create-model <names...> [options]
+```
+
+### Arguments
+
+- `names...`: One or more model names
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--models-dir <dir>` | Output directory for generated model files | `shared/models` |
+
+### What it does
+
+For each model name, the command:
+
+- creates `shared/models/<name>.ts`
+- normalizes the file name to kebab-case and the schema/type name to PascalCase
+- adds a re-export to `shared/index.ts` when that file exists
+- includes `id`, `name`, `createdAt`, and `updatedAt` in the starter schema
+
+Example:
+
+```bash
+npx swallowkit create-model todo category
+```
+
+Generated template:
+
+```typescript
+import { z } from 'zod/v4';
+
+export const Todo = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+
+export type Todo = z.infer<typeof Todo>;
+export const displayName = 'Todo';
+```
+
+### Existing file behavior
+
+If the target file already exists, the command asks whether it should overwrite that file. If you answer `no`, that model is skipped and the remaining models continue.
+
+### Typical workflow
+
+```bash
+npx swallowkit create-model todo
+# edit shared/models/todo.ts
+npx swallowkit scaffold shared/models/todo.ts
+```
+
+Use `create-model` to create the initial schema stub, then customize the generated Zod model before running `scaffold`.
 
 ## swallowkit dev
 

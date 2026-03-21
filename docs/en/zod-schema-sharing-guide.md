@@ -197,6 +197,8 @@ const updateProfile = user.pick({
   name: true, 
   email: true 
 });
+```
+
 ### Nested Schemas
 
 Compose complex data structures:

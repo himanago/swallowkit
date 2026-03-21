@@ -199,6 +199,8 @@ const updateProfile = user.pick({
   name: true, 
   email: true 
 });
+```
+
 ### ネストされたスキーマ
 
 複雑なデータ構造を構成：
