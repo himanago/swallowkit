@@ -1,6 +1,8 @@
 import {
+  buildGeneratedProjectDependencies,
   buildCSharpFunctionsProgramSource,
   buildCSharpFunctionsProjectSource,
+  buildSwallowKitConfigSource,
   injectSwallowKitNextConfig,
 } from "../cli/commands/init";
 
@@ -55,5 +57,24 @@ module.exports = nextConfig;
     expect(source).toContain('<Compile Remove="generated\\**\\bin\\**\\*.cs;generated\\**\\obj\\**\\*.cs" />');
     expect(source).toContain('<EmbeddedResource Remove="generated\\**\\bin\\**;generated\\**\\obj\\**" />');
     expect(source).toContain('<None Remove="generated\\**\\bin\\**;generated\\**\\obj\\**" />');
+  });
+
+  it("builds swallowkit.config.js without a local swallowkit package type import", () => {
+    const source = buildSwallowKitConfigSource("typescript");
+
+    expect(source).toContain("language: 'typescript'");
+    expect(source).toContain("baseUrl: process.env.BACKEND_FUNCTIONS_BASE_URL");
+    expect(source).not.toContain("import('swallowkit').SwallowKitConfig");
+  });
+
+  it("does not add swallowkit as a generated project dependency", () => {
+    const dependencies = buildGeneratedProjectDependencies("sample-app");
+
+    expect(dependencies).toEqual({
+      "@azure/cosmos": "^4.0.0",
+      applicationinsights: "^3.3.0",
+      "@sample-app/shared": "*",
+    });
+    expect(dependencies).not.toHaveProperty("swallowkit");
   });
 });

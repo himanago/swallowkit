@@ -424,6 +424,30 @@ export function buildCSharpFunctionsProjectSource(): string {
 `;
 }
 
+export function buildSwallowKitConfigSource(backendLanguage: BackendLanguage): string {
+  return `module.exports = {
+  backend: {
+    language: '${backendLanguage}',
+  },
+  functions: {
+    baseUrl: process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071',
+  },
+  deployment: {
+    resourceGroup: process.env.AZURE_RESOURCE_GROUP || '',
+    swaName: process.env.AZURE_SWA_NAME || '',
+  },
+}
+`;
+}
+
+export function buildGeneratedProjectDependencies(projectName: string): Record<string, string> {
+  return {
+    '@azure/cosmos': '^4.0.0',
+    'applicationinsights': '^3.3.0',
+    [`@${projectName}/shared`]: '*',
+  };
+}
+
 async function addSwallowKitFiles(
   projectDir: string,
   options: InitOptions,
@@ -436,18 +460,14 @@ async function addSwallowKitFiles(
   
   const projectName = options.name;
 
-  // 1. Update package.json to add swallowkit and @azure/cosmos dependencies
+  // 1. Update package.json to add runtime dependencies for generated projects
   const packageJsonPath = path.join(projectDir, 'package.json');
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
   
-  // Add SwallowKit dependencies (Next.js version already upgraded by upgradeNextJs)
   // zod is in the shared workspace package, not here
   packageJson.dependencies = {
     ...packageJson.dependencies,
-    'swallowkit': 'latest',
-    '@azure/cosmos': '^4.0.0',
-    'applicationinsights': '^3.3.0',
-    [`@${projectName}/shared`]: '*',
+    ...buildGeneratedProjectDependencies(projectName),
   };
 
   if (backendLanguage !== "typescript") {
@@ -526,20 +546,7 @@ async function addSwallowKitFiles(
   }
 
   // 3. Create SwallowKit config
-  const swallowkitConfig = `/** @type {import('swallowkit').SwallowKitConfig} */
-module.exports = {
-  backend: {
-    language: '${backendLanguage}',
-  },
-  functions: {
-    baseUrl: process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071',
-  },
-  deployment: {
-    resourceGroup: process.env.AZURE_RESOURCE_GROUP || '',
-    swaName: process.env.AZURE_SWA_NAME || '',
-  },
-}
-`;
+  const swallowkitConfig = buildSwallowKitConfigSource(backendLanguage);
   fs.writeFileSync(path.join(projectDir, 'swallowkit.config.js'), swallowkitConfig);
 
   // 4. Create shared workspace package for Zod models (Single Source of Truth)
