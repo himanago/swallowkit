@@ -130,6 +130,16 @@ npx swallowkit dev
 
 Open http://localhost:3000 to see your application.
 
+If you want the Cosmos DB Emulator to start with deterministic debug data, generate a seed environment and launch `dev` with it:
+
+```bash
+npx swallowkit create-dev-seeds local
+# edit dev-seeds/local/*.json
+npx swallowkit dev --seed-env local
+```
+
+SwallowKit will map each `{schema}.json` file to the matching Cosmos container and replace that container's local emulator data before Azure Functions starts.
+
 <!-- 画像: ホームページのスクリーンショット。scaffold-config.tsに登録されたモデル（Product, Category, Todoなど）がカード形式で表示されている様子 -->
 
 ## Type-Appropriate UI Generation

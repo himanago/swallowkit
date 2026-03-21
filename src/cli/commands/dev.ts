@@ -5,6 +5,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { CosmosClient, PartitionKeyKind } from '@azure/cosmos';
 import { ensureSwallowKitProject, getBackendLanguage } from '../../core/config';
+import { ModelInfo } from '../../core/scaffold/model-parser';
+import { applyDevSeedEnvironment, getContainerNameForModel, loadProjectModels } from './dev-seeds';
 import { BackendLanguage } from '../../types';
 import { detectFromProject, getCommands } from '../../utils/package-manager';
 
@@ -15,6 +17,7 @@ interface DevOptions {
   open?: boolean;
   verbose?: boolean;
   noFunctions?: boolean;
+  seedEnv?: string;
 }
 
 export function buildFunctionsStartArgs(functionsPort: string): string[] {
@@ -319,7 +322,8 @@ export const devCommand = new Command()
   .option('--open', 'Open browser automatically', false)
   .option('--verbose', 'Show verbose logs', false)
   .option('--no-functions', 'Skip Azure Functions startup', false)
-  .action(async (options: DevOptions & { functionsPort?: string; noFunctions?: boolean }) => {
+  .option('--seed-env <environment>', 'Replace Cosmos DB Emulator data from dev-seeds/<environment> before startup')
+  .action(async (options: DevOptions & { functionsPort?: string; noFunctions?: boolean; seedEnv?: string }) => {
     // SwallowKit プロジェクトディレクトリかどうかを検証
     ensureSwallowKitProject("dev");
 
@@ -331,7 +335,14 @@ export const devCommand = new Command()
     await startDevEnvironment(options);
   });
 
-async function initializeCosmosDB(databaseName: string): Promise<void> {
+interface CosmosInitializationResult {
+  endpoint: string;
+  key: string;
+  databaseName: string;
+  models: ModelInfo[];
+}
+
+async function initializeCosmosDB(databaseName: string): Promise<CosmosInitializationResult | null> {
   try {
     // Read local.settings.json from functions directory
     const functionsDir = path.join(process.cwd(), 'functions');
@@ -339,7 +350,7 @@ async function initializeCosmosDB(databaseName: string): Promise<void> {
     
     if (!fs.existsSync(localSettingsPath)) {
       console.log('⚠️  local.settings.json not found. Skipping Cosmos DB initialization.');
-      return;
+      return null;
     }
 
     const localSettings = JSON.parse(fs.readFileSync(localSettingsPath, 'utf-8'));
@@ -348,7 +359,7 @@ async function initializeCosmosDB(databaseName: string): Promise<void> {
     
     if (!connectionString) {
       console.log('⚠️  CosmosDBConnection not found in local.settings.json. Skipping Cosmos DB initialization.');
-      return;
+      return null;
     }
 
     console.log('🗄️  Initializing Cosmos DB...');
@@ -359,7 +370,7 @@ async function initializeCosmosDB(databaseName: string): Promise<void> {
     
     if (!endpointMatch || !keyMatch) {
       console.log('⚠️  Invalid CosmosDB connection string format.');
-      return;
+      return null;
     }
 
     const endpoint = endpointMatch[1];
@@ -373,72 +384,61 @@ async function initializeCosmosDB(databaseName: string): Promise<void> {
     const { database } = await client.databases.createIfNotExists({ id: dbName });
     console.log(`✅ Database "${dbName}" ready`);
 
-    // Read lib/scaffold-config.ts to get list of models
-    const scaffoldConfigPath = path.join(process.cwd(), 'lib', 'scaffold-config.ts');
-    if (fs.existsSync(scaffoldConfigPath)) {
-      const scaffoldConfigContent = fs.readFileSync(scaffoldConfigPath, 'utf-8');
+    const models = await loadProjectModels();
+    for (const model of models) {
+      const containerName = getContainerNameForModel(model);
       
-      // Parse TypeScript file to extract models array
-      const modelsMatch = scaffoldConfigContent.match(/models:\s*\[([\s\S]*?)\]\s*as\s*ScaffoldModel\[\]/);
-      if (modelsMatch) {
-        const modelsArrayContent = modelsMatch[1];
-        // Extract model names from objects like { name: 'Task', path: '/task', label: 'Task' }
-        const modelMatches = modelsArrayContent.matchAll(/\{\s*name:\s*['"](\w+)['"]/g);
-        const models = Array.from(modelMatches, m => m[1]);
-        
-        for (const modelName of models) {
-          const containerName = `${modelName}s`; // Pluralize model name
-          
-          // Try creating container with full partition key definition first
-          let containerCreated = false;
-          
-          try {
-            console.log(`🔧 Creating container "${containerName}" with partition key /id...`);
-            const containerResponse = await database.containers.createIfNotExists({
-              id: containerName,
-              partitionKey: {
-                paths: ['/id'],
-                kind: PartitionKeyKind.Hash,
-                version: 2
-              }
-            });
-            console.log(`✅ Container "${containerName}" ready (status: ${containerResponse.statusCode})`);
-            containerCreated = true;
-          } catch (error: any) {
-            console.log(`⚠️  Failed with full partition key definition: ${error.message}`);
-            console.log(`🔄 Retrying with simple partition key...`);
+      // Try creating container with full partition key definition first
+      let containerCreated = false;
+      
+      try {
+        console.log(`🔧 Creating container "${containerName}" with partition key /id...`);
+        const containerResponse = await database.containers.createIfNotExists({
+          id: containerName,
+          partitionKey: {
+            paths: ['/id'],
+            kind: PartitionKeyKind.Hash,
+            version: 2
           }
-          
-          // If first attempt failed, try with simple partition key definition
-          if (!containerCreated) {
-            try {
-              const containerResponse = await database.containers.createIfNotExists({
-                id: containerName,
-                partitionKey: {
-                  paths: ['/id']
-                }
-              });
-              console.log(`✅ Container "${containerName}" ready (status: ${containerResponse.statusCode})`);
-            } catch (containerError: any) {
-              console.error(`❌ Failed to create container "${containerName}":`, containerError.message);
-              console.error(`Error code: ${containerError.code}`);
-              if (containerError.body) {
-                console.error(`Response body:`, JSON.stringify(containerError.body, null, 2));
-              }
-              // Continue with other containers
+        });
+        console.log(`✅ Container "${containerName}" ready (status: ${containerResponse.statusCode})`);
+        containerCreated = true;
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(`⚠️  Failed with full partition key definition: ${message}`);
+        console.log(`🔄 Retrying with simple partition key...`);
+      }
+      
+      // If first attempt failed, try with simple partition key definition
+      if (!containerCreated) {
+        try {
+          const containerResponse = await database.containers.createIfNotExists({
+            id: containerName,
+            partitionKey: {
+              paths: ['/id']
             }
+          });
+          console.log(`✅ Container "${containerName}" ready (status: ${containerResponse.statusCode})`);
+        } catch (containerError: any) {
+          console.error(`❌ Failed to create container "${containerName}":`, containerError.message);
+          console.error(`Error code: ${containerError.code}`);
+          if (containerError.body) {
+            console.error(`Response body:`, JSON.stringify(containerError.body, null, 2));
           }
+          // Continue with other containers
         }
       }
     }
 
     console.log('✅ Cosmos DB initialization complete\n');
+    return { endpoint, key: keyMatch[1], databaseName: dbName, models };
   } catch (error: any) {
     console.error('⚠️  Cosmos DB initialization failed:', error.message);
     if (error.stack) {
       console.error('Stack trace:', error.stack);
     }
     console.log('💡 Make sure Cosmos DB Emulator is running');
+    return null;
   }
 }
 
@@ -563,7 +563,18 @@ async function startDevEnvironment(options: DevOptions) {
         const appName = packageJson.name || 'App';
         const databaseName = `${appName.charAt(0).toUpperCase() + appName.slice(1)}Database`;
         
-        await initializeCosmosDB(databaseName);
+        const cosmosInitialization = await initializeCosmosDB(databaseName);
+        if (options.seedEnv && cosmosInitialization) {
+          await applyDevSeedEnvironment({
+            client: new CosmosClient({
+              endpoint: cosmosInitialization.endpoint,
+              key: cosmosInitialization.key,
+            }),
+            databaseName: cosmosInitialization.databaseName,
+            environment: options.seedEnv,
+            models: cosmosInitialization.models,
+          });
+        }
 
         console.log('');
         console.log('🚀 Starting Azure Functions...');

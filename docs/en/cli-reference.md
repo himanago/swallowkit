@@ -7,6 +7,7 @@ Comprehensive reference for all SwallowKit CLI commands and options.
 - [swallowkit init](#swallowkit-init)
 - [swallowkit dev](#swallowkit-dev)
 - [swallowkit scaffold](#swallowkit-scaffold)
+- [swallowkit create-dev-seeds](#swallowkit-create-dev-seeds)
 - [swallowkit provision](#swallowkit-provision)
 
 ## swallowkit init
@@ -466,16 +467,52 @@ pnpm dlx swallowkit dev [options]
 | `--host <host>` | | Host name | `localhost` |
 | `--open` | `-o` | Auto-open browser | `false` |
 | `--no-functions` | | Skip Functions | `false` |
+| `--seed-env <environment>` | | Replace matching Cosmos Emulator containers from `dev-seeds/<environment>` before startup | *(disabled)* |
 | `--verbose` | `-v` | Show detailed logs | `false` |
 
 ### Behavior
 
 1. **Cosmos DB Emulator Check**: Verify local emulator is running
-2. **Azure Functions Start**: 
+2. **Cosmos DB Initialization**:
+   - Create database if needed
+   - Create model containers if needed
+   - If `--seed-env <environment>` is provided and `dev-seeds/<environment>/` exists, replace each matching container with the JSON documents from that environment
+3. **Azure Functions Start**: 
    - Check Azure Functions Core Tools
    - Auto-install dependencies
    - Start Functions in `functions/` directory
-3. **Next.js Start**: Launch development server
+4. **Next.js Start**: Launch development server
+
+### Dev Seed Workflow
+
+Use environment-specific seed data when you want reproducible emulator state for debugging:
+
+```bash
+npx swallowkit create-dev-seeds local
+# edit dev-seeds/local/*.json
+npx swallowkit dev --seed-env local
+```
+
+Rules:
+
+- File naming follows your schema files, for example `shared/models/todo.ts` -> `dev-seeds/local/todo.json`
+- Each matching seed file replaces the entire contents of the corresponding Cosmos container
+- Containers without a matching seed file are not modified
+- If `--seed-env` is omitted, or the environment directory does not exist, existing emulator data is preserved
+- Each document must have a non-empty string `id`
+
+Example:
+
+```json
+[
+  {
+    "id": "seed-todo-001",
+    "name": "Seed todo one",
+    "createdAt": "2026-03-21T00:00:00.000Z",
+    "updatedAt": "2026-03-21T00:00:00.000Z"
+  }
+]
+```
 
 ### Examples
 
@@ -491,6 +528,9 @@ npx swallowkit dev --open
 
 # Next.js only (no Functions)
 npx swallowkit dev --no-functions
+
+# Start with a seed environment
+npx swallowkit dev --seed-env local
 
 # Verbose logging
 npx swallowkit dev --verbose
@@ -648,6 +688,60 @@ await api.delete('/api/todos/123');
 ### Details
 
 See [Scaffold Guide](./scaffold-guide.md) for more information.
+
+## swallowkit create-dev-seeds
+
+Generate JSON seed templates for a named local environment from the current schemas in `shared/models/`.
+
+### Usage
+
+```bash
+npx swallowkit create-dev-seeds <environment> [options]
+# or
+pnpm dlx swallowkit create-dev-seeds <environment> [options]
+```
+
+### Arguments
+
+- `environment` (required): Name of the seed environment directory under `dev-seeds/`
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--models-dir <dir>` | Models directory to read schemas from | `shared/models` |
+| `--seeds-dir <dir>` | Base directory for generated seed environments | `dev-seeds` |
+| `--force` | Overwrite existing JSON seed files | `false` |
+
+### What It Generates
+
+For every schema under `shared/models/`, SwallowKit generates a JSON file under `dev-seeds/<environment>/`:
+
+```text
+dev-seeds/
+  local/
+    todo.json
+    category.json
+```
+
+Template values are inferred from schema field types:
+
+- strings -> sample strings
+- numbers -> `0`
+- booleans -> `false`
+- enums -> first enum value
+- `...At`/date fields -> ISO timestamp sample
+- nested schemas -> nested JSON objects
+
+### Typical Workflow
+
+```bash
+npx swallowkit create-model todo
+npx swallowkit scaffold shared/models/todo.ts
+npx swallowkit create-dev-seeds local
+# edit dev-seeds/local/todo.json
+npx swallowkit dev --seed-env local
+```
 
 ## swallowkit provision
 

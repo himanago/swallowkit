@@ -8,7 +8,7 @@ if (process.platform === 'win32') {
 }
 
 import { Command } from "commander";
-import { initCommand, devCommand, scaffoldCommand, createModelCommand } from "./commands";
+import { initCommand, devCommand, devSeedsCommand, scaffoldCommand, createModelCommand } from "./commands";
 import { provisionCommand } from "./commands/provision";
 
 const program = new Command();
@@ -16,7 +16,7 @@ const program = new Command();
 program
   .name("swallowkit")
   .description("Next.js framework optimized for Azure deployment - Automatically splits SSR into individual Azure Functions")
-  .version("1.0.0-beta.5");
+  .version("1.0.0-beta.8");
 
 // Register commands
 program
@@ -41,6 +41,7 @@ program
   });
 
 program.addCommand(devCommand);
+program.addCommand(devSeedsCommand);
 
 program.addCommand(provisionCommand);
 

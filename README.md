@@ -139,6 +139,62 @@ pnpm dlx swallowkit dev
 - Next.js: http://localhost:3000
 - Azure Functions: http://localhost:7071
 
+If you want to replace Cosmos DB Emulator data before startup, generate an environment template and then launch `dev` with that environment:
+
+```bash
+npx swallowkit create-dev-seeds local
+# edit dev-seeds/local/*.json
+npx swallowkit dev --seed-env local
+```
+
+This workflow is designed for local debugging against the Cosmos DB Emulator:
+
+- `create-dev-seeds <environment>` generates one JSON template per schema under `dev-seeds/<environment>/`
+- each file name maps to a schema/container, for example `shared/models/todo.ts` -> `dev-seeds/local/todo.json` -> `Todos`
+- when you start `dev --seed-env <environment>`, SwallowKit replaces the existing data for each matching container with the JSON documents from that environment
+- containers without a matching JSON file are left untouched
+- if `--seed-env` is omitted, or `dev-seeds/<environment>/` does not exist, current emulator data is preserved
+
+Example file layout:
+
+```text
+dev-seeds/
+  local/
+    todo.json
+    category.json
+  staging-debug/
+    todo.json
+```
+
+Each `{schema}.json` file can contain either a single JSON object or an array of JSON objects. Every document must include an `id`:
+
+```json
+[
+  {
+    "id": "seed-todo-001",
+    "name": "Seed todo one",
+    "createdAt": "2026-03-21T00:00:00.000Z",
+    "updatedAt": "2026-03-21T00:00:00.000Z"
+  },
+  {
+    "id": "seed-todo-002",
+    "name": "Seed todo two",
+    "createdAt": "2026-03-21T00:00:01.000Z",
+    "updatedAt": "2026-03-21T00:00:01.000Z"
+  }
+]
+```
+
+Recommended workflow:
+
+```bash
+npx swallowkit create-model todo
+npx swallowkit scaffold shared/models/todo.ts
+npx swallowkit create-dev-seeds local
+# edit dev-seeds/local/todo.json
+npx swallowkit dev --seed-env local
+```
+
 ### 5. Use from Frontend
 
 ```typescript
