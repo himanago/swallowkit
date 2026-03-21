@@ -26,6 +26,9 @@ features:
   - icon: ⚡
     title: CRUD Code Generation
     details: Run <code>swallowkit scaffold</code> to automatically generate Azure Functions, Next.js BFF routes, and React UI components from your Zod schema.
+  - icon: 🌐
+    title: Multi-Language Backend
+    details: Choose your Azure Functions backend in TypeScript, C#, or Python while keeping the same shared schema workflow.
   - icon: 🛡️
     title: Full Type Safety
     details: End-to-end TypeScript from the React client to the Cosmos DB document. Types are always inferred from your schema, never written by hand.
@@ -44,13 +47,6 @@ features:
 ---
 
 <div class="vp-doc" style="max-width: 960px; margin: 0 auto; padding: 48px 24px;">
-
-<div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 24px;">
-  <span style="font-size: 0.9rem; color: var(--vp-c-text-2);">Azure Functions backend:</span>
-  <span style="padding: 4px 10px; border: 1px solid var(--vp-c-divider); border-radius: 999px; font-size: 0.85rem;">TypeScript</span>
-  <span style="padding: 4px 10px; border: 1px solid var(--vp-c-divider); border-radius: 999px; font-size: 0.85rem;">C#</span>
-  <span style="padding: 4px 10px; border: 1px solid var(--vp-c-divider); border-radius: 999px; font-size: 0.85rem;">Python</span>
-</div>
 
 ## Quick Start
 

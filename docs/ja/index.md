@@ -26,6 +26,9 @@ features:
   - icon: ⚡
     title: CRUD コード自動生成
     details: <code>swallowkit scaffold</code> を実行するだけで、Zod スキーマから Azure Functions・Next.js BFF ルート・React UI コンポーネントを自動生成。
+  - icon: 🌐
+    title: バックエンド多言語対応
+    details: Azure Functions バックエンドは TypeScript・C#・Python から選択可能。同じスキーマ共有ワークフローをそのまま保てます。
   - icon: 🛡️
     title: 完全な型安全性
     details: React クライアントから Cosmos DB ドキュメントまで、エンドツーエンドで TypeScript。型は常にスキーマから推論され、手書き不要。
@@ -44,13 +47,6 @@ features:
 ---
 
 <div class="vp-doc" style="max-width: 960px; margin: 0 auto; padding: 48px 24px;">
-
-<div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 24px;">
-  <span style="font-size: 0.9rem; color: var(--vp-c-text-2);">Azure Functions バックエンド:</span>
-  <span style="padding: 4px 10px; border: 1px solid var(--vp-c-divider); border-radius: 999px; font-size: 0.85rem;">TypeScript</span>
-  <span style="padding: 4px 10px; border: 1px solid var(--vp-c-divider); border-radius: 999px; font-size: 0.85rem;">C#</span>
-  <span style="padding: 4px 10px; border: 1px solid var(--vp-c-divider); border-radius: 999px; font-size: 0.85rem;">Python</span>
-</div>
 
 ## クイックスタート
 
