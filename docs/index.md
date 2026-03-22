@@ -18,4 +18,7 @@ hero:
     - theme: alt
       text: View on GitHub
       link: https://github.com/himanago/swallowkit
+    - theme: alt
+      text: VS Code Extension
+      link: https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode
 ---

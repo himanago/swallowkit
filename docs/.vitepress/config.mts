@@ -59,6 +59,10 @@ export default defineConfig({
             text: 'npm',
             link: 'https://www.npmjs.com/package/swallowkit',
           },
+          {
+            text: 'VS Code Extension',
+            link: 'https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode',
+          },
         ],
         sidebar: {
           '/en/': [
@@ -98,6 +102,10 @@ export default defineConfig({
           {
             text: 'npm',
             link: 'https://www.npmjs.com/package/swallowkit',
+          },
+          {
+            text: 'VS Code 拡張機能',
+            link: 'https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode',
           },
         ],
         sidebar: {

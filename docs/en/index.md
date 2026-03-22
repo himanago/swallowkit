@@ -44,6 +44,9 @@ features:
   - icon: 🤖
     title: AI-Friendly
     details: Auto-generated instruction files (<code>AGENTS.md</code>, <code>CLAUDE.md</code>, <code>.github/copilot-instructions.md</code>) and layer-specific rules help GitHub Copilot, Claude Code, and OpenAI Codex follow project conventions.
+  - icon: 🧩
+    title: VS Code Extension
+    details: '<a href="https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode">Install the extension</a> for GUI wizards, right-click scaffolding, dev server status bar, and TypeScript snippets — no terminal required.'
 ---
 
 <div class="vp-doc" style="max-width: 960px; margin: 0 auto; padding: 48px 24px;">

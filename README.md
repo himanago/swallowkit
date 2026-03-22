@@ -2,6 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/swallowkit.svg)](https://www.npmjs.com/package/swallowkit)
 [![npm downloads](https://img.shields.io/npm/dm/swallowkit.svg)](https://www.npmjs.com/package/swallowkit)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/himanago.swallowkit-vscode?label=VS%20Code%20Extension)](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)
 [![license](https://img.shields.io/npm/l/swallowkit.svg)](./LICENSE)
 
 English | [日本語](./README.ja.md)
@@ -29,6 +30,7 @@ Featuring Scaffold functionality to automatically generate CRUD operations from 
 - **☁️ Azure Optimized** - Minimal-cost architecture with Static Web Apps + Functions + Cosmos DB
 - **🚀 Easy Deployment** - Auto-generated Bicep IaC + CI/CD workflows
 - **🤖 AI-Friendly** - Auto-generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) and layer-specific rules help GitHub Copilot, Claude Code, and OpenAI Codex follow project conventions
+- **🧩 [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)** - GUI wizard for init/scaffold/dev, right-click model scaffolding, dev server status bar, and TypeScript snippets
 
 ## 📚 Documentation
 
@@ -301,6 +303,7 @@ MIT
 
 ## 🔗 Related Links
 
+- [SwallowKit VS Code Extension](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)
 - [Azure Static Web Apps](https://learn.microsoft.com/en-us/azure/static-web-apps/)
 - [Azure Functions](https://learn.microsoft.com/en-us/azure/azure-functions/)
 - [Azure Cosmos DB](https://learn.microsoft.com/en-us/azure/cosmos-db/)
