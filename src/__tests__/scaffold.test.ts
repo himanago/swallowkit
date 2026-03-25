@@ -2,12 +2,12 @@ import * as path from "path";
 import { getCSharpSchemaArtifactPruneTargets, getOpenApiGeneratorArgs } from "../cli/commands/scaffold";
 
 describe("getOpenApiGeneratorArgs", () => {
-  it("keeps supporting files for C# model generation", () => {
+  it("omits supportingFiles for C# model generation to avoid Polly version conflicts", () => {
     const args = getOpenApiGeneratorArgs("spec.json", "out", "csharp");
     const globalPropertyIndex = args.indexOf("--global-property");
 
     expect(globalPropertyIndex).toBeGreaterThanOrEqual(0);
-    expect(args[globalPropertyIndex + 1]).toBe("models,supportingFiles,apis=false,modelDocs=false,modelTests=false");
+    expect(args[globalPropertyIndex + 1]).toBe("models,apis=false,modelDocs=false,modelTests=false");
   });
 
   it("continues omitting supporting files for Python model generation", () => {

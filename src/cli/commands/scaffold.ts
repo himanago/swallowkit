@@ -5,7 +5,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { getBackendLanguage, ensureSwallowKitProject } from "../../core/config";
 import { ModelInfo, parseModelFile, toKebabCase, toPascalCase } from "../../core/scaffold/model-parser";
 import {
@@ -328,11 +328,44 @@ async function generateLanguageSchemaArtifacts(
   console.log(`✅ Generated ${backendLanguage} schema assets: ${outputDir}`);
 }
 
+/**
+ * OpenAPI Generator の実行前に Java バージョンを確認する。
+ * Java 11 未満の場合は明確なエラーメッセージを表示して処理を中断する。
+ */
+function checkJavaVersion(): void {
+  try {
+    const result = spawnSync("java", ["-version"], { encoding: "utf8" });
+    // java -version は stderr に出力する
+    const versionOutput = (result.stderr || "") + (result.stdout || "");
+    const versionMatch = versionOutput.match(/version "(\d+)(?:\.(\d+))?/);
+    if (!versionMatch) return;
+
+    const major = parseInt(versionMatch[1]);
+    // Java 8 以前は "1.8" 形式、Java 9 以降は "17" 形式
+    const effectiveMajor = major === 1 ? parseInt(versionMatch[2] ?? "0") : major;
+
+    if (effectiveMajor < 11) {
+      const versionStr = versionOutput.match(/version "([^"]+)"/)?.[1] ?? "unknown";
+      console.error(`\n❌ OpenAPI Generator requires Java 11 or later.`);
+      console.error(`   Detected: Java ${versionStr}`);
+      if (process.env.JAVA_HOME) {
+        console.error(`   Current JAVA_HOME: ${process.env.JAVA_HOME}`);
+      }
+      console.error(`   Please set JAVA_HOME to a Java 11+ installation and retry.`);
+      console.error(`   Example (Windows): $env:JAVA_HOME = "C:\\path\\to\\jdk-17"`);
+      process.exit(1);
+    }
+  } catch {
+    // java コマンドが見つからない場合は OpenAPI Generator 自身がエラーを出す
+  }
+}
+
 async function runOpenApiGenerator(
   specPath: string,
   outputDir: string,
   backendLanguage: Exclude<BackendLanguage, "typescript">
 ): Promise<void> {
+  checkJavaVersion();
   const pm = detectFromProject();
   const command = pm === "pnpm" ? "pnpm" : "npx";
   const args = pm === "pnpm"
@@ -365,7 +398,7 @@ export function getOpenApiGeneratorArgs(
   backendLanguage: Exclude<BackendLanguage, "typescript">
 ): string[] {
   const globalProperty = backendLanguage === "csharp"
-    ? "models,supportingFiles,apis=false,modelDocs=false,modelTests=false"
+    ? "models,apis=false,modelDocs=false,modelTests=false"
     : "models,apis=false,supportingFiles=false,modelDocs=false,modelTests=false";
 
   const baseArgs = [

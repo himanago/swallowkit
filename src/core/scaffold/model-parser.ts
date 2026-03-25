@@ -60,11 +60,15 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
   const modelName = toPascalCase(fileName);
   
   // スキーマ変数名を抽出
+  // コメント内のコードパターンを誤認識しないよう、先にコメントを除去してから正規表現を適用する
   // パターン1: export const todoSchema = z.object({ ... })  (camelCase + Schema接尾辞)
   // パターン2: export const Todo = z.object({ ... })         (Zod公式パターン)
-  let schemaMatch = content.match(/export\s+const\s+(\w+Schema)\s*=/);
+  const contentWithoutComments = content
+    .replace(/\/\*[\s\S]*?\*\//g, '')  // ブロックコメントを除去
+    .replace(/\/\/.*/g, '');           // 行コメントを除去
+  let schemaMatch = contentWithoutComments.match(/export\s+const\s+(\w+Schema)\s*=/);
   if (!schemaMatch) {
-    schemaMatch = content.match(/export\s+const\s+(\w+)\s*=\s*z\.object\s*\(/);
+    schemaMatch = contentWithoutComments.match(/export\s+const\s+(\w+)\s*=\s*z\.object\s*\(/);
   }
   if (!schemaMatch) {
     throw new Error(`Could not find exported schema in ${modelPath}. Expected patterns:\n  - export const xxxSchema = z.object({ ... })\n  - export const Xxx = z.object({ ... })`);
@@ -292,6 +296,59 @@ function mergeNestedSchemaInfo(fields: FieldInfo[], nestedRefs: NestedSchemaRef[
 }
 
 /**
+ * ローカル依存ファイルを再帰的にインライン化する（動的インポート用一時スクリプト生成用）。
+ * seen によって循環依存を防ぐ。
+ * importedNames が指定された場合はその名前の const だけを残し、他を除去する。
+ */
+function inlineLocalDeps(
+  filePath: string,
+  importedNames: Set<string> | null,
+  seen: Set<string>
+): string {
+  const resolvedPath = path.resolve(filePath);
+  if (seen.has(resolvedPath)) return '';
+  seen.add(resolvedPath);
+
+  if (!fs.existsSync(resolvedPath)) return '';
+
+  let content = fs.readFileSync(resolvedPath, 'utf8');
+  const fileDir = path.dirname(resolvedPath);
+  const transitiveParts: string[] = [];
+
+  // ローカル（相対）インポートを再帰的にインライン化
+  content = content.replace(
+    /import\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]\s*;?/g,
+    (_match: string, _imports: string, importPath: string) => {
+      let depPath = path.resolve(fileDir, importPath);
+      if (!depPath.endsWith('.ts') && !depPath.endsWith('.js')) depPath += '.ts';
+      const inlined = inlineLocalDeps(depPath, null, seen);
+      if (inlined) transitiveParts.push(inlined);
+      return '';
+    }
+  );
+
+  // 外部パッケージのインポートを除去
+  content = content.replace(/import\s+.*?\s+from\s+['"](?!\.).*?['"];?\s*/g, '');
+  // export キーワードを除去
+  content = content.replace(/export\s+(const|type|interface|class|function)\s+/g, '$1 ');
+  // 型宣言を除去（ランタイムでは不要）
+  content = content.replace(/^type\s+\w+\s*=\s*[^;]+;/gm, '');
+  content = content.replace(/^interface\s+\w+\s*\{[\s\S]*?\}/gm, '');
+  // コメントを除去
+  content = content.replace(/\/\*[\s\S]*?\*\//g, '');
+  content = content.replace(/\/\/.*/g, '');
+
+  // 直接インポートされていない const 宣言を除去（displayName 等の重複を防ぐ）
+  if (importedNames) {
+    content = content.replace(/^const\s+(\w+)\s*=\s*[^;]+;/gm, (constMatch: string, varName: string) => {
+      return importedNames.has(varName) ? constMatch : '';
+    });
+  }
+
+  return [...transitiveParts, content.trim()].filter(Boolean).join('\n\n');
+}
+
+/**
  * Zodスキーマから動的にフィールド情報を抽出
  */
 async function extractFieldsFromSchema(modelPath: string, schemaName: string): Promise<FieldInfo[]> {
@@ -300,52 +357,33 @@ async function extractFieldsFromSchema(modelPath: string, schemaName: string): P
   try {
     // child_processでtsxを実行
     const { execSync } = require('child_process');
-    const { tmpdir } = require('os');
-    const { join } = require('path');
     const { writeFileSync, unlinkSync, readFileSync } = require('fs');
     
     // モデルファイルの内容を読み込む
     let modelContent = readFileSync(modelPath, 'utf8');
     const modelDir = path.dirname(path.resolve(modelPath));
     
-    // ローカル相対インポートを絶対パスの .mjs import 文に変換して保持
+    // ローカル相対インポートを再帰的にインライン化して保持
     // パターン: import { categorySchema } from './category'
+    const seenPaths = new Set<string>([path.resolve(modelPath)]);
     const localImports: string[] = [];
     modelContent = modelContent.replace(
       /import\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]\s*;?/g,
       (_match: string, imports: string, importPath: string) => {
         // インポートされた変数名を取得
-        const importedNames = imports.split(',').map(s => {
-          const trimmed = s.trim();
-          // 'as' エイリアスに対応
-          return trimmed.split(/\s+as\s+/).pop()!.trim();
-        }).filter(s => s.length > 0);
-        
+        const importedNames = new Set(
+          imports.split(',').map(s => s.trim().split(/\s+as\s+/).pop()!.trim()).filter(s => s.length > 0)
+        );
+
         // 相対パスを絶対パスに解決
         let resolvedPath = path.resolve(modelDir, importPath);
         if (!resolvedPath.endsWith('.ts') && !resolvedPath.endsWith('.js')) {
           resolvedPath += '.ts';
         }
-        if (fs.existsSync(resolvedPath)) {
-          // インポート先の内容を読み込み、インライン化する
-          let refContent = readFileSync(resolvedPath, 'utf8');
-          // インポート先の import 文を除去
-          refContent = refContent.replace(/import\s+.*?\s+from\s+['"](?!\.).*?['"];?\s*/g, '');
-          refContent = refContent.replace(/import\s+.*?\s+from\s+['"]\..*?['"];?\s*/g, '');
-          refContent = refContent.replace(/export\s+(const|type|interface|class|function)\s+/g, '$1 ');
-          refContent = refContent.replace(/^type\s+\w+\s*=\s*[^;]+;/gm, '');
-          refContent = refContent.replace(/^interface\s+\w+\s*\{[\s\S]*?\}/gm, '');
-          refContent = refContent.replace(/\/\*[\s\S]*?\*\//g, '');
-          refContent = refContent.replace(/\/\/.*/g, '');
-          
-          // インポートされていない const 宣言を除去（displayName 等の重複を防ぐ）
-          const importedNameSet = new Set(importedNames);
-          refContent = refContent.replace(/^const\s+(\w+)\s*=\s*[^;]+;/gm, (constMatch: string, varName: string) => {
-            return importedNameSet.has(varName) ? constMatch : '';
-          });
-          
-          localImports.push(refContent.trim());
-        }
+
+        // 推移的なローカル依存を含めて再帰的にインライン化
+        const inlined = inlineLocalDeps(resolvedPath, importedNames, seenPaths);
+        if (inlined) localImports.push(inlined);
         return ''; // 元のインポート文は除去
       }
     );
