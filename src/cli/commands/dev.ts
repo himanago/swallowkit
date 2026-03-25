@@ -82,7 +82,7 @@ async function checkCoreTools(): Promise<boolean> {
 async function checkCommand(command: string, args: string[] = ['--version']): Promise<boolean> {
   return new Promise((resolve) => {
     const checkProcess = spawn(command, args, {
-      shell: false,
+      shell: true,
       stdio: 'pipe',
     });
 
