@@ -468,6 +468,7 @@ pnpm dlx swallowkit create-model <names...> [options]
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--models-dir <dir>` | Output directory for generated model files | `shared/models` |
+| `--connector <name>` | Create a connector-aware model linked to the named connector | *(none)* |
 
 ### What it does
 
@@ -500,6 +501,22 @@ export type Todo = z.infer<typeof Todo>;
 export const displayName = 'Todo';
 ```
 
+### Connector model
+
+When `--connector` is specified, the generated template includes a `connectorConfig` export with connector-specific metadata:
+
+- **RDB connectors**: includes `table` and `idColumn` fields
+- **API connectors**: includes `endpoints` mapping
+- Both include an `operations` array (defaults to all operations for API, read-only for RDB)
+- The Zod schema template is adapted (no `createdAt`/`updatedAt` auto-management by backend)
+
+Example:
+
+```bash
+npx swallowkit create-model user --connector mysql
+npx swallowkit create-model backlog-issue --connector backlog
+```
+
 ### Existing file behavior
 
 If the target file already exists, the command asks whether it should overwrite that file. If you answer `no`, that model is skipped and the remaining models continue.
@@ -513,6 +530,54 @@ npx swallowkit scaffold shared/models/todo.ts
 ```
 
 Use `create-model` to create the initial schema stub, then customize the generated Zod model before running `scaffold`.
+
+## swallowkit add-connector
+
+Register an external data source connector in `swallowkit.config.js`.
+
+### Usage
+
+```bash
+npx swallowkit add-connector <name> --type=<type> [options]
+# or
+pnpm dlx swallowkit add-connector <name> --type=<type> [options]
+```
+
+### Arguments
+
+- `name` (required): Connector name (used as key in config)
+
+### Options
+
+| Option | Description | Required |
+|--------|-------------|----------|
+| `--type <type>` | Connector type: `rdb` or `api` | Yes |
+| `--provider <provider>` | RDB provider: `mysql`, `postgres`, `sqlserver` | Only for `--type rdb` |
+| `--connection-env <var>` | Environment variable for connection string | Only for `--type rdb` |
+| `--base-url-env <var>` | Environment variable for API base URL | Only for `--type api` |
+| `--auth-type <type>` | Auth type: `apiKey`, `bearer`, `oauth2` | Only for `--type api` |
+| `--auth-env <var>` | Environment variable for auth credential | Only for `--type api` |
+| `--auth-placement <placement>` | Where to place auth: `query` or `header` | Only for `--type api` with `apiKey` |
+| `--auth-param <name>` | Parameter name for API key | Only for `--type api` with `apiKey` |
+
+### What it does
+
+- Reads existing `swallowkit.config.js`
+- Adds the connector definition to the `connectors` section
+- Creates the `connectors` section if it doesn't exist
+
+### Examples
+
+```bash
+# Add MySQL RDB connector
+npx swallowkit add-connector mysql --type rdb --provider mysql --connection-env MYSQL_CONNECTION_STRING
+
+# Add REST API connector with API key auth
+npx swallowkit add-connector backlog --type api --base-url-env BACKLOG_API_BASE_URL --auth-type apiKey --auth-env BACKLOG_API_KEY --auth-placement query --auth-param apiKey
+
+# Add REST API connector with bearer token
+npx swallowkit add-connector github --type api --base-url-env GITHUB_API_BASE_URL --auth-type bearer --auth-env GITHUB_TOKEN
+```
 
 ## swallowkit dev
 
@@ -536,6 +601,7 @@ pnpm dlx swallowkit dev [options]
 | `--open` | `-o` | Auto-open browser | `false` |
 | `--no-functions` | | Skip Functions | `false` |
 | `--seed-env <environment>` | | Replace matching Cosmos Emulator containers from `dev-seeds/<environment>` before startup | *(disabled)* |
+| `--mock-connectors` | | Start a mock proxy server for connector models | `false` |
 | `--verbose` | `-v` | Show detailed logs | `false` |
 
 ### Behavior
@@ -545,11 +611,17 @@ pnpm dlx swallowkit dev [options]
    - Create database if needed
    - Create model containers if needed
    - If `--seed-env <environment>` is provided and `dev-seeds/<environment>/` exists, replace each matching container with the JSON documents from that environment
-3. **Azure Functions Start**: 
+3. **Connector Mock Server** (when `--mock-connectors` is enabled):
+   - Starts a proxy server on Functions port + 1 (e.g., 7072)
+   - Routes matching connector models → in-memory CRUD with Zod-generated mock data
+   - All other routes → proxied to real Azure Functions
+   - Loads dev-seeds JSON as initial data if available
+   - BFF automatically routes through the mock proxy (no config change needed)
+4. **Azure Functions Start**:
    - Check Azure Functions Core Tools
    - Auto-install dependencies
    - Start Functions in `functions/` directory
-4. **Next.js Start**: Launch development server
+5. **Next.js Start**: Launch development server
 
 ### Dev Seed Workflow
 
@@ -602,6 +674,12 @@ npx swallowkit dev --seed-env local
 
 # Verbose logging
 npx swallowkit dev --verbose
+
+# Start with connector mock server
+npx swallowkit dev --mock-connectors
+
+# Combine mock connectors with seed data
+npx swallowkit dev --mock-connectors --seed-env local
 ```
 
 ### Troubleshooting
@@ -656,6 +734,16 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 ### Options
 
 Currently no options.
+
+### Connector model behavior
+
+When a model file contains a `connectorConfig` export, scaffold detects it as a connector model:
+
+- **RDB connector models**: generates SQL-based CRUD handlers in `functions/Connectors/` (C#) or equivalent
+- **API connector models**: generates HTTP client handlers
+- BFF routes and React UI are generated identically to standard models
+- Cosmos DB Bicep generation is skipped for connector models
+- Read-only models (operations limited to `getAll`/`getById`) only get GET endpoints
 
 ### Generated Code
 

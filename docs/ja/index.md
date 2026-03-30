@@ -44,6 +44,9 @@ features:
   - icon: 🤖
     title: AI フレンドリー
     details: 自動生成される指示ファイル（<code>AGENTS.md</code>、<code>CLAUDE.md</code>、<code>.github/copilot-instructions.md</code>）とレイヤー別ルールにより、GitHub Copilot・Claude Code・OpenAI Codex がプロジェクトのアーキテクチャと規約に従ってコードを生成・修正。
+  - icon: 🔌
+    title: 外部データコネクタ
+    details: MySQL・PostgreSQL・REST API などの外部データソースを Cosmos DB と並行して統合。同じ Zod 駆動の scaffold ワークフローと完全な型安全性を維持。
   - icon: 🧩
     title: VS Code 拡張機能
     details: '<a href="https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode">拡張機能をインストール</a>して、GUI ウィザード・右クリックスキャフォールド・開発サーバーステータスバー・TypeScript スニペットを利用。ターミナル不要で操作可能。'

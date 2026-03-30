@@ -30,6 +30,7 @@ Featuring Scaffold functionality to automatically generate CRUD operations from 
 - **☁️ Azure Optimized** - Minimal-cost architecture with Static Web Apps + Functions + Cosmos DB
 - **🚀 Easy Deployment** - Auto-generated Bicep IaC + CI/CD workflows
 - **🤖 AI-Friendly** - Auto-generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) and layer-specific rules help GitHub Copilot, Claude Code, and OpenAI Codex follow project conventions
+- **🔌 External Data Connectors** - Integrate MySQL, PostgreSQL, REST APIs, and other external data sources alongside Cosmos DB — same Zod-driven scaffold workflow with full type safety
 - **🧩 [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)** - GUI wizard for init/scaffold/dev, right-click model scaffolding, dev server status bar, and TypeScript snippets
 
 ## 📚 Documentation
@@ -38,6 +39,7 @@ Visit the **[SwallowKit Documentation](https://himanago.github.io/swallowkit/)**
 
 - **[CLI Reference](https://himanago.github.io/swallowkit/en/cli-reference)** - All commands in detail
 - **[Scaffold Guide](https://himanago.github.io/swallowkit/en/scaffold-guide)** - CRUD code generation
+- **[Connector Guide](https://himanago.github.io/swallowkit/en/connector-guide)** - External data source integration
 - **[Zod Schema Sharing Guide](https://himanago.github.io/swallowkit/en/zod-schema-sharing-guide)** - Schema design
 - **[Deployment Guide](https://himanago.github.io/swallowkit/en/deployment-guide)** - Deploy to Azure
 
@@ -219,6 +221,27 @@ const updated = await api.put<Todo>('/api/todos/123', { completed: true });
 await api.delete('/api/todos/123');
 ```
 
+### 6. Connect External Data Sources (Optional)
+
+SwallowKit supports **connectors** for integrating external RDB databases and REST APIs alongside Cosmos DB, using the same Zod-driven workflow:
+
+```bash
+# Register a connector
+npx swallowkit add-connector mysql --type rdb --provider mysql --connection-env MYSQL_CONNECTION_STRING
+
+# Create a connector-aware model
+npx swallowkit create-model user --connector mysql
+# edit shared/models/user.ts (customize schema + connectorConfig)
+
+# Scaffold generates connector-specific Functions code
+npx swallowkit scaffold shared/models/user.ts
+
+# Develop locally with mock data (no real MySQL needed)
+npx swallowkit dev --mock-connectors
+```
+
+The frontend and BFF layer are completely transparent to data source differences — `callFunction()` works identically for Cosmos DB and connector models. See the **[Connector Guide](https://himanago.github.io/swallowkit/en/connector-guide)** for details.
+
 ## 🏗️ Architecture
 
 ```
@@ -241,21 +264,22 @@ await api.delete('/api/todos/123');
 │  - HTTP Triggers (CRUD)                                      │
 │  - Zod Validation (Re-check)                                 │
 │  - Business Logic                                            │
-│  - Cosmos DB Bindings                                        │
-└──────────────────────────┬───────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Azure Cosmos DB                                             │
-│  - NoSQL Database                                            │
-│  - Zod Schema Validation                                     │
-└─────────────────────────────────────────────────────────────┘
+│  - Data Source Bindings                                      │
+└──────────┬───────────────┼───────────────┬──────────────────┘
+           │               │               │
+           ▼               ▼               ▼
+┌────────────────┐ ┌──────────────┐ ┌──────────────────┐
+│  Azure Cosmos  │ │  External    │ │  External SaaS   │
+│  DB (Default)  │ │  RDB (MySQL  │ │  APIs (REST)     │
+│                │ │  PostgreSQL) │ │                  │
+└────────────────┘ └──────────────┘ └──────────────────┘
 ```
 
 **Key Patterns:**
 - **BFF (Backend For Frontend)**: Next.js API Routes proxy to Azure Functions
 - **Shared Schemas**: Zod schemas stay in `shared/models/` as the source of truth
 - **OpenAPI Bridge for C#/Python**: Non-TypeScript Functions consume generated assets under `functions/generated/`
+- **External Connectors**: MySQL, PostgreSQL, REST APIs — scaffold-generated Functions with the same BFF pattern
 - **Contract Safety**: BFF and backend stay aligned through shared Zod or generated backend models
 - **Managed Identity**: Secure service connections (no connection strings)
 

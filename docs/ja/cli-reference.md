@@ -584,6 +584,7 @@ pnpm dlx swallowkit create-model <names...> [options]
 | オプション | 説明 | デフォルト |
 |----------|------|----------|
 | `--models-dir <dir>` | 生成先のモデルディレクトリ | `shared/models` |
+| `--connector <name>` | 指定した connector に紐づく connector 対応モデルを生成 | *（なし）* |
 
 ### このコマンドが行うこと
 
@@ -616,6 +617,22 @@ export type Todo = z.infer<typeof Todo>;
 export const displayName = 'Todo';
 ```
 
+### Connector モデル
+
+`--connector` を指定すると、生成される雛形に connector 固有のメタデータを含む `connectorConfig` エクスポートが追加されます：
+
+- **RDB connector**: `table` と `idColumn` フィールドを含む
+- **API connector**: `endpoints` マッピングを含む
+- いずれも `operations` 配列を含む（API はすべての操作、RDB は読み取り専用がデフォルト）
+- Zod スキーマの雛形が変更される（バックエンドによる `createdAt`/`updatedAt` の自動管理なし）
+
+例:
+
+```bash
+npx swallowkit create-model user --connector mysql
+npx swallowkit create-model backlog-issue --connector backlog
+```
+
 ### 既存ファイルがある場合
 
 対象ファイルがすでに存在する場合は、上書きするかどうかを確認します。`no` を選ぶとそのモデルだけスキップされ、他のモデルの処理は続行されます。
@@ -629,6 +646,54 @@ npx swallowkit scaffold shared/models/todo.ts
 ```
 
 まず `create-model` でスキーマのひな形を作り、その後で業務要件に合わせて Zod モデルを編集してから `scaffold` を実行します。
+
+## swallowkit add-connector
+
+外部データソースの connector を `swallowkit.config.js` に登録します。
+
+### 使用法
+
+```bash
+npx swallowkit add-connector <name> --type=<type> [options]
+# or
+pnpm dlx swallowkit add-connector <name> --type=<type> [options]
+```
+
+### 引数
+
+- `name` (必須): connector 名（config のキーとして使用）
+
+### オプション
+
+| オプション | 説明 | 必須 |
+|----------|------|------|
+| `--type <type>` | connector タイプ: `rdb` または `api` | はい |
+| `--provider <provider>` | RDB プロバイダー: `mysql`, `postgres`, `sqlserver` | `--type rdb` の場合のみ |
+| `--connection-env <var>` | 接続文字列の環境変数名 | `--type rdb` の場合のみ |
+| `--base-url-env <var>` | API ベース URL の環境変数名 | `--type api` の場合のみ |
+| `--auth-type <type>` | 認証タイプ: `apiKey`, `bearer`, `oauth2` | `--type api` の場合のみ |
+| `--auth-env <var>` | 認証情報の環境変数名 | `--type api` の場合のみ |
+| `--auth-placement <placement>` | 認証の配置先: `query` または `header` | `--type api` で `apiKey` の場合のみ |
+| `--auth-param <name>` | API キーのパラメーター名 | `--type api` で `apiKey` の場合のみ |
+
+### このコマンドが行うこと
+
+- 既存の `swallowkit.config.js` を読み込む
+- `connectors` セクションに connector 定義を追加
+- `connectors` セクションが存在しない場合は新規作成
+
+### 例
+
+```bash
+# MySQL RDB connector を追加
+npx swallowkit add-connector mysql --type rdb --provider mysql --connection-env MYSQL_CONNECTION_STRING
+
+# API キー認証の REST API connector を追加
+npx swallowkit add-connector backlog --type api --base-url-env BACKLOG_API_BASE_URL --auth-type apiKey --auth-env BACKLOG_API_KEY --auth-placement query --auth-param apiKey
+
+# Bearer トークン認証の REST API connector を追加
+npx swallowkit add-connector github --type api --base-url-env GITHUB_API_BASE_URL --auth-type bearer --auth-env GITHUB_TOKEN
+```
 
 ## swallowkit dev
 
@@ -652,6 +717,7 @@ pnpm dlx swallowkit dev [options]
 | `--open` | `-o` | ブラウザを自動的に開く | `false` |
 | `--no-functions` | | Functions をスキップ | `false` |
 | `--seed-env <environment>` | | 起動前に `dev-seeds/<environment>` から対応する Cosmos Emulator コンテナを置換 | *（無効）* |
+| `--mock-connectors` | | connector モデル用のモックプロキシサーバーを起動 | `false` |
 | `--verbose` | `-v` | 詳細ログを表示 | `false` |
 
 ### 動作
@@ -661,11 +727,17 @@ pnpm dlx swallowkit dev [options]
    - 必要ならデータベースを作成
    - 必要ならモデル用コンテナを作成
    - `--seed-env <environment>` が指定され、`dev-seeds/<environment>/` が存在する場合は、対応する JSON で各コンテナを置換
-3. **Azure Functions 起動**: 
+3. **Connector Mock Server**（`--mock-connectors` 有効時）:
+   - Functions ポート + 1（例: 7072）でプロキシサーバーを起動
+   - connector モデルに一致するルート → Zod 生成のモックデータによるインメモリ CRUD
+   - その他のルート → 実際の Azure Functions にプロキシ
+   - dev-seeds JSON が利用可能な場合は初期データとして読み込み
+   - BFF は設定変更なしで自動的にモックプロキシを経由
+4. **Azure Functions 起動**:
    - Azure Functions Core Tools の確認
    - 依存関係の自動インストール
    - `functions/` ディレクトリで Functions を起動
-4. **Next.js 起動**: 開発サーバーを起動
+5. **Next.js 起動**: 開発サーバーを起動
 
 ### Dev Seed ワークフロー
 
@@ -718,6 +790,12 @@ npx swallowkit dev --seed-env local
 
 # 詳細ログ付き
 npx swallowkit dev --verbose
+
+# connector モックサーバー付きで起動
+npx swallowkit dev --mock-connectors
+
+# モック connector と seed データを併用
+npx swallowkit dev --mock-connectors --seed-env local
 ```
 
 ### トラブルシューティング
@@ -772,6 +850,16 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 ### オプション
 
 現在、オプションはありません。
+
+### Connector モデルの動作
+
+モデルファイルに `connectorConfig` エクスポートが含まれている場合、scaffold は connector モデルとして検出します：
+
+- **RDB connector モデル**: `functions/Connectors/`（C#）または同等のディレクトリに SQL ベースの CRUD ハンドラーを生成
+- **API connector モデル**: HTTP クライアントハンドラーを生成
+- BFF ルートと React UI は通常のモデルと同一に生成
+- connector モデルでは Cosmos DB Bicep 生成をスキップ
+- 読み取り専用モデル（operations が `getAll`/`getById` のみ）は GET エンドポイントのみ生成
 
 ### 生成されるコード
 

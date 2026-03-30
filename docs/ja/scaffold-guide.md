@@ -883,8 +883,41 @@ app.http('updateTodo', { methods: ['PUT'], route: 'todo/{id}', handler: crud.upd
 app.http('deleteTodo', { methods: ['DELETE'], route: 'todo/{id}', handler: crud.delete });
 ```
 
+## コネクタモデル
+
+Cosmos DB モデルに加えて、SwallowKit はリレーショナルデータベース（MySQL、PostgreSQL、SQL Server）や REST API などの外部データソースと統合する**コネクタモデル**をサポートします。
+
+コネクタモデルも同じ `scaffold` コマンドを使い、BFF ルートや UI コンポーネントも同様に生成されます。違いは生成される Azure Functions コードとモデルのメタデータにあります。
+
+### 仕組み
+
+1. `add-connector` で `swallowkit.config.js` にコネクタを登録
+2. `create-model --connector <name>` でモデルを作成
+3. モデルがデータソースマッピングを記述する `connectorConfig` オブジェクトをエクスポート
+4. `scaffold` がコネクタメタデータを検出し、適切な Functions コードを生成
+
+### コネクタモデルで変わること
+
+| 観点 | 標準モデル (Cosmos DB) | コネクタモデル |
+|------|----------------------|--------------|
+| Functions コード | Cosmos DB バインディング | SQL クエリ (RDB) または HTTP クライアント (API) |
+| Functions 配置先 | `functions/src/functions/` (TS) | `functions/Connectors/` (C#) または同ディレクトリ (TS/Python) |
+| BFF ルート | 標準 `callFunction()` | 同一 — 透過的 |
+| UI コンポーネント | フル CRUD | 同一（`operations` を尊重） |
+| Cosmos Bicep | 生成される | スキップ |
+| 操作 | 全 CRUD | 設定可能（例: 読み取り専用） |
+
+### 読み取り専用モデル
+
+コネクタモデルの `operations` が `getAll` と `getById` のみを含む場合、scaffold は GET エンドポイントだけを生成します。POST・PUT・DELETE ハンドラーは省略されます。
+
+### ローカル開発
+
+`swallowkit dev --mock-connectors` を使うと、コネクタモデル向けに Zod 生成のモックデータを提供するプロキシサーバーが起動します。開発時に実際のデータベースや API 接続は不要です。詳しくは [Connector ガイド](./connector-guide) を参照してください。
+
 ## 次のステップ
 
+- [Connector ガイド](./connector-guide) - 同じ Zod ワークフローで外部データソースを統合
 - [Zod スキーマ共有](./zod-schema-sharing-guide) - 型安全なスキーマ共有の概念を理解
 - [デプロイガイド](./deployment-guide) - アプリケーションを Azure にデプロイ
 - [CLI リファレンス](./cli-reference) - 利用可能なすべてのコマンドを学ぶ

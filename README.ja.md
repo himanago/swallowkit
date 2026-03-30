@@ -28,6 +28,7 @@ Zod スキーマから自動的に CRUD 操作を生成する Scaffold 機能を
 - **☁️ Azure 最適化** - Static Web Apps + Functions + Cosmos DB で最小コスト構成
 - **🚀 簡単デプロイ** - Bicep IaC + CI/CD ワークフローを自動生成
 - **🤖 AI フレンドリー** - 自動生成される指示ファイル（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）とレイヤー別ルールにより、GitHub Copilot・Claude Code・OpenAI Codex がプロジェクト規約に従ってコードを生成
+- **🔌 外部データコネクタ** - MySQL・PostgreSQL・REST API などの外部データソースを Cosmos DB と並行して統合。同じ Zod 駆動の scaffold ワークフローで完全な型安全性を維持
 - **🧩 [VS Code 拡張機能](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)** - init/scaffold/dev の GUI ウィザード、モデルファイル右クリックでスキャフォールド、開発サーバーステータスバー、TypeScript スニペット
 
 
@@ -37,6 +38,7 @@ Zod スキーマから自動的に CRUD 操作を生成する Scaffold 機能を
 
 - **[CLI リファレンス](https://himanago.github.io/swallowkit/ja/cli-reference)** - 全コマンドの詳細
 - **[Scaffold ガイド](https://himanago.github.io/swallowkit/ja/scaffold-guide)** - CRUD コード生成
+- **[Connector ガイド](https://himanago.github.io/swallowkit/ja/connector-guide)** - 外部データソース統合
 - **[Zod スキーマ共有ガイド](https://himanago.github.io/swallowkit/ja/zod-schema-sharing-guide)** - スキーマ設計
 - **[デプロイガイド](https://himanago.github.io/swallowkit/ja/deployment-guide)** - Azure へのデプロイ
 
@@ -162,6 +164,27 @@ const updated = await api.put<Todo>('/api/todos/123', { completed: true });
 await api.delete('/api/todos/123');
 ```
 
+### 6. 外部データソースの統合（オプション）
+
+SwallowKit は **コネクタ** により、Cosmos DB と併用して外部 RDB データベースや REST API を統合できます。同じ Zod 駆動のワークフローをそのまま使えます：
+
+```bash
+# コネクタを登録
+npx swallowkit add-connector mysql --type rdb --provider mysql --connection-env MYSQL_CONNECTION_STRING
+
+# コネクタ対応モデルを作成
+npx swallowkit create-model user --connector mysql
+# shared/models/user.ts を編集（スキーマ + connectorConfig をカスタマイズ）
+
+# scaffold がコネクタ固有の Functions コードを生成
+npx swallowkit scaffold shared/models/user.ts
+
+# 実際の MySQL がなくてもモックデータでローカル開発
+npx swallowkit dev --mock-connectors
+```
+
+フロントエンドと BFF レイヤーはデータソースの違いを意識しません — `callFunction()` は Cosmos DB モデルでもコネクタモデルでも同一です。詳しくは **[Connector ガイド](https://himanago.github.io/swallowkit/ja/connector-guide)** を参照してください。
+
 ## 🏗️ アーキテクチャ
 
 ```
@@ -184,21 +207,22 @@ await api.delete('/api/todos/123');
 │  - HTTP Triggers (CRUD)                                      │
 │  - Zod Validation (Re-check)                                 │
 │  - Business Logic                                            │
-│  - Cosmos DB Bindings                                        │
-└──────────────────────────┬───────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Azure Cosmos DB                                             │
-│  - NoSQL Database                                            │
-│  - Zod Schema Validation                                     │
-└─────────────────────────────────────────────────────────────┘
+│  - Data Source Bindings                                      │
+└──────────┬───────────────┼───────────────┬──────────────────┘
+           │               │               │
+           ▼               ▼               ▼
+┌────────────────┐ ┌──────────────┐ ┌──────────────────┐
+│  Azure Cosmos  │ │  外部 RDB    │ │  外部 SaaS API   │
+│  DB (既定)     │ │  (MySQL,     │ │  (REST)          │
+│                │ │  PostgreSQL) │ │                  │
+└────────────────┘ └──────────────┘ └──────────────────┘
 ```
 
 **重要なパターン:**
 - **BFF (Backend For Frontend)**: Next.js API Routes が Azure Functions へのプロキシ
 - **共有スキーマ**: `shared/models/` の Zod スキーマを唯一のソースとして扱う
 - **C#/Python 向け OpenAPI ブリッジ**: TypeScript 以外の Functions は `functions/generated/` の生成資産を利用
+- **外部コネクタ**: MySQL・PostgreSQL・REST API — scaffold 生成の Functions で同じ BFF パターンを維持
 - **契約安全性**: 共有 Zod または生成モデルで BFF とバックエンドの整合を保つ
 - **マネージド ID**: サービス間の安全な接続（接続文字列不要）
 

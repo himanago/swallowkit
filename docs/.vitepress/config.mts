@@ -75,6 +75,10 @@ export default defineConfig({
                   text: 'Zod Schema Sharing',
                   link: '/en/zod-schema-sharing-guide',
                 },
+                {
+                  text: 'Connector Guide',
+                  link: '/en/connector-guide',
+                },
               ],
             },
             {
@@ -118,6 +122,10 @@ export default defineConfig({
                 {
                   text: 'Zod スキーマ共有',
                   link: '/ja/zod-schema-sharing-guide',
+                },
+                {
+                  text: 'Connector ガイド',
+                  link: '/ja/connector-guide',
                 },
               ],
             },

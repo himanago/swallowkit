@@ -883,8 +883,41 @@ app.http('updateTodo', { methods: ['PUT'], route: 'todo/{id}', handler: crud.upd
 app.http('deleteTodo', { methods: ['DELETE'], route: 'todo/{id}', handler: crud.delete });
 ```
 
+## Connector Models
+
+In addition to Cosmos DB models, SwallowKit supports **connector models** that integrate with external data sources such as relational databases (MySQL, PostgreSQL, SQL Server) and REST APIs.
+
+Connector models use the same `scaffold` command and produce the same BFF routes and UI components. The key differences are in the generated Azure Functions code and the model metadata.
+
+### How it works
+
+1. Register a connector in `swallowkit.config.js` using `add-connector`
+2. Create a model with `create-model --connector <name>`
+3. The model exports a `connectorConfig` object describing the data source mapping
+4. `scaffold` detects connector metadata and generates appropriate Functions code
+
+### What changes with connector models
+
+| Aspect | Standard Model (Cosmos DB) | Connector Model |
+|--------|---------------------------|-----------------|
+| Functions code | Cosmos DB bindings | SQL queries (RDB) or HTTP client (API) |
+| Functions location | `functions/src/functions/` (TS) | `functions/Connectors/` (C#) or same dir (TS/Python) |
+| BFF routes | Standard `callFunction()` | Identical — transparent |
+| UI components | Full CRUD | Same, respecting `operations` |
+| Cosmos Bicep | Generated | Skipped |
+| Operations | All CRUD | Configurable (e.g., read-only) |
+
+### Read-only models
+
+If a connector model's `operations` only includes `getAll` and/or `getById`, scaffold generates only GET endpoints. POST, PUT, and DELETE handlers are omitted.
+
+### Local development
+
+Use `swallowkit dev --mock-connectors` to start a mock proxy server that serves Zod-generated fake data for connector models. No real database or API connection is needed during development. See the [Connector Guide](./connector-guide.md) for details.
+
 ## Next Steps
 
+- Learn about [Connector Guide](./connector-guide.md) - Integrate external data sources with the same Zod workflow
 - Learn about [Zod Schema Sharing](./zod-schema-sharing-guide.md) - Understand the concepts behind type-safe schema sharing
 - Read the [Deployment Guide](./deployment-guide.md) - Deploy your application to Azure
 - Explore the [CLI Reference](./cli-reference.md) - Learn about all available commands
