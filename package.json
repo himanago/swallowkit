@@ -1,6 +1,6 @@
 {
   "name": "swallowkit",
-  "version": "1.0.0-beta.14",
+  "version": "1.0.0-beta.15",
   "description": "Type-safe schema-driven development toolkit for Next.js applications on Azure",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -34,7 +34,7 @@
   "author": "Takumasa Hirabayashi",
   "license": "MIT",
   "dependencies": {
-    "@azure/cosmos": "^4.7.0",
+    "@azure/cosmos": "^4.9.2",
     "commander": "^11.0.0",
     "cors": "^2.8.5",
     "execa": "^8.0.1",
@@ -46,8 +46,8 @@
   "devDependencies": {
     "@types/cors": "^2.8.0",
     "@types/express": "^4.17.0",
-    "@types/jsonwebtoken": "^9.0.0",
     "@types/jest": "^29.0.0",
+    "@types/jsonwebtoken": "^9.0.0",
     "@types/node": "^20.0.0",
     "@types/prompts": "^2.4.9",
     "@types/react": "^18.0.0",

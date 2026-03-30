@@ -150,7 +150,7 @@ pnpm dlx swallowkit scaffold shared/models/estimate.ts
 
 Scaffold は `authPolicy` エクスポートを検出し、生成される Functions にロールガードを注入します。詳しくは [Scaffold 連携](#scaffold-連携)をご覧ください。
 
-### 6. モック認証で開発サーバーを起動
+### 6. モックコネクタで開発サーバーを起動
 
 ```bash
 # npx
@@ -160,7 +160,24 @@ npx swallowkit dev --mock-connectors
 pnpm dlx swallowkit dev --mock-connectors
 ```
 
-デフォルトユーザーを使用したモック認証エンドポイントが自動的に提供されます。詳しくは[モック認証](#モック認証)をご覧ください。
+`--mock-connectors` はすべての RDB コネクタデータをインメモリでモック化します — `auth.customJwt.userTable` で参照されるユーザーテーブルも含まれます。つまり、実際のデータベースなしでもモックのユーザーデータに対してログインが動作します。他のコネクタモデルと同様に、`dev-seeds/<env>/user.json` でユーザーのシードデータを定義してください：
+
+```json
+[
+  {
+    "id": "1",
+    "login_id": "admin",
+    "password_hash": "password123",
+    "name": "管理者",
+    "email": "admin@example.com",
+    "roles": ["admin", "estimator"]
+  }
+]
+```
+
+フィールド名は `auth.customJwt` で設定されたカラム名（`loginIdColumn`、`passwordHashColumn`、`rolesColumn`）と一致する必要があります。
+
+⚠️ **シードファイルのパスワードはプレーンテキストです** — これらのファイルはローカル開発専用です。実際の認証情報をコミットしないでください。
 
 ## 設定リファレンス
 
@@ -281,53 +298,6 @@ Functions ファイルはバックエンド言語によって異なります：
 |---------|---------|
 | `lib/api/call-function.ts` | BFF ルートから Azure Functions への Authorization ヘッダー転送を追加 |
 
-## モック認証
-
-`swallowkit dev --mock-connectors` を実行すると、実際のユーザーデータベースなしで認証フロー全体が動作するように、モック認証エンドポイントが自動的に提供されます。
-
-### 動作の仕組み
-
-1. モックサーバーが `dev-seeds/<env>/_auth-users.json` からユーザーを読み込む（アンダースコアプレフィックスは、モデルのシードではなく特殊ファイルであることを示す）
-2. シードファイルが存在しない場合、デフォルトのモックユーザーが提供される
-3. ログイン時にシードデータに対してプレーンテキストのパスワードを検証する
-4. 実際の JWT を生成するため、認証フロー全体（Middleware → BFF → Cookie）が本番環境と同じように動作する
-
-### デフォルトモックユーザー
-
-`_auth-users.json` ファイルが存在しない場合、以下の 2 ユーザーが利用可能です：
-
-| ログイン ID | パスワード | ロール |
-|-----------|----------|-------|
-| `admin` | `password123` | `admin` |
-| `user` | `password123` | `user` |
-
-### カスタムモックユーザー
-
-独自のテストユーザーを定義するには、`dev-seeds/<env>/_auth-users.json` を作成します：
-
-```json
-[
-  {
-    "id": "1",
-    "loginId": "admin",
-    "password": "password123",
-    "name": "管理者",
-    "email": "admin@example.com",
-    "roles": ["admin", "estimator"]
-  },
-  {
-    "id": "2",
-    "loginId": "viewer",
-    "password": "password123",
-    "name": "閲覧ユーザー",
-    "email": "viewer@example.com",
-    "roles": ["viewer"]
-  }
-]
-```
-
-⚠️ **`_auth-users.json` のパスワードはプレーンテキストです** — このファイルはローカル開発専用です。実際の認証情報をコミットしないでください。
-
 ## Scaffold 連携
 
 `scaffold` がモデルを処理する際、`authPolicy`（モデルファイルからエクスポートされたもの、または `auth.authorization.policies` で定義されたもの）が存在すると、以下が自動的に行われます：
@@ -373,15 +343,15 @@ const canWrite = hasAnyRole(["admin"]);
 
 💡 **注意**: フロントエンドのロールチェックは UX の利便性であり、セキュリティ境界ではありません。実際の認可は Azure Functions レイヤーで行われます。ユーザーが UI をバイパスしても、バックエンドは 401/403 で不正なリクエストを拒否します。
 
-### モックサーバーの認証制御
+### `--mock-connectors` 時の認証制御
 
-`--mock-connectors` で実行する場合、モックサーバーもコネクタモデルのルートに対して認証を適用します：
+`--mock-connectors` で実行する場合、モックサーバーは本番環境と同じ認証ルールをすべてのコネクタモデルのルートに適用します：
 
 - 有効な JWT トークンのないリクエストには `401 Unauthorized` が返される
 - ロールが不足しているリクエストには `403 Forbidden` が返される
 - 認証制御は各モデルの `authPolicy` と `auth.authorization.defaultPolicy` を尊重する
 
-これにより開発時の動作が本番環境と一致します — デプロイ時に驚くことはありません。
+ユーザーテーブルも通常の RDB データとしてモック化されるため、シードデータのユーザーでログインし、実際の JWT を受け取ることができます。これにより開発時の動作が本番環境と一致します — デプロイ時に驚くことはありません。
 
 ### デフォルトポリシーの動作
 

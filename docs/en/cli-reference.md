@@ -644,7 +644,7 @@ npx swallowkit add-auth
 # 6. Re-scaffold to inject auth guards into functions
 npx swallowkit scaffold shared/models/estimate.ts
 
-# 7. Start development with mock auth
+# 7. Start development with mock connectors (user data is also mocked)
 npx swallowkit dev --mock-connectors
 ```
 

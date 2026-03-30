@@ -4,9 +4,7 @@
  * - その他のリクエスト → 実Azure Functions へプロキシ
  */
 
-import * as fs from "fs";
 import * as http from "http";
-import * as path from "path";
 import { ModelInfo, toCamelCase } from "../scaffold/model-parser";
 import { generateMockDocuments } from "./zod-mock-generator";
 import { loadDevSeedFiles } from "../../cli/commands/dev-seeds";
@@ -36,6 +34,8 @@ export interface ConnectorMockServerOptions {
     tokenExpiry?: string;
     /** Custom JWT config from swallowkit.config.js */
     customJwt?: {
+      /** RDB table name that holds user records (e.g., "users") */
+      userTable: string;
       loginIdColumn: string;
       passwordHashColumn: string;
       rolesColumn: string;
@@ -54,7 +54,6 @@ export class ConnectorMockServer {
   private server: http.Server | null = null;
   private stores = new Map<string, MockDocument[]>();
   private routeMap = new Map<string, ModelInfo>(); // route → model
-  private authUsers: MockDocument[] = [];
   private options: ConnectorMockServerOptions;
 
   constructor(options: ConnectorMockServerOptions) {
@@ -140,29 +139,6 @@ export class ConnectorMockServer {
       } catch (err) {
         console.warn(`⚠️  Failed to load dev-seeds for connectors: ${(err as Error).message}`);
       }
-    }
-
-    // Load auth users from dev-seeds/_auth-users.json (auth uses RDB connector, same mock approach)
-    if (this.options.seedEnv && this.options.authConfig) {
-      const seedsDir = this.options.seedsDir || path.join(process.cwd(), "dev-seeds");
-      const authUsersPath = path.join(seedsDir, this.options.seedEnv, "_auth-users.json");
-      if (fs.existsSync(authUsersPath)) {
-        try {
-          this.authUsers = JSON.parse(fs.readFileSync(authUsersPath, "utf-8"));
-          console.log(`  📂 Loaded ${this.authUsers.length} auth user seed(s) from _auth-users.json`);
-        } catch (err) {
-          console.warn(`⚠️  Failed to load _auth-users.json: ${(err as Error).message}`);
-        }
-      }
-    }
-
-    // Fallback: default auth user seeds when no seed file exists
-    if (this.options.authConfig && this.authUsers.length === 0) {
-      this.authUsers = [
-        { id: "1", loginId: "admin", password: "password123", name: "Admin User", email: "admin@example.com", roles: ["admin"] },
-        { id: "2", loginId: "user", password: "password123", name: "Test User", email: "user@example.com", roles: ["user"] },
-      ];
-      console.log("  📂 Using default auth user seeds (admin/password123, user/password123)");
     }
   }
 
@@ -353,11 +329,18 @@ export class ConnectorMockServer {
         return this.sendJson(res, 400, { error: "loginId and password are required" });
       }
 
+      const users = this.resolveUserStore();
+      if (!users) {
+        return this.sendJson(res, 500, {
+          error: "No user model found — ensure a connector model with the configured userTable exists",
+        });
+      }
+
       const loginField = this.options.authConfig?.customJwt?.loginIdColumn || "loginId";
       const passwordField = this.options.authConfig?.customJwt?.passwordHashColumn || "password";
       const rolesField = this.options.authConfig?.customJwt?.rolesColumn || "roles";
 
-      const user = this.authUsers.find(
+      const user = users.find(
         (u) => (u[loginField] || u.loginId) === loginId
       );
 
@@ -441,6 +424,23 @@ export class ConnectorMockServer {
   }
 
   // ─── Utilities ────────────────────────────────────────────
+
+  /**
+   * authConfig.customJwt.userTable に対応するモデルのストアを返す。
+   * ユーザーテーブルが見つからない場合は null を返す。
+   */
+  private resolveUserStore(): MockDocument[] | null {
+    const userTable = this.options.authConfig?.customJwt?.userTable;
+    if (!userTable) return null;
+
+    for (const model of this.options.connectorModels) {
+      const cfg = model.connectorConfig;
+      if (cfg && "table" in cfg && cfg.table === userTable) {
+        return this.stores.get(toCamelCase(model.name)) || null;
+      }
+    }
+    return null;
+  }
 
   /**
    * JWT を検証し、ペイロード（roles 含む）を返す。

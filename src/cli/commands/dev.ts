@@ -711,7 +711,7 @@ async function startDevEnvironment(options: DevOptions) {
 
       // Resolve auth config — auth functions use RDB connectors, mocked alongside other models
       const authConfig = getAuthConfig();
-      let mockAuthConfig: { jwtSecret: string; tokenExpiry?: string; customJwt?: { loginIdColumn: string; passwordHashColumn: string; rolesColumn: string }; defaultPolicy?: "authenticated" | "anonymous" } | undefined;
+      let mockAuthConfig: { jwtSecret: string; tokenExpiry?: string; customJwt?: { userTable: string; loginIdColumn: string; passwordHashColumn: string; rolesColumn: string }; defaultPolicy?: "authenticated" | "anonymous" } | undefined;
       if (authConfig?.provider === 'custom-jwt' && authConfig.customJwt) {
         const fullConfig = getFullConfig();
         // Read JWT_SECRET from functions/local.settings.json if available
@@ -727,6 +727,7 @@ async function startDevEnvironment(options: DevOptions) {
           jwtSecret,
           tokenExpiry: authConfig.customJwt.tokenExpiry,
           customJwt: {
+            userTable: authConfig.customJwt.userTable,
             loginIdColumn: authConfig.customJwt.loginIdColumn,
             passwordHashColumn: authConfig.customJwt.passwordHashColumn,
             rolesColumn: authConfig.customJwt.rolesColumn,

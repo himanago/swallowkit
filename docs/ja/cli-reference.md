@@ -760,7 +760,7 @@ npx swallowkit add-auth
 # 6. scaffold を再実行して Functions に認証ガードを注入
 npx swallowkit scaffold shared/models/estimate.ts
 
-# 7. モック認証で開発を開始
+# 7. モックコネクタで開発を開始（ユーザーデータもモック化される）
 npx swallowkit dev --mock-connectors
 ```
 

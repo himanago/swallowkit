@@ -260,23 +260,65 @@ describe("ConnectorMockServer - Auth Endpoints", () => {
   const AUTH_PORT = 19877;
   const JWT_SECRET = "test-jwt-secret-for-mock-auth-tests";
 
+  // Auth-compatible User model (has loginId, password, roles fields)
+  const authUserModel = createRdbConnectorModelInfo({
+    name: "User",
+    displayName: "User",
+    schemaName: "userSchema",
+    filePath: "/models/user.ts",
+    fields: [
+      { name: "id", type: "string", isOptional: false, isArray: false },
+      { name: "loginId", type: "string", isOptional: false, isArray: false },
+      { name: "password", type: "string", isOptional: false, isArray: false },
+      { name: "name", type: "string", isOptional: false, isArray: false },
+      { name: "email", type: "string", isOptional: false, isArray: false },
+      { name: "roles", type: "string", isOptional: false, isArray: true },
+    ],
+    connectorConfig: {
+      connector: "mysql",
+      operations: ["getAll", "getById"],
+      table: "users",
+      idColumn: "id",
+    },
+  });
+
+  const testUsers = [
+    { id: "1", loginId: "admin", password: "password123", name: "Admin User", email: "admin@example.com", roles: ["admin"] },
+    { id: "2", loginId: "user", password: "password123", name: "Test User", email: "user@example.com", roles: ["user"] },
+  ];
+
   afterEach(async () => {
     if (server) {
       await server.stop();
     }
   });
 
-  it("handles POST /api/auth/login with default mock users", async () => {
+  /** Start mock server with auth-compatible User model and seed data */
+  async function startAuthServer() {
     server = new ConnectorMockServer({
       port: AUTH_PORT,
       functionsTarget: "localhost:7071",
-      connectorModels: [],
+      connectorModels: [authUserModel],
+      mockCount: 0,
       authConfig: {
         jwtSecret: JWT_SECRET,
         tokenExpiry: "1h",
+        customJwt: {
+          userTable: "users",
+          loginIdColumn: "loginId",
+          passwordHashColumn: "password",
+          rolesColumn: "roles",
+        },
       },
     });
     await server.start();
+    // Populate user store with known test data
+    const store = server.getStore("User");
+    store.push(...testUsers);
+  }
+
+  it("handles POST /api/auth/login with users from RDB mock store", async () => {
+    await startAuthServer();
 
     const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
       loginId: "admin",
@@ -294,13 +336,7 @@ describe("ConnectorMockServer - Auth Endpoints", () => {
   });
 
   it("returns 401 for invalid credentials", async () => {
-    server = new ConnectorMockServer({
-      port: AUTH_PORT,
-      functionsTarget: "localhost:7071",
-      connectorModels: [],
-      authConfig: { jwtSecret: JWT_SECRET },
-    });
-    await server.start();
+    await startAuthServer();
 
     const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
       loginId: "admin",
@@ -311,13 +347,7 @@ describe("ConnectorMockServer - Auth Endpoints", () => {
   });
 
   it("returns 401 for non-existent user", async () => {
-    server = new ConnectorMockServer({
-      port: AUTH_PORT,
-      functionsTarget: "localhost:7071",
-      connectorModels: [],
-      authConfig: { jwtSecret: JWT_SECRET },
-    });
-    await server.start();
+    await startAuthServer();
 
     const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
       loginId: "nobody",
@@ -328,13 +358,7 @@ describe("ConnectorMockServer - Auth Endpoints", () => {
   });
 
   it("handles GET /api/auth/me with valid JWT", async () => {
-    server = new ConnectorMockServer({
-      port: AUTH_PORT,
-      functionsTarget: "localhost:7071",
-      connectorModels: [],
-      authConfig: { jwtSecret: JWT_SECRET },
-    });
-    await server.start();
+    await startAuthServer();
 
     // Login first
     const loginRes = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
@@ -355,26 +379,14 @@ describe("ConnectorMockServer - Auth Endpoints", () => {
   });
 
   it("returns 401 for /api/auth/me without token", async () => {
-    server = new ConnectorMockServer({
-      port: AUTH_PORT,
-      functionsTarget: "localhost:7071",
-      connectorModels: [],
-      authConfig: { jwtSecret: JWT_SECRET },
-    });
-    await server.start();
+    await startAuthServer();
 
     const res = await httpRequest(AUTH_PORT, "GET", "/api/auth/me");
     expect(res.status).toBe(401);
   });
 
   it("handles POST /api/auth/logout", async () => {
-    server = new ConnectorMockServer({
-      port: AUTH_PORT,
-      functionsTarget: "localhost:7071",
-      connectorModels: [],
-      authConfig: { jwtSecret: JWT_SECRET },
-    });
-    await server.start();
+    await startAuthServer();
 
     const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/logout");
     expect(res.status).toBe(200);
@@ -397,5 +409,31 @@ describe("ConnectorMockServer - Auth Endpoints", () => {
 
     // Should get 502 (proxy error) since auth is not handled by mock
     expect(res.status).toBe(502);
+  });
+
+  it("returns 500 when no user model matches the configured userTable", async () => {
+    server = new ConnectorMockServer({
+      port: AUTH_PORT,
+      functionsTarget: "localhost:7071",
+      connectorModels: [], // no models at all
+      authConfig: {
+        jwtSecret: JWT_SECRET,
+        customJwt: {
+          userTable: "users",
+          loginIdColumn: "loginId",
+          passwordHashColumn: "password",
+          rolesColumn: "roles",
+        },
+      },
+    });
+    await server.start();
+
+    const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
+      loginId: "admin",
+      password: "password123",
+    });
+
+    expect(res.status).toBe(500);
+    expect((res.body as any).error).toContain("No user model found");
   });
 });

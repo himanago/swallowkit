@@ -150,7 +150,7 @@ pnpm dlx swallowkit scaffold shared/models/estimate.ts
 
 Scaffold detects the `authPolicy` export and injects role guards into the generated Functions. See [Scaffold Integration](#scaffold-integration) for details.
 
-### 6. Start Dev with Mock Auth
+### 6. Start Dev with Mock Connectors
 
 ```bash
 # npx
@@ -160,7 +160,24 @@ npx swallowkit dev --mock-connectors
 pnpm dlx swallowkit dev --mock-connectors
 ```
 
-Mock auth endpoints are served automatically with default users. See [Mock Authentication](#mock-authentication) for details.
+`--mock-connectors` mocks all RDB connector data in-memory — including the user table referenced by `auth.customJwt.userTable`. This means the auth login endpoint works against mock user data without a real database. Define user seed data in `dev-seeds/<env>/user.json` just like any other connector model:
+
+```json
+[
+  {
+    "id": "1",
+    "login_id": "admin",
+    "password_hash": "password123",
+    "name": "Administrator",
+    "email": "admin@example.com",
+    "roles": ["admin", "estimator"]
+  }
+]
+```
+
+The field names must match the column names configured in `auth.customJwt` (`loginIdColumn`, `passwordHashColumn`, `rolesColumn`).
+
+⚠️ **Passwords in seed files are plaintext** — these files are for local development only. Never commit real credentials.
 
 ## Configuration Reference
 
@@ -281,53 +298,6 @@ Functions files vary by backend language:
 |------|--------|
 | `lib/api/call-function.ts` | Updated to forward the Authorization header from BFF routes to Azure Functions |
 
-## Mock Authentication
-
-When running `swallowkit dev --mock-connectors`, mock auth endpoints are served automatically so the full auth flow works without a real user database.
-
-### How It Works
-
-1. The mock server loads users from `dev-seeds/<env>/_auth-users.json` (the underscore prefix marks it as a special file, not a model seed)
-2. If the seed file doesn't exist, default mock users are provided
-3. Login validates plaintext passwords against the seed data
-4. Real JWTs are generated so the entire auth flow (middleware → BFF → cookie) works identically to production
-
-### Default Mock Users
-
-If no `_auth-users.json` file exists, two users are available:
-
-| Login ID | Password | Roles |
-|----------|----------|-------|
-| `admin` | `password123` | `admin` |
-| `user` | `password123` | `user` |
-
-### Custom Mock Users
-
-Create `dev-seeds/<env>/_auth-users.json` to define your own test users:
-
-```json
-[
-  {
-    "id": "1",
-    "loginId": "admin",
-    "password": "password123",
-    "name": "Administrator",
-    "email": "admin@example.com",
-    "roles": ["admin", "estimator"]
-  },
-  {
-    "id": "2",
-    "loginId": "viewer",
-    "password": "password123",
-    "name": "Viewer User",
-    "email": "viewer@example.com",
-    "roles": ["viewer"]
-  }
-]
-```
-
-⚠️ **Passwords in `_auth-users.json` are plaintext** — this file is for local development only. Never commit real credentials.
-
 ## Scaffold Integration
 
 When `scaffold` processes a model that has an `authPolicy` (either exported from the model file or defined in `auth.authorization.policies`), it automatically:
@@ -373,15 +343,15 @@ const canWrite = hasAnyRole(["admin"]);
 
 💡 **Note**: Frontend role checks are a UX convenience, not a security boundary. The real enforcement happens at the Azure Functions layer. Even if a user bypasses the UI, the backend will reject unauthorized requests with 401/403.
 
-### Mock Server Auth Enforcement
+### Auth Enforcement with `--mock-connectors`
 
-When running with `--mock-connectors`, the mock server also enforces auth for connector model routes:
+When running with `--mock-connectors`, the mock server enforces the same auth rules as production for all connector model routes:
 
 - Requests without a valid JWT token receive `401 Unauthorized`
 - Requests with insufficient roles receive `403 Forbidden`
 - Auth enforcement respects each model's `authPolicy` and the `auth.authorization.defaultPolicy`
 
-This ensures the development experience matches production behavior — no surprises when deploying.
+Since the user table is mocked as regular RDB data, users can log in with seed data and receive real JWTs. This ensures the development experience matches production behavior — no surprises when deploying.
 
 ### Default Policy Behavior
 
