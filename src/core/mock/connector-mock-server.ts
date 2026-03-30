@@ -73,6 +73,10 @@ export class ConnectorMockServer {
   stop(): Promise<void> {
     return new Promise((resolve) => {
       if (this.server) {
+        // Force close keep-alive connections (Node.js 18.2+)
+        if (typeof (this.server as any).closeAllConnections === "function") {
+          (this.server as any).closeAllConnections();
+        }
         this.server.close(() => resolve());
       } else {
         resolve();
@@ -163,6 +167,7 @@ export class ConnectorMockServer {
 
     switch (method) {
       case "GET":
+        req.resume();
         if (id) {
           if (!ops.includes("getById")) {
             return this.sendJson(res, 405, { error: "getById not supported" });
@@ -179,7 +184,7 @@ export class ConnectorMockServer {
 
       case "POST":
         if (!ops.includes("create")) {
-          return this.sendJson(res, 405, { error: "create not supported" });
+          return this.drainAndRespond(req, res, 405, { error: "create not supported" });
         }
         this.readBody(req, (body) => {
           if (!body.id) {
@@ -194,9 +199,9 @@ export class ConnectorMockServer {
 
       case "PUT":
         if (!ops.includes("update")) {
-          return this.sendJson(res, 405, { error: "update not supported" });
+          return this.drainAndRespond(req, res, 405, { error: "update not supported" });
         }
-        if (!id) return this.sendJson(res, 400, { error: "id required" });
+        if (!id) return this.drainAndRespond(req, res, 400, { error: "id required" });
         this.readBody(req, (body) => {
           const idx = store.findIndex((doc) => doc.id === id);
           if (idx === -1) return this.sendJson(res, 404, { error: "Item not found" });
@@ -207,6 +212,7 @@ export class ConnectorMockServer {
         return;
 
       case "DELETE":
+        req.resume();
         if (!ops.includes("delete")) {
           return this.sendJson(res, 405, { error: "delete not supported" });
         }
@@ -217,6 +223,7 @@ export class ConnectorMockServer {
         return this.sendJson(res, 204, null);
 
       default:
+        req.resume();
         return this.sendJson(res, 405, { error: `Method ${method} not allowed` });
     }
   }
@@ -266,11 +273,35 @@ export class ConnectorMockServer {
   }
 
   private sendJson(res: http.ServerResponse, status: number, body: unknown) {
-    res.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+    res.writeHead(status, {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Connection": "close",
+    });
     if (body !== null && body !== undefined) {
       res.end(JSON.stringify(body));
     } else {
       res.end();
     }
+  }
+
+  /**
+   * リクエストボディを完全に読み捨ててからレスポンスを送信
+   * POST/PUT の 405 等で未読ボディがある場合に Linux で RST を防ぐ
+   */
+  private drainAndRespond(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    status: number,
+    body: unknown
+  ) {
+    if (req.readableEnded) {
+      this.sendJson(res, status, body);
+      return;
+    }
+    req.resume();
+    req.on("end", () => {
+      this.sendJson(res, status, body);
+    });
   }
 }
