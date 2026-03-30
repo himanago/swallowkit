@@ -7,12 +7,13 @@ import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
 import { toPascalCase } from "../../core/scaffold/model-parser";
-import { ensureSwallowKitProject } from "../../core/config";
+import { ensureSwallowKitProject, loadConfig } from "../../core/config";
 import { detectFromProject, getCommands } from "../../utils/package-manager";
 
 interface CreateModelOptions {
   names: string[]; // モデル名のリスト（例: ["todo", "user", "post"]）
   modelsDir?: string; // モデルディレクトリ（デフォルト: "shared/models"）
+  connector?: string; // コネクタ名（例: "mysql", "backlog"）
 }
 
 /**
@@ -35,6 +36,58 @@ export type ${pascalName} = z.infer<typeof ${pascalName}>;
 
 // Display name for UI
 export const displayName = '${pascalName}';
+`;
+}
+
+/**
+ * コネクタ付きモデルテンプレートを生成
+ */
+function generateConnectorModelTemplate(modelName: string, connectorName: string, connectorType: 'rdb' | 'api'): string {
+  const pascalName = toPascalCase(modelName);
+  const kebabName = modelName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const pluralName = kebabName + 's';
+
+  const schema = `import { z } from 'zod/v4';
+
+// ${pascalName} model (Zod official pattern: same name for value and type)
+export const ${pascalName} = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+
+export type ${pascalName} = z.infer<typeof ${pascalName}>;
+
+// Display name for UI
+export const displayName = '${pascalName}';
+`;
+
+  if (connectorType === 'rdb') {
+    return schema + `
+// SwallowKit Connector Metadata
+export const connectorConfig = {
+  connector: '${connectorName}',
+  operations: ['getAll', 'getById'] as const,
+  table: '${pluralName}',
+  idColumn: 'id',
+};
+`;
+  }
+
+  // API connector
+  return schema + `
+// SwallowKit Connector Metadata
+export const connectorConfig = {
+  connector: '${connectorName}',
+  operations: ['getAll', 'getById', 'create', 'update'] as const,
+  endpoints: {
+    getAll: 'GET /${pluralName}',
+    getById: 'GET /${pluralName}/{id}',
+    create: 'POST /${pluralName}',
+    update: 'PATCH /${pluralName}/{id}',
+  },
+};
 `;
 }
 
@@ -63,6 +116,21 @@ export async function createModelCommand(options: CreateModelOptions) {
   ensureSwallowKitProject("create-model");
 
   console.log("🏗️  SwallowKit Create-Model: Generating model templates...\n");
+
+  // コネクタ指定時はコネクタの存在を検証
+  let connectorType: 'rdb' | 'api' | undefined;
+  if (options.connector) {
+    const config = loadConfig();
+    const connectorDef = config.connectors?.[options.connector];
+    if (!connectorDef) {
+      console.error(`❌ Connector '${options.connector}' not found in swallowkit.config.js.`);
+      console.error(`   Available connectors: ${Object.keys(config.connectors || {}).join(', ') || '(none)'}`);
+      console.error(`   Run 'swallowkit add-connector ${options.connector} --type=<rdb|api>' first.`);
+      process.exit(1);
+    }
+    connectorType = connectorDef.type;
+    console.log(`🔌 Using connector: ${options.connector} (${connectorType})\n`);
+  }
 
   const modelsDir = options.modelsDir || "shared/models";
   
@@ -94,7 +162,9 @@ export async function createModelCommand(options: CreateModelOptions) {
     }
 
     // モデルファイルを生成
-    const content = generateModelTemplate(name);
+    const content = options.connector && connectorType
+      ? generateConnectorModelTemplate(name, options.connector, connectorType)
+      : generateModelTemplate(name);
     fs.writeFileSync(filePath, content);
     console.log(`✅ Created: ${filePath}`);
     created.push(kebabName);

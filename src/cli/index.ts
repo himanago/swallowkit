@@ -10,6 +10,7 @@ if (process.platform === 'win32') {
 import { Command } from "commander";
 import { initCommand, devCommand, devSeedsCommand, scaffoldCommand, createModelCommand } from "./commands";
 import { provisionCommand } from "./commands/provision";
+import { addConnectorCommand } from "./commands/add-connector";
 
 const program = new Command();
 
@@ -49,10 +50,12 @@ program
   .command("create-model <names...>")
   .description("Create model template files with id, createdAt, and updatedAt fields")
   .option("--models-dir <dir>", "Models directory", "shared/models")
+  .option("--connector <name>", "Associate model with a connector defined in swallowkit.config.js")
   .action((names, options) => {
     createModelCommand({
       names,
       modelsDir: options.modelsDir,
+      connector: options.connector,
     });
   });
 
@@ -68,6 +71,19 @@ program
       functionsDir: options.functionsDir,
       apiDir: options.apiDir,
       apiOnly: options.apiOnly,
+    });
+  });
+
+program
+  .command("add-connector <name>")
+  .description("Add an external data source connector configuration")
+  .requiredOption("--type <type>", "Connector type: rdb | api")
+  .option("--provider <provider>", "RDB provider: mysql | postgres | sqlserver", "mysql")
+  .action((name, options) => {
+    addConnectorCommand({
+      name,
+      type: options.type,
+      provider: options.provider,
     });
   });
 

@@ -6,6 +6,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
 
+import { ModelConnectorConfig } from "../../types";
+
 export interface ModelInfo {
   name: string; // モデル名（例: "Todo"）
   displayName: string; // 表示名（例: "Todo" または "タスク"）
@@ -16,6 +18,7 @@ export interface ModelInfo {
   hasCreatedAt: boolean; // createdAt フィールドがあるか
   hasUpdatedAt: boolean; // updatedAt フィールドがあるか
   nestedSchemaRefs: NestedSchemaRef[]; // ネストしたスキーマ参照
+  connectorConfig?: ModelConnectorConfig; // コネクタメタデータ（外部データソース用）
 }
 
 export interface FieldInfo {
@@ -79,6 +82,9 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
   // displayName を抽出（例: export const displayName = 'Task'）
   const displayNameMatch = content.match(/export\s+const\s+displayName\s*=\s*['"]([^'"]+)['"]/);  
   const displayName = displayNameMatch ? displayNameMatch[1] : modelName;
+
+  // connectorConfig を抽出（外部データソース用メタデータ）
+  const connectorConfig = parseConnectorConfig(content);
   
   // ネストしたスキーマ参照を検出
   const nestedSchemaRefs = detectNestedSchemaRefs(modelPath, content, schemaName);
@@ -104,6 +110,7 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
     hasCreatedAt,
     hasUpdatedAt,
     nestedSchemaRefs,
+    ...(connectorConfig ? { connectorConfig } : {}),
   };
 }
 
@@ -622,6 +629,102 @@ export function toPascalCase(str: string): string {
 export function toCamelCase(str: string): string {
   const pascal = toPascalCase(str);
   return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+}
+
+/**
+ * モデルファイルから connectorConfig エクスポートを静的解析で抽出する
+ */
+export function parseConnectorConfig(content: string): ModelConnectorConfig | undefined {
+  // export const connectorConfig = { ... } を検出
+  const connectorMatch = content.match(/export\s+const\s+connectorConfig\s*=\s*\{/);
+  if (!connectorMatch) {
+    return undefined;
+  }
+
+  // connectorConfig オブジェクトの内容を抽出
+  const startIdx = content.indexOf('{', connectorMatch.index!);
+  let braceCount = 1;
+  let endIdx = startIdx + 1;
+  while (braceCount > 0 && endIdx < content.length) {
+    if (content[endIdx] === '{') braceCount++;
+    if (content[endIdx] === '}') braceCount--;
+    endIdx++;
+  }
+
+  const objectStr = content.substring(startIdx, endIdx);
+
+  // connector 名を抽出
+  const connectorNameMatch = objectStr.match(/connector\s*:\s*['"]([^'"]+)['"]/);
+  if (!connectorNameMatch) {
+    return undefined;
+  }
+  const connector = connectorNameMatch[1];
+
+  // operations を抽出
+  const opsMatch = objectStr.match(/operations\s*:\s*\[([^\]]*)\]/);
+  const operations: string[] = [];
+  if (opsMatch) {
+    const opsStr = opsMatch[1];
+    const opEntries = opsStr.match(/['"]([^'"]+)['"]/g);
+    if (opEntries) {
+      for (const entry of opEntries) {
+        operations.push(entry.replace(/['"]/g, ''));
+      }
+    }
+  }
+
+  // table を抽出（RDB 固有）
+  const tableMatch = objectStr.match(/table\s*:\s*['"]([^'"]+)['"]/);
+
+  // idColumn を抽出（RDB 固有）
+  const idColumnMatch = objectStr.match(/idColumn\s*:\s*['"]([^'"]+)['"]/);
+
+  // endpoints を抽出（API 固有）— endpoint値に {id} 等のプレースホルダが含まれるためbrace-countingで抽出
+  let endpoints: Record<string, string> | undefined;
+  const endpointsStart = objectStr.match(/endpoints\s*:\s*\{/);
+  if (endpointsStart) {
+    const epStartIdx = objectStr.indexOf('{', endpointsStart.index!);
+    let epBraceCount = 1;
+    let epEndIdx = epStartIdx + 1;
+    while (epBraceCount > 0 && epEndIdx < objectStr.length) {
+      const ch = objectStr[epEndIdx];
+      // 文字列内の波括弧をスキップ
+      if (ch === "'" || ch === '"') {
+        epEndIdx++;
+        while (epEndIdx < objectStr.length && objectStr[epEndIdx] !== ch) {
+          epEndIdx++;
+        }
+      } else if (ch === '{') {
+        epBraceCount++;
+      } else if (ch === '}') {
+        epBraceCount--;
+      }
+      epEndIdx++;
+    }
+    const epStr = objectStr.substring(epStartIdx + 1, epEndIdx - 1);
+    endpoints = {};
+    const endpointEntries = epStr.matchAll(/(\w+)\s*:\s*['"]([^'"]+)['"]/g);
+    for (const entry of endpointEntries) {
+      endpoints[entry[1]] = entry[2];
+    }
+  }
+
+  if (tableMatch) {
+    // RDB コネクタ
+    return {
+      connector,
+      operations: operations as ModelConnectorConfig['operations'],
+      table: tableMatch[1],
+      ...(idColumnMatch ? { idColumn: idColumnMatch[1] } : {}),
+    };
+  }
+
+  // API コネクタ
+  return {
+    connector,
+    operations: operations as ModelConnectorConfig['operations'],
+    ...(endpoints ? { endpoints } : {}),
+  };
 }
 
 /**

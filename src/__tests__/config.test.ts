@@ -61,6 +61,147 @@ describe("validateConfig", () => {
     // database is undefined → no connectionString check triggered
     expect(result.errors.filter((e) => e.includes("endpoint"))).toHaveLength(0);
   });
+
+  // ─── Connector Validation ───────────────────────────────────
+
+  it("validates valid RDB connector config", () => {
+    const config: SwallowKitConfig = {
+      connectors: {
+        mysql: {
+          type: "rdb",
+          provider: "mysql",
+          connectionEnvVar: "MYSQL_CONNECTION_STRING",
+        },
+      },
+    };
+    const result = validateConfig(config);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("validates valid API connector config", () => {
+    const config: SwallowKitConfig = {
+      connectors: {
+        backlog: {
+          type: "api",
+          baseUrlEnvVar: "BACKLOG_API_BASE_URL",
+          auth: {
+            type: "apiKey",
+            envVar: "BACKLOG_API_KEY",
+            placement: "query",
+            paramName: "apiKey",
+          },
+        },
+      },
+    };
+    const result = validateConfig(config);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("returns error for invalid connector type", () => {
+    const config = {
+      connectors: {
+        bad: {
+          type: "graphql",
+          baseUrlEnvVar: "GRAPHQL_URL",
+        },
+      },
+    } as unknown as SwallowKitConfig;
+    const result = validateConfig(config);
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toContain("Connector 'bad'");
+    expect(result.errors[0]).toContain("type must be one of");
+  });
+
+  it("returns error for RDB connector without provider", () => {
+    const config: SwallowKitConfig = {
+      connectors: {
+        mydb: {
+          type: "rdb",
+          provider: "" as any,
+          connectionEnvVar: "CONN",
+        },
+      },
+    };
+    const result = validateConfig(config);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining("provider must be one of")])
+    );
+  });
+
+  it("returns error for RDB connector without connectionEnvVar", () => {
+    const config: SwallowKitConfig = {
+      connectors: {
+        mydb: {
+          type: "rdb",
+          provider: "mysql",
+          connectionEnvVar: "",
+        },
+      },
+    };
+    const result = validateConfig(config);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining("connectionEnvVar is required")])
+    );
+  });
+
+  it("returns error for API connector without baseUrlEnvVar", () => {
+    const config: SwallowKitConfig = {
+      connectors: {
+        ext: {
+          type: "api",
+          baseUrlEnvVar: "",
+        },
+      },
+    };
+    const result = validateConfig(config);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining("baseUrlEnvVar is required")])
+    );
+  });
+
+  it("returns error for API connector with invalid auth type", () => {
+    const config: SwallowKitConfig = {
+      connectors: {
+        ext: {
+          type: "api",
+          baseUrlEnvVar: "EXT_URL",
+          auth: {
+            type: "saml" as any,
+            envVar: "KEY",
+          },
+        },
+      },
+    };
+    const result = validateConfig(config);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining("auth.type must be one of")])
+    );
+  });
+
+  it("validates multiple connectors at once", () => {
+    const config: SwallowKitConfig = {
+      connectors: {
+        mysql: {
+          type: "rdb",
+          provider: "mysql",
+          connectionEnvVar: "MYSQL_CONN",
+        },
+        backlog: {
+          type: "api",
+          baseUrlEnvVar: "BACKLOG_URL",
+        },
+      },
+    };
+    const result = validateConfig(config);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
 });
 
 describe("loadConfigFromEnv", () => {

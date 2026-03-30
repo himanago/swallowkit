@@ -215,3 +215,157 @@ export async function DELETE(
     detailRoute,
   };
 }
+
+/**
+ * コネクタ用 BFF ルートファイルを生成（操作制限に対応）
+ * 指定された operations のみハンドラーを生成する
+ */
+export function generateConnectorBFFRoutes(
+  model: ModelInfo,
+  sharedPackageName: string,
+  operations: readonly string[]
+): {
+  listRoute: string;
+  detailRoute: string;
+} {
+  const modelName = model.name;
+  const modelCamel = toCamelCase(modelName);
+  const schemaName = model.schemaName;
+  const ops = new Set(operations);
+
+  const hasGetAll = ops.has("getAll");
+  const hasCreate = ops.has("create");
+  const hasGetById = ops.has("getById");
+  const hasUpdate = ops.has("update");
+  const hasDelete = ops.has("delete");
+
+  // --- List route ---
+  let listImports = `import { callFunction } from '@/lib/api/call-function';
+import { ${schemaName} } from '${sharedPackageName}';
+import { z } from 'zod/v4';`;
+
+  if (hasCreate) {
+    listImports = `import { NextRequest } from 'next/server';
+${listImports}
+
+const InputSchema = ${schemaName}.omit({ id: true, createdAt: true, updatedAt: true });`;
+  }
+
+  let listHandlers = "";
+  if (hasGetAll) {
+    listHandlers += `
+// GET /api/${modelCamel} - 一覧取得
+export async function GET() {
+  return callFunction({
+    method: 'GET',
+    path: '/api/${modelCamel}',
+    responseSchema: z.array(${schemaName}),
+  });
+}
+`;
+  }
+
+  if (hasCreate) {
+    listHandlers += `
+// POST /api/${modelCamel} - 新規作成
+export async function POST(request: NextRequest) {
+  const body = await request.json();
+  return callFunction({
+    method: 'POST',
+    path: '/api/${modelCamel}',
+    body,
+    inputSchema: InputSchema,
+    responseSchema: ${schemaName},
+    successStatus: 201,
+  });
+}
+`;
+  }
+
+  const listRoute = `${listImports}
+${listHandlers}`;
+
+  // --- Detail route ---
+  const needDetailImport = hasGetById || hasUpdate || hasDelete;
+  let detailImports = "";
+  let detailHandlers = "";
+
+  if (needDetailImport) {
+    const needNextRequest = hasUpdate;
+    detailImports = needNextRequest
+      ? `import { NextRequest } from 'next/server';
+import { callFunction } from '@/lib/api/call-function';
+import { ${schemaName} } from '${sharedPackageName}';`
+      : `import { NextRequest } from 'next/server';
+import { callFunction } from '@/lib/api/call-function';
+import { ${schemaName} } from '${sharedPackageName}';`;
+
+    if (hasUpdate) {
+      detailImports += `\n\nconst InputSchema = ${schemaName}.omit({ id: true, createdAt: true, updatedAt: true });`;
+    }
+
+    if (hasGetById) {
+      detailHandlers += `
+// GET /api/${modelCamel}/{id} - 詳細取得
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  return callFunction({
+    method: 'GET',
+    path: \`/api/${modelCamel}/\${id}\`,
+    responseSchema: ${schemaName},
+  });
+}
+`;
+    }
+
+    if (hasUpdate) {
+      detailHandlers += `
+// PUT /api/${modelCamel}/{id} - 更新
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const body = await request.json();
+  return callFunction({
+    method: 'PUT',
+    path: \`/api/${modelCamel}/\${id}\`,
+    body,
+    inputSchema: InputSchema,
+    responseSchema: ${schemaName},
+  });
+}
+`;
+    }
+
+    if (hasDelete) {
+      detailHandlers += `
+// DELETE /api/${modelCamel}/{id} - 削除
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  return callFunction({
+    method: 'DELETE',
+    path: \`/api/${modelCamel}/\${id}\`,
+  });
+}
+`;
+    }
+  }
+
+  const detailRoute = needDetailImport
+    ? `${detailImports}
+${detailHandlers}`
+    : `// No detail operations defined for this connector model
+`;
+
+  return {
+    listRoute,
+    detailRoute,
+  };
+}

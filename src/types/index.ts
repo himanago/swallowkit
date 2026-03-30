@@ -26,6 +26,52 @@ export interface UseServerFnResult<TResult> {
   refetch: () => void;
 }
 
+// コネクタの操作種別
+export type ConnectorOperation = "getAll" | "getById" | "create" | "update" | "delete";
+
+// RDB コネクタ設定
+export interface RdbConnectorConfig {
+  type: "rdb";
+  provider: "mysql" | "postgres" | "sqlserver";
+  connectionEnvVar: string;
+}
+
+// API コネクタの認証設定
+export interface ApiConnectorAuth {
+  type: "apiKey" | "bearer" | "oauth2";
+  envVar: string;
+  placement?: "query" | "header";
+  paramName?: string;
+}
+
+// API コネクタ設定
+export interface ApiConnectorConfig {
+  type: "api";
+  baseUrlEnvVar: string;
+  auth?: ApiConnectorAuth;
+}
+
+// コネクタ設定の共用型
+export type ConnectorDefinition = RdbConnectorConfig | ApiConnectorConfig;
+
+// モデルに付与するコネクタメタデータ（RDB用）
+export interface RdbModelConnectorConfig {
+  connector: string;
+  operations: readonly ConnectorOperation[];
+  table: string;
+  idColumn?: string;
+}
+
+// モデルに付与するコネクタメタデータ（API用）
+export interface ApiModelConnectorConfig {
+  connector: string;
+  operations: readonly ConnectorOperation[];
+  endpoints?: Partial<Record<ConnectorOperation, string>>;
+}
+
+// モデルに付与するコネクタメタデータの共用型
+export type ModelConnectorConfig = RdbModelConnectorConfig | ApiModelConnectorConfig;
+
 // CLI設定の型
 export interface SwallowKitConfig {
   database?: {
@@ -42,4 +88,5 @@ export interface SwallowKitConfig {
       credentials?: boolean;
     };
   };
+  connectors?: Record<string, ConnectorDefinition>;
 }

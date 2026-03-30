@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { BackendLanguage, SwallowKitConfig } from "../types";
+import { BackendLanguage, ConnectorDefinition, SwallowKitConfig } from "../types";
 import { detectFromProject, getCommands } from "../utils/package-manager";
 
 const VALID_BACKEND_LANGUAGES: BackendLanguage[] = ["typescript", "csharp", "python"];
@@ -81,6 +81,7 @@ function mergeConfig(defaultConfig: SwallowKitConfig, userConfig: Partial<Swallo
         ...userConfig.api?.cors,
       },
     },
+    ...(userConfig.connectors ? { connectors: userConfig.connectors } : {}),
   };
 }
 
@@ -169,8 +170,20 @@ export function getFullConfig(configPath?: string): SwallowKitConfig {
 }
 
 /**
+ * コネクタ定義を名前で取得
+ */
+export function getConnectorDefinition(connectorName: string, configPath?: string): ConnectorDefinition | undefined {
+  const config = getFullConfig(configPath);
+  return config.connectors?.[connectorName];
+}
+
+/**
  * 設定の検証
  */
+const VALID_CONNECTOR_TYPES = ["rdb", "api"];
+const VALID_RDB_PROVIDERS = ["mysql", "postgres", "sqlserver"];
+const VALID_API_AUTH_TYPES = ["apiKey", "bearer", "oauth2"];
+
 export function validateConfig(config: SwallowKitConfig): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
@@ -186,6 +199,34 @@ export function validateConfig(config: SwallowKitConfig): { valid: boolean; erro
 
   if (config.backend?.language && !VALID_BACKEND_LANGUAGES.includes(config.backend.language)) {
     errors.push("Backend language must be one of: typescript, csharp, python");
+  }
+
+  // コネクタ設定の検証
+  if (config.connectors) {
+    for (const [name, connector] of Object.entries(config.connectors)) {
+      if (!VALID_CONNECTOR_TYPES.includes(connector.type)) {
+        errors.push(`Connector '${name}': type must be one of: ${VALID_CONNECTOR_TYPES.join(", ")}`);
+        continue;
+      }
+
+      if (connector.type === "rdb") {
+        if (!connector.provider || !VALID_RDB_PROVIDERS.includes(connector.provider)) {
+          errors.push(`Connector '${name}': provider must be one of: ${VALID_RDB_PROVIDERS.join(", ")}`);
+        }
+        if (!connector.connectionEnvVar) {
+          errors.push(`Connector '${name}': connectionEnvVar is required`);
+        }
+      }
+
+      if (connector.type === "api") {
+        if (!connector.baseUrlEnvVar) {
+          errors.push(`Connector '${name}': baseUrlEnvVar is required`);
+        }
+        if (connector.auth && !VALID_API_AUTH_TYPES.includes(connector.auth.type)) {
+          errors.push(`Connector '${name}': auth.type must be one of: ${VALID_API_AUTH_TYPES.join(", ")}`);
+        }
+      }
+    }
   }
 
   return {

@@ -6,14 +6,23 @@
 import * as fs from "fs";
 import * as path from "path";
 import { spawn, spawnSync } from "child_process";
-import { getBackendLanguage, ensureSwallowKitProject } from "../../core/config";
-import { ModelInfo, parseModelFile, toKebabCase, toPascalCase } from "../../core/scaffold/model-parser";
+import { getBackendLanguage, getConnectorDefinition, ensureSwallowKitProject } from "../../core/config";
+import { ModelInfo, parseModelFile, toKebabCase, toPascalCase, toCamelCase } from "../../core/scaffold/model-parser";
 import {
   generateCSharpAzureFunctionsCRUD,
   generateCompactAzureFunctionsCRUD,
   generatePythonAzureFunctionsCRUD,
 } from "../../core/scaffold/functions-generator";
-import { generateCompactBFFRoutes, generateBFFCallFunction } from "../../core/scaffold/nextjs-generator";
+import {
+  generateRdbConnectorFunctionTS,
+  generateApiConnectorFunctionTS,
+  generateRdbConnectorFunctionCSharp,
+  generateApiConnectorFunctionCSharp,
+  generateRdbConnectorFunctionPython,
+  generateApiConnectorFunctionPython,
+  isReadOnlyConnector,
+} from "../../core/scaffold/connector-functions-generator";
+import { generateCompactBFFRoutes, generateBFFCallFunction, generateConnectorBFFRoutes } from "../../core/scaffold/nextjs-generator";
 import { generateOpenApiDocument } from "../../core/scaffold/openapi-generator";
 import {
   generateListPage,
@@ -23,7 +32,13 @@ import {
   generateEditPage,
 } from "../../core/scaffold/ui-generator";
 import { detectFromProject, getCommands } from "../../utils/package-manager";
-import { BackendLanguage } from "../../types";
+import {
+  BackendLanguage,
+  RdbConnectorConfig,
+  ApiConnectorConfig,
+  RdbModelConnectorConfig,
+  ApiModelConnectorConfig,
+} from "../../types";
 
 interface ScaffoldOptions {
   model: string; // モデルファイルのパス（例: "lib/models/todo.ts" or "todo"）
@@ -50,6 +65,13 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
 
     const backendLanguage = getBackendLanguage();
     console.log(`🧠 Backend language: ${backendLanguage}`);
+    
+    // コネクタモデルかどうかを判定
+    const isConnectorModel = !!modelInfo.connectorConfig;
+    if (isConnectorModel) {
+      console.log(`🔌 Connector model detected: ${modelInfo.connectorConfig!.connector}`);
+      console.log(`   Operations: ${modelInfo.connectorConfig!.operations.join(", ")}`);
+    }
     
     // ネストスキーマ参照があれば表示
     if (modelInfo.nestedSchemaRefs.length > 0) {
@@ -79,18 +101,28 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     await generateCallFunctionHelper();
 
     // 6. Generate Azure Functions code
-    await generateFunctionsCode(modelInfo, functionsDir, sharedPackageName, backendLanguage);
+    if (isConnectorModel) {
+      await generateConnectorFunctionsCode(modelInfo, functionsDir, sharedPackageName, backendLanguage);
+    } else {
+      await generateFunctionsCode(modelInfo, functionsDir, sharedPackageName, backendLanguage);
 
-    if (backendLanguage !== "typescript") {
-      await generateLanguageSchemaArtifacts(relatedModels, modelInfo, functionsDir, backendLanguage);
+      if (backendLanguage !== "typescript") {
+        await generateLanguageSchemaArtifacts(relatedModels, modelInfo, functionsDir, backendLanguage);
+      }
     }
 
     // 7. Generate Next.js BFF API Routes
     const apiDir = options.apiDir || "app/api";
-    await generateBFFRoutes(modelInfo, apiDir, sharedPackageName);
+    if (isConnectorModel) {
+      await generateConnectorBFFRoutesFiles(modelInfo, apiDir, sharedPackageName);
+    } else {
+      await generateBFFRoutes(modelInfo, apiDir, sharedPackageName);
+    }
 
-    // 8. Generate Cosmos DB container Bicep file
-    await generateCosmosContainer(modelInfo);
+    // 8. Generate Cosmos DB container Bicep file (skip for connector models)
+    if (!isConnectorModel) {
+      await generateCosmosContainer(modelInfo);
+    }
 
     // 9. Generate UI components (unless --api-only)
     if (!options.apiOnly) {
@@ -261,6 +293,140 @@ async function generateFunctionsCode(
   fs.writeFileSync(blueprintPath, blueprint, "utf-8");
   updatePythonFunctionRegistrations(path.join(process.cwd(), functionsDir, "function_app.py"), registration);
   console.log(`✅ Created: ${blueprintPath}`);
+}
+
+/**
+ * コネクタモデル用 Azure Functions コード生成
+ */
+async function generateConnectorFunctionsCode(
+  modelInfo: ModelInfo,
+  functionsDir: string,
+  sharedPackageName: string,
+  backendLanguage: BackendLanguage
+): Promise<void> {
+  console.log("\n🔌 Generating Connector Azure Functions code...");
+
+  const connectorConfig = modelInfo.connectorConfig!;
+  const connectorDef = getConnectorDefinition(connectorConfig.connector);
+
+  if (!connectorDef) {
+    throw new Error(
+      `Connector '${connectorConfig.connector}' not found in swallowkit.config.js.\n` +
+      `  Please add it to the 'connectors' section of your configuration.`
+    );
+  }
+
+  const modelKebab = toKebabCase(modelInfo.name);
+
+  if (backendLanguage === "typescript") {
+    const functionFilePath = path.join(
+      process.cwd(),
+      functionsDir,
+      "src",
+      `${modelKebab}.ts`
+    );
+    fs.mkdirSync(path.dirname(functionFilePath), { recursive: true });
+
+    let code: string;
+    if (connectorDef.type === "rdb") {
+      code = generateRdbConnectorFunctionTS(
+        modelInfo, sharedPackageName,
+        connectorDef as RdbConnectorConfig,
+        connectorConfig as RdbModelConnectorConfig
+      );
+    } else {
+      code = generateApiConnectorFunctionTS(
+        modelInfo, sharedPackageName,
+        connectorDef as ApiConnectorConfig,
+        connectorConfig as ApiModelConnectorConfig
+      );
+    }
+
+    fs.writeFileSync(functionFilePath, code, "utf-8");
+    console.log(`✅ Created: ${functionFilePath}`);
+    return;
+  }
+
+  if (backendLanguage === "csharp") {
+    const functionFilePath = path.join(
+      process.cwd(),
+      functionsDir,
+      "Connectors",
+      `${modelInfo.name}ConnectorFunctions.cs`
+    );
+    fs.mkdirSync(path.dirname(functionFilePath), { recursive: true });
+
+    let code: string;
+    if (connectorDef.type === "rdb") {
+      code = generateRdbConnectorFunctionCSharp(
+        modelInfo,
+        connectorDef as RdbConnectorConfig,
+        connectorConfig as RdbModelConnectorConfig
+      );
+    } else {
+      code = generateApiConnectorFunctionCSharp(
+        modelInfo,
+        connectorDef as ApiConnectorConfig,
+        connectorConfig as ApiModelConnectorConfig
+      );
+    }
+
+    fs.writeFileSync(functionFilePath, code, "utf-8");
+    console.log(`✅ Created: ${functionFilePath}`);
+    return;
+  }
+
+  // Python
+  const blueprintsDir = path.join(process.cwd(), functionsDir, "blueprints");
+  const blueprintPath = path.join(blueprintsDir, `${modelKebab.replace(/-/g, "_")}.py`);
+  fs.mkdirSync(blueprintsDir, { recursive: true });
+
+  let result: { blueprint: string; registration: string };
+  if (connectorDef.type === "rdb") {
+    result = generateRdbConnectorFunctionPython(
+      modelInfo,
+      connectorDef as RdbConnectorConfig,
+      connectorConfig as RdbModelConnectorConfig
+    );
+  } else {
+    result = generateApiConnectorFunctionPython(
+      modelInfo,
+      connectorDef as ApiConnectorConfig,
+      connectorConfig as ApiModelConnectorConfig
+    );
+  }
+
+  fs.writeFileSync(blueprintPath, result.blueprint, "utf-8");
+  updatePythonFunctionRegistrations(path.join(process.cwd(), functionsDir, "function_app.py"), result.registration);
+  console.log(`✅ Created: ${blueprintPath}`);
+}
+
+/**
+ * コネクタモデル用 BFF ルート生成（操作制限に対応）
+ */
+async function generateConnectorBFFRoutesFiles(
+  modelInfo: ModelInfo,
+  apiDir: string,
+  sharedPackageName: string
+): Promise<void> {
+  console.log("\n🔌 Generating Connector BFF API routes...");
+
+  const modelCamel = toCamelCase(modelInfo.name);
+  const operations = modelInfo.connectorConfig!.operations;
+
+  const listRoutePath = path.join(process.cwd(), apiDir, modelCamel, "route.ts");
+  const detailRoutePath = path.join(process.cwd(), apiDir, modelCamel, "[id]", "route.ts");
+
+  fs.mkdirSync(path.dirname(listRoutePath), { recursive: true });
+  fs.mkdirSync(path.dirname(detailRoutePath), { recursive: true });
+
+  const routes = generateConnectorBFFRoutes(modelInfo, sharedPackageName, operations);
+
+  fs.writeFileSync(listRoutePath, routes.listRoute, "utf-8");
+  fs.writeFileSync(detailRoutePath, routes.detailRoute, "utf-8");
+
+  console.log(`✅ Created: ${listRoutePath}`);
+  console.log(`✅ Created: ${detailRoutePath}`);
 }
 
 async function collectModelGraph(modelPath: string, seen = new Map<string, ModelInfo>()): Promise<ModelInfo[]> {

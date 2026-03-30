@@ -9,6 +9,7 @@ import { ModelInfo } from '../../core/scaffold/model-parser';
 import { applyDevSeedEnvironment, getContainerNameForModel, loadProjectModels } from './dev-seeds';
 import { BackendLanguage } from '../../types';
 import { detectFromProject, getCommands } from '../../utils/package-manager';
+import { ConnectorMockServer } from '../../core/mock/connector-mock-server';
 
 interface DevOptions {
   port?: string;
@@ -18,6 +19,7 @@ interface DevOptions {
   verbose?: boolean;
   noFunctions?: boolean;
   seedEnv?: string;
+  mockConnectors?: boolean;
 }
 
 export function buildFunctionsStartArgs(functionsPort: string): string[] {
@@ -323,7 +325,8 @@ export const devCommand = new Command()
   .option('--verbose', 'Show verbose logs', false)
   .option('--no-functions', 'Skip Azure Functions startup', false)
   .option('--seed-env <environment>', 'Replace Cosmos DB Emulator data from dev-seeds/<environment> before startup')
-  .action(async (options: DevOptions & { functionsPort?: string; noFunctions?: boolean; seedEnv?: string }) => {
+  .option('--mock-connectors', 'Start mock server for connector models (serves Zod-generated data)', false)
+  .action(async (options: DevOptions & { functionsPort?: string; noFunctions?: boolean; seedEnv?: string; mockConnectors?: boolean }) => {
     // SwallowKit プロジェクトディレクトリかどうかを検証
     ensureSwallowKitProject("dev");
 
@@ -454,10 +457,14 @@ async function startDevEnvironment(options: DevOptions) {
   // プロセスを管理する配列
   const processes: ChildProcess[] = [];
   let functionsEnv: NodeJS.ProcessEnv = process.env;
+  let mockServer: ConnectorMockServer | null = null;
 
   // Cleanup processes on Ctrl+C
-  process.on('SIGINT', () => {
+  process.on('SIGINT', async () => {
     console.log('\n🛑 Stopping development servers...');
+    if (mockServer) {
+      await mockServer.stop();
+    }
     processes.forEach((proc) => {
       if (proc && !proc.killed) {
         proc.kill();
@@ -695,6 +702,41 @@ async function startDevEnvironment(options: DevOptions) {
     console.log('');
     console.log('🚀 Starting Next.js development server...');
 
+    // Mock connector server — start proxy if --mock-connectors is enabled
+    let bffTargetPort = functionsPort;
+
+    if (options.mockConnectors) {
+      const allModels = await loadProjectModels();
+      const connectorModels = allModels.filter((m) => m.connectorConfig);
+
+      if (connectorModels.length > 0) {
+        const mockPort = parseInt(functionsPort, 10) + 1;
+        mockServer = new ConnectorMockServer({
+          port: mockPort,
+          functionsTarget: `${options.host || 'localhost'}:${functionsPort}`,
+          connectorModels,
+          allModels,
+          seedEnv: options.seedEnv,
+          host: options.host || 'localhost',
+        });
+
+        await mockServer.start();
+        bffTargetPort = String(mockPort);
+
+        console.log('');
+        console.log(`🔌 Connector mock server started (port: ${mockPort})`);
+        console.log(`   Mocking ${connectorModels.length} connector model(s):`);
+        for (const m of connectorModels) {
+          const ops = m.connectorConfig!.operations.join(', ');
+          console.log(`     - ${m.name} [${ops}]`);
+        }
+        console.log(`   Other routes → proxied to Azure Functions (port: ${functionsPort})`);
+      } else {
+        console.log('');
+        console.log('ℹ️  --mock-connectors specified but no connector models found. Skipping mock server.');
+      }
+    }
+
     // 5. Start Next.js development server
     const nextArgs = buildNextDevArgs(pm, port);
     
@@ -712,8 +754,8 @@ async function startDevEnvironment(options: DevOptions) {
 
     const nextEnv: NodeJS.ProcessEnv = {
       ...process.env,
-      BACKEND_FUNCTIONS_BASE_URL: `http://${options.host || 'localhost'}:${functionsPort}`,
-      FUNCTIONS_BASE_URL: `http://${options.host || 'localhost'}:${functionsPort}`,
+      BACKEND_FUNCTIONS_BASE_URL: `http://${options.host || 'localhost'}:${bffTargetPort}`,
+      FUNCTIONS_BASE_URL: `http://${options.host || 'localhost'}:${bffTargetPort}`,
     };
 
     const nextProcess = spawn(pm === 'pnpm' ? 'pnpm' : 'npx', nextArgs, {
@@ -735,6 +777,9 @@ async function startDevEnvironment(options: DevOptions) {
         console.log(`\n⏹️  Next.js exited (exit code: ${code})`);
       }
       // Exit all processes when Next.js exits
+      if (mockServer) {
+        mockServer.stop().catch(() => {});
+      }
       processes.forEach((proc) => {
         if (proc && !proc.killed) {
           proc.kill();
@@ -750,9 +795,15 @@ async function startDevEnvironment(options: DevOptions) {
     if (hasFunctions && !options.noFunctions) {
       console.log(`⚡ Azure Functions: http://${options.host || 'localhost'}:${functionsPort}`);
     }
+    if (mockServer) {
+      console.log(`🔌 Mock Proxy: http://${options.host || 'localhost'}:${bffTargetPort} (BFF → here)`);
+    }
     console.log('');
     if (hasFunctions && !options.noFunctions) {
       console.log('💡 Azure Functions and Next.js BFF are connected');
+    }
+    if (mockServer) {
+      console.log('💡 Connector models served from mock server (Zod-generated data)');
     }
     console.log('');
     console.log('🛑 Press Ctrl+C to stop');
