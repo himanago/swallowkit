@@ -28,7 +28,7 @@ export interface ConnectorMockServerOptions {
   mockCount?: number;
   /** ホスト名 */
   host?: string;
-  /** Auth configuration for mock auth endpoints */
+  /** Auth config — auth functions use RDB connector, mocked the same way */
   authConfig?: {
     /** JWT secret for mock token generation/verification */
     jwtSecret: string;
@@ -40,6 +40,8 @@ export interface ConnectorMockServerOptions {
       passwordHashColumn: string;
       rolesColumn: string;
     };
+    /** Default auth policy: 'authenticated' = all models need auth, 'anonymous' = only models with authPolicy */
+    defaultPolicy?: "authenticated" | "anonymous";
   };
 }
 
@@ -140,27 +142,27 @@ export class ConnectorMockServer {
       }
     }
 
-    // Load auth users from dev-seeds/_auth-users.json
+    // Load auth users from dev-seeds/_auth-users.json (auth uses RDB connector, same mock approach)
     if (this.options.seedEnv && this.options.authConfig) {
       const seedsDir = this.options.seedsDir || path.join(process.cwd(), "dev-seeds");
       const authUsersPath = path.join(seedsDir, this.options.seedEnv, "_auth-users.json");
       if (fs.existsSync(authUsersPath)) {
         try {
           this.authUsers = JSON.parse(fs.readFileSync(authUsersPath, "utf-8"));
-          console.log(`  🔐 Loaded ${this.authUsers.length} mock auth user(s)`);
+          console.log(`  📂 Loaded ${this.authUsers.length} auth user seed(s) from _auth-users.json`);
         } catch (err) {
           console.warn(`⚠️  Failed to load _auth-users.json: ${(err as Error).message}`);
         }
       }
     }
 
-    // Generate default mock auth users if authConfig is present but no users loaded
+    // Fallback: default auth user seeds when no seed file exists
     if (this.options.authConfig && this.authUsers.length === 0) {
       this.authUsers = [
         { id: "1", loginId: "admin", password: "password123", name: "Admin User", email: "admin@example.com", roles: ["admin"] },
         { id: "2", loginId: "user", password: "password123", name: "Test User", email: "user@example.com", roles: ["user"] },
       ];
-      console.log("  🔐 Using default mock auth users (admin/password123, user/password123)");
+      console.log("  📂 Using default auth user seeds (admin/password123, user/password123)");
     }
   }
 
@@ -209,6 +211,11 @@ export class ConnectorMockServer {
     const store = this.stores.get(route) || [];
     const model = this.routeMap.get(route)!;
     const ops = model.connectorConfig?.operations || [];
+
+    const isWrite = method === "POST" || method === "PUT" || method === "DELETE";
+    const requiredRoles = this.resolveRequiredRoles(model, isWrite);
+    const authResult = this.checkAuth(req, res, model, requiredRoles);
+    if (authResult === "error") return; // 401/403 already sent
 
     switch (method) {
       case "GET":
@@ -303,7 +310,7 @@ export class ConnectorMockServer {
     req.pipe(proxyReq, { end: true });
   }
 
-  // ─── Auth Endpoints ──────────────────────────────────────
+  // ─── Auth Routes (RDB user queries + JWT generation) ───
 
   private handleAuthRequest(
     req: http.IncomingMessage,
@@ -434,6 +441,72 @@ export class ConnectorMockServer {
   }
 
   // ─── Utilities ────────────────────────────────────────────
+
+  /**
+   * JWT を検証し、ペイロード（roles 含む）を返す。
+   * 認証不要な場合は null を返す。401/403 の場合はレスポンスを送信して 'error' を返す。
+   */
+  private checkAuth(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    model: ModelInfo,
+    requiredRoles: string[] | undefined
+  ): Record<string, unknown> | null | "error" {
+    const authCfg = this.options.authConfig;
+    if (!authCfg) return null; // auth 未設定 → 全スルー
+
+    const policy = model.authPolicy;
+    const defaultPolicy = authCfg.defaultPolicy || "anonymous";
+
+    // モデルに authPolicy がなく defaultPolicy が anonymous → 認証不要
+    if (!policy && defaultPolicy === "anonymous") return null;
+
+    // JWT 検証
+    const authHeader = req.headers["authorization"];
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      this.sendJson(res, 401, { error: "Missing or invalid Authorization header" });
+      return "error";
+    }
+
+    const token = authHeader.slice(7);
+    try {
+      const jwt = require("jsonwebtoken");
+      const payload = jwt.verify(token, authCfg.jwtSecret) as Record<string, unknown>;
+
+      // ロールチェック
+      if (requiredRoles && requiredRoles.length > 0) {
+        const userRoles = Array.isArray(payload.roles) ? (payload.roles as string[]) : [];
+        const hasRole = requiredRoles.some((r) => userRoles.includes(r));
+        if (!hasRole) {
+          this.sendJson(res, 403, {
+            error: `Requires one of roles: ${requiredRoles.join(", ")}`,
+          });
+          return "error";
+        }
+      }
+
+      return payload;
+    } catch {
+      this.sendJson(res, 401, { error: "Invalid or expired token" });
+      return "error";
+    }
+  }
+
+  /**
+   * モデルの authPolicy から read/write に必要なロールを解決
+   */
+  private resolveRequiredRoles(
+    model: ModelInfo,
+    isWrite: boolean
+  ): string[] | undefined {
+    const policy = model.authPolicy;
+    if (!policy) return undefined; // defaultPolicy: authenticated → 認証のみ、ロールチェック不要
+
+    if (isWrite) {
+      return policy.write || policy.roles;
+    }
+    return policy.read || policy.roles;
+  }
 
   private readBody(req: http.IncomingMessage, callback: (body: MockDocument) => void) {
     let data = "";

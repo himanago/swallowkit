@@ -709,9 +709,9 @@ async function startDevEnvironment(options: DevOptions) {
       const allModels = await loadProjectModels();
       const connectorModels = allModels.filter((m) => m.connectorConfig);
 
-      // Resolve auth config for mock auth endpoints
+      // Resolve auth config — auth functions use RDB connectors, mocked alongside other models
       const authConfig = getAuthConfig();
-      let mockAuthConfig: { jwtSecret: string; tokenExpiry?: string; customJwt?: { loginIdColumn: string; passwordHashColumn: string; rolesColumn: string } } | undefined;
+      let mockAuthConfig: { jwtSecret: string; tokenExpiry?: string; customJwt?: { loginIdColumn: string; passwordHashColumn: string; rolesColumn: string }; defaultPolicy?: "authenticated" | "anonymous" } | undefined;
       if (authConfig?.provider === 'custom-jwt' && authConfig.customJwt) {
         const fullConfig = getFullConfig();
         // Read JWT_SECRET from functions/local.settings.json if available
@@ -731,6 +731,7 @@ async function startDevEnvironment(options: DevOptions) {
             passwordHashColumn: authConfig.customJwt.passwordHashColumn,
             rolesColumn: authConfig.customJwt.rolesColumn,
           },
+          defaultPolicy: authConfig.authorization?.defaultPolicy,
         };
       }
 
@@ -749,22 +750,20 @@ async function startDevEnvironment(options: DevOptions) {
         await mockServer.start();
         bffTargetPort = String(mockPort);
 
+        const modelCount = connectorModels.length + (mockAuthConfig ? 1 : 0);
         console.log('');
-        console.log(`🔌 Connector mock server started (port: ${mockPort})`);
-        if (connectorModels.length > 0) {
-          console.log(`   Mocking ${connectorModels.length} connector model(s):`);
-          for (const m of connectorModels) {
-            const ops = m.connectorConfig!.operations.join(', ');
-            console.log(`     - ${m.name} [${ops}]`);
-          }
+        console.log(`🔌 Mock server started (port: ${mockPort}) — ${modelCount} model(s) mocked via Zod/seed data`);
+        for (const m of connectorModels) {
+          const ops = m.connectorConfig!.operations.join(', ');
+          console.log(`     - ${m.name} [${ops}]`);
         }
         if (mockAuthConfig) {
-          console.log(`   🔐 Mock auth endpoints enabled (POST /api/auth/login, GET /api/auth/me)`);
+          console.log(`     - auth [login, me, logout]`);
         }
         console.log(`   Other routes → proxied to Azure Functions (port: ${functionsPort})`);
       } else {
         console.log('');
-        console.log('ℹ️  --mock-connectors specified but no connector models or auth config found. Skipping mock server.');
+        console.log('ℹ️  --mock-connectors specified but no connector models found. Skipping mock server.');
       }
     }
 

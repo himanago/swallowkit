@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { z } from 'zod/v4';
 import { todoSchema } from '@myapp/shared';
 
+
 type Todo = z.infer<typeof todoSchema>;
 
 export default function TodoDetailPage() {
@@ -17,6 +18,7 @@ export default function TodoDetailPage() {
   const [todo, setTodo] = useState<Todo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
 
 
   useEffect(() => {
@@ -141,17 +143,21 @@ exports[`generateEditPage generates edit page (snapshot) 1`] = `
 "'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import TodoForm from '../../_components/TodoForm';
 import { z } from 'zod/v4';
 import { todoSchema } from '@myapp/shared';
+
 
 type Todo = z.infer<typeof todoSchema>;
 
 export default function EditTodoPage() {
   const params = useParams();
+
   const [todo, setTodo] = useState<Todo | null>(null);
   const [loading, setLoading] = useState(true);
+
+
 
   useEffect(() => {
     const id = params?.id as string;
@@ -360,12 +366,14 @@ import Link from 'next/link';
 import { z } from 'zod/v4';
 import { todoSchema } from '@myapp/shared';
 
+
 type Todo = z.infer<typeof todoSchema>;
 
 export default function TodoListPage() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
 
 
   useEffect(() => {

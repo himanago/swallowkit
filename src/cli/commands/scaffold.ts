@@ -30,6 +30,7 @@ import {
   generateFormComponent,
   generateNewPage,
   generateEditPage,
+  UIAuthOptions,
 } from "../../core/scaffold/ui-generator";
 import { detectFromProject, getCommands } from "../../utils/package-manager";
 import {
@@ -105,6 +106,8 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     // 6. Generate Azure Functions code
     if (isConnectorModel) {
       await generateConnectorFunctionsCode(modelInfo, functionsDir, sharedPackageName, backendLanguage);
+      // 6b. Install connector driver dependencies
+      await installConnectorDriverDependencies(modelInfo, functionsDir, backendLanguage);
     } else {
       await generateFunctionsCode(modelInfo, functionsDir, sharedPackageName, backendLanguage);
 
@@ -128,7 +131,13 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
 
     // 9. Generate UI components (unless --api-only)
     if (!options.apiOnly) {
-      await generateUIComponents(modelInfo, sharedPackageName);
+      const uiAuthConfig = getAuthConfig();
+      const uiAuthPolicy = resolveAuthPolicy(modelInfo, uiAuthConfig);
+      const uiAuthOptions: UIAuthOptions | undefined =
+        uiAuthPolicy && uiAuthConfig && uiAuthConfig.provider !== 'none'
+          ? { authPolicy: uiAuthPolicy }
+          : undefined;
+      await generateUIComponents(modelInfo, sharedPackageName, uiAuthOptions);
       await updateNavigationMenu(modelInfo);
     }
 
@@ -265,7 +274,17 @@ async function generateCallFunctionHelper(): Promise<void> {
     fs.mkdirSync(helperDir, { recursive: true });
   }
 
-  const helperCode = generateBFFCallFunction();
+  // auth 設定がある場合は Authorization ヘッダー転送版を生成
+  const authConfig = getAuthConfig();
+  const hasAuth = authConfig && authConfig.provider !== 'none';
+  let helperCode: string;
+  if (hasAuth) {
+    const { generateBFFCallFunctionWithAuth } = await import("../../core/scaffold/auth-generator");
+    helperCode = generateBFFCallFunctionWithAuth();
+  } else {
+    helperCode = generateBFFCallFunction();
+  }
+
   fs.writeFileSync(helperPath, helperCode, "utf-8");
   console.log(`✅ Created: ${helperPath}`);
 }
@@ -352,6 +371,13 @@ async function generateConnectorFunctionsCode(
     );
   }
 
+  // Resolve auth policy (same logic as Cosmos model scaffolding)
+  const authConfig = getAuthConfig();
+  const authPolicy = resolveAuthPolicy(modelInfo, authConfig);
+  if (authPolicy) {
+    console.log(`🔐 Auth policy detected: ${JSON.stringify(authPolicy)}`);
+  }
+
   const modelKebab = toKebabCase(modelInfo.name);
 
   if (backendLanguage === "typescript") {
@@ -368,13 +394,15 @@ async function generateConnectorFunctionsCode(
       code = generateRdbConnectorFunctionTS(
         modelInfo, sharedPackageName,
         connectorDef as RdbConnectorConfig,
-        connectorConfig as RdbModelConnectorConfig
+        connectorConfig as RdbModelConnectorConfig,
+        authPolicy
       );
     } else {
       code = generateApiConnectorFunctionTS(
         modelInfo, sharedPackageName,
         connectorDef as ApiConnectorConfig,
-        connectorConfig as ApiModelConnectorConfig
+        connectorConfig as ApiModelConnectorConfig,
+        authPolicy
       );
     }
 
@@ -435,6 +463,96 @@ async function generateConnectorFunctionsCode(
   fs.writeFileSync(blueprintPath, result.blueprint, "utf-8");
   updatePythonFunctionRegistrations(path.join(process.cwd(), functionsDir, "function_app.py"), result.registration);
   console.log(`✅ Created: ${blueprintPath}`);
+}
+
+/**
+ * コネクタモデルの scaffold 後に、生成コードが必要とする RDB/API ドライバを
+ * functions ディレクトリにインストールする。
+ */
+async function installConnectorDriverDependencies(
+  modelInfo: ModelInfo,
+  functionsDir: string,
+  backendLanguage: BackendLanguage
+): Promise<void> {
+  const connectorConfig = modelInfo.connectorConfig!;
+  const connectorDef = getConnectorDefinition(connectorConfig.connector);
+  if (!connectorDef || connectorDef.type !== "rdb") return;
+
+  const rdbDef = connectorDef as RdbConnectorConfig;
+  const functionsPath = path.join(process.cwd(), functionsDir);
+
+  if (backendLanguage === "typescript") {
+    const driverMap: Record<string, { deps: string[]; devDeps: string[] }> = {
+      mysql:     { deps: ["mysql2"],  devDeps: [] },
+      postgres:  { deps: ["pg"],      devDeps: ["@types/pg"] },
+      sqlserver: { deps: ["mssql"],   devDeps: [] },
+    };
+    const entry = driverMap[rdbDef.provider];
+    if (!entry) return;
+
+    // package.json を読んで、既にインストール済みならスキップ
+    const pkgJsonPath = path.join(functionsPath, "package.json");
+    if (fs.existsSync(pkgJsonPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
+      const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+      const missingDeps = entry.deps.filter(d => !allDeps[d]);
+      const missingDevDeps = entry.devDeps.filter(d => !allDeps[d]);
+      if (missingDeps.length === 0 && missingDevDeps.length === 0) return;
+    }
+
+    console.log(`\n📦 Installing ${rdbDef.provider} driver dependencies...`);
+    const pm = detectFromProject(functionsPath);
+    const cmds = getCommands(pm);
+
+    const { spawnSync } = require("child_process");
+    if (entry.deps.length > 0) {
+      spawnSync(cmds.name, [pm === "pnpm" ? "add" : "install", ...entry.deps], {
+        cwd: functionsPath, stdio: "inherit", shell: true,
+      });
+    }
+    if (entry.devDeps.length > 0) {
+      spawnSync(cmds.name, [pm === "pnpm" ? "add" : "install", "-D", ...entry.devDeps], {
+        cwd: functionsPath, stdio: "inherit", shell: true,
+      });
+    }
+    console.log(`✅ ${rdbDef.provider} driver installed`);
+    return;
+  }
+
+  if (backendLanguage === "csharp") {
+    const nugetMap: Record<string, string> = {
+      mysql:     "MySqlConnector",
+      postgres:  "Npgsql",
+      sqlserver: "Microsoft.Data.SqlClient",
+    };
+    const pkg = nugetMap[rdbDef.provider];
+    if (!pkg) return;
+    console.log(`\n📦 Installing ${rdbDef.provider} NuGet package...`);
+    const { spawnSync } = require("child_process");
+    spawnSync("dotnet", ["add", path.join(functionsPath, "functions.csproj"), "package", pkg], {
+      cwd: functionsPath, stdio: "inherit", shell: true,
+    });
+    console.log(`✅ ${pkg} installed`);
+    return;
+  }
+
+  // Python — requirements.txt に追記
+  const pipMap: Record<string, string> = {
+    mysql:     "mysql-connector-python",
+    postgres:  "psycopg2-binary",
+    sqlserver: "pymssql",
+  };
+  const pipPkg = pipMap[rdbDef.provider];
+  if (!pipPkg) return;
+  const reqPath = path.join(functionsPath, "requirements.txt");
+  if (fs.existsSync(reqPath)) {
+    const existing = fs.readFileSync(reqPath, "utf-8");
+    if (!existing.includes(pipPkg)) {
+      console.log(`\n📦 Adding ${pipPkg} to requirements.txt...`);
+      fs.appendFileSync(reqPath, `\n${pipPkg}\n`);
+      console.log(`✅ ${pipPkg} added`);
+    }
+  }
 }
 
 /**
@@ -910,7 +1028,7 @@ module ${containerModuleName} 'containers/${modelKebab}-container.bicep' = {
 /**
  * Generate UI components (list, detail, form, create, edit pages)
  */
-async function generateUIComponents(modelInfo: any, sharedPackageName: string): Promise<void> {
+async function generateUIComponents(modelInfo: any, sharedPackageName: string, authOptions?: UIAuthOptions): Promise<void> {
   console.log("\n🎨 Generating UI components...");
 
   const modelKebab = toKebabCase(modelInfo.name);
@@ -932,11 +1050,11 @@ async function generateUIComponents(modelInfo: any, sharedPackageName: string): 
   });
 
   // Generate and write files
-  const listPage = generateListPage(modelInfo, sharedPackageName);
-  const detailPage = generateDetailPage(modelInfo, sharedPackageName);
+  const listPage = generateListPage(modelInfo, sharedPackageName, authOptions);
+  const detailPage = generateDetailPage(modelInfo, sharedPackageName, authOptions);
   const formComponent = generateFormComponent(modelInfo, sharedPackageName);
-  const newPage = generateNewPage(modelInfo);
-  const editPage = generateEditPage(modelInfo, sharedPackageName);
+  const newPage = generateNewPage(modelInfo, authOptions);
+  const editPage = generateEditPage(modelInfo, sharedPackageName, authOptions);
 
   fs.writeFileSync(path.join(modelDir, "page.tsx"), listPage, "utf-8");
   fs.writeFileSync(path.join(idDir, "page.tsx"), detailPage, "utf-8");

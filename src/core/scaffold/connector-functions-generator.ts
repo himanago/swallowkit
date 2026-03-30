@@ -11,7 +11,9 @@ import {
   RdbModelConnectorConfig,
   ApiModelConnectorConfig,
   ConnectorOperation,
+  ModelAuthPolicy,
 } from "../../types";
+import { generateAuthImportTS, generateAuthGuardTS } from "./auth-generator";
 
 // ─── TypeScript Generators ────────────────────────────────────────
 
@@ -22,7 +24,8 @@ export function generateRdbConnectorFunctionTS(
   model: ModelInfo,
   sharedPackageName: string,
   connectorDef: RdbConnectorConfig,
-  modelConnector: RdbModelConnectorConfig
+  modelConnector: RdbModelConnectorConfig,
+  authPolicy?: ModelAuthPolicy
 ): string {
   const modelCamel = toCamelCase(model.name);
   const schemaName = model.schemaName;
@@ -118,10 +121,20 @@ export function generateRdbConnectorFunctionTS(
         await pool.close();
       }`;
 
+  // Auth guard setup
+  const hasAuth = !!authPolicy;
+  const authImport = hasAuth ? `\n${generateAuthImportTS()}\n` : '';
+  const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read')}\n` : '';
+  const writeGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'write')}\n` : '';
+  const authCatchBlock = hasAuth
+    ? `      const authErr = handleAuthError(error);
+      if (authErr) return authErr;\n      `
+    : `      `;
+
   let code = `import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { z } from 'zod/v4';
 import { ${schemaName} } from '${sharedPackageName}';
-${driverImport}
+${driverImport}${authImport}
 
 ${getConnection}
 `;
@@ -134,10 +147,10 @@ app.http('${modelCamel}-get-all', {
   route: '${modelCamel}',
   authLevel: 'anonymous',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${readGuard}
       ${queryAll}
     } catch (error) {
-      context.error(\`Error fetching from ${table}:\`, error);
+      ${authCatchBlock}context.error(\`Error fetching from ${table}:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to fetch items' } };
     }
   },
@@ -153,14 +166,14 @@ app.http('${modelCamel}-get-by-id', {
   route: '${modelCamel}/{id}',
   authLevel: 'anonymous',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${readGuard}
       const id = request.params.id;
       if (!id) {
         return { status: 400, jsonBody: { error: 'ID is required' } };
       }
       ${queryById}
     } catch (error) {
-      context.error(\`Error fetching item from ${table}:\`, error);
+      ${authCatchBlock}context.error(\`Error fetching item from ${table}:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to fetch item' } };
     }
   },
@@ -178,7 +191,8 @@ export function generateApiConnectorFunctionTS(
   model: ModelInfo,
   sharedPackageName: string,
   connectorDef: ApiConnectorConfig,
-  modelConnector: ApiModelConnectorConfig
+  modelConnector: ApiModelConnectorConfig,
+  authPolicy?: ModelAuthPolicy
 ): string {
   const modelCamel = toCamelCase(model.name);
   const schemaName = model.schemaName;
@@ -188,9 +202,19 @@ export function generateApiConnectorFunctionTS(
 
   const authSetup = generateTSAuthSetup(connectorDef);
 
+  // Auth guard setup (user access control, separate from connector auth to external APIs)
+  const hasAuth = !!authPolicy;
+  const authImportLine = hasAuth ? `\n${generateAuthImportTS()}\n` : '';
+  const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read')}\n` : '';
+  const writeGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'write')}\n` : '';
+  const authCatchBlock = hasAuth
+    ? `      const authErr = handleAuthError(error);
+      if (authErr) return authErr;\n      `
+    : `      `;
+
   let code = `import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { z } from 'zod/v4';
-import { ${schemaName} } from '${sharedPackageName}';
+import { ${schemaName} } from '${sharedPackageName}';${authImportLine}
 
 function getBaseUrl(): string {
   return process.env.${baseUrlEnv} || '';
@@ -209,7 +233,7 @@ app.http('${modelCamel}-get-all', {
   route: '${modelCamel}',
   authLevel: 'anonymous',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${readGuard}
       const url = getBaseUrl() + '${epPath}';
       const response = await fetch(url, {
         method: 'GET',
@@ -225,7 +249,7 @@ app.http('${modelCamel}-get-all', {
       const validated = z.array(${schemaName}).parse(data);
       return { status: 200, jsonBody: validated };
     } catch (error) {
-      context.error(\`Error fetching from external API:\`, error);
+      ${authCatchBlock}context.error(\`Error fetching from external API:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to fetch items' } };
     }
   },
@@ -243,7 +267,7 @@ app.http('${modelCamel}-get-by-id', {
   route: '${modelCamel}/{id}',
   authLevel: 'anonymous',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${readGuard}
       const id = request.params.id;
       if (!id) {
         return { status: 400, jsonBody: { error: 'ID is required' } };
@@ -265,7 +289,7 @@ app.http('${modelCamel}-get-by-id', {
       const validated = ${schemaName}.parse(data);
       return { status: 200, jsonBody: validated };
     } catch (error) {
-      context.error(\`Error fetching item from external API:\`, error);
+      ${authCatchBlock}context.error(\`Error fetching item from external API:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to fetch item' } };
     }
   },
@@ -283,7 +307,7 @@ app.http('${modelCamel}-create', {
   route: '${modelCamel}',
   authLevel: 'anonymous',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${writeGuard}
       const body = await request.json();
       const url = getBaseUrl() + '${epPath}';
       const response = await fetch(url, {
@@ -301,7 +325,7 @@ app.http('${modelCamel}-create', {
       const data = await response.json();
       return { status: 201, jsonBody: data };
     } catch (error) {
-      context.error(\`Error creating item via external API:\`, error);
+      ${authCatchBlock}context.error(\`Error creating item via external API:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to create item' } };
     }
   },
@@ -321,7 +345,7 @@ app.http('${modelCamel}-update', {
   route: '${modelCamel}/{id}',
   authLevel: 'anonymous',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${writeGuard}
       const id = request.params.id;
       if (!id) {
         return { status: 400, jsonBody: { error: 'ID is required' } };
@@ -343,7 +367,7 @@ app.http('${modelCamel}-update', {
       const data = await response.json();
       return { status: 200, jsonBody: data };
     } catch (error) {
-      context.error(\`Error updating item via external API:\`, error);
+      ${authCatchBlock}context.error(\`Error updating item via external API:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to update item' } };
     }
   },
@@ -361,7 +385,7 @@ app.http('${modelCamel}-delete', {
   route: '${modelCamel}/{id}',
   authLevel: 'anonymous',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${writeGuard}
       const id = request.params.id;
       if (!id) {
         return { status: 400, jsonBody: { error: 'ID is required' } };
@@ -378,7 +402,7 @@ app.http('${modelCamel}-delete', {
 
       return { status: 204 };
     } catch (error) {
-      context.error(\`Error deleting item via external API:\`, error);
+      ${authCatchBlock}context.error(\`Error deleting item via external API:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to delete item' } };
     }
   },

@@ -299,7 +299,7 @@ Functions ファイルはバックエンド言語によって異なります：
 | ログイン ID | パスワード | ロール |
 |-----------|----------|-------|
 | `admin` | `password123` | `admin` |
-| `user` | `password123` | （なし） |
+| `user` | `password123` | `user` |
 
 ### カスタムモックユーザー
 
@@ -330,9 +330,13 @@ Functions ファイルはバックエンド言語によって異なります：
 
 ## Scaffold 連携
 
-`scaffold` がモデルを処理する際、`authPolicy`（モデルファイルからエクスポートされたもの、または `auth.authorization.policies` で定義されたもの）が存在すると、生成される Functions コードにロールガードが注入されます。
+`scaffold` がモデルを処理する際、`authPolicy`（モデルファイルからエクスポートされたもの、または `auth.authorization.policies` で定義されたもの）が存在すると、以下が自動的に行われます：
 
-### 生成される内容
+1. **ロールガードを注入** — 生成される Azure Functions コード（バックエンド）
+2. **ロール対応 UI を生成** — 書き込みアクションの条件付きレンダリング（フロントエンド）
+3. **認証対応 `callFunction`** を選択 — Middleware から Functions への Authorization ヘッダー転送
+
+### バックエンドガード
 
 `authPolicy = { roles: ['admin', 'estimator'] }` を持つモデルの場合：
 
@@ -343,6 +347,41 @@ Functions ファイルはバックエンド言語によって異なります：
 
 - **GET エンドポイント**は `read` ロールに対してチェックされる
 - **POST / PUT / DELETE エンドポイント**は `write` ロールに対してチェックされる
+
+Cosmos DB モデルとコネクタ（RDB / API）モデルの両方に適用されます。
+
+### フロントエンドロール制御
+
+認証が設定されており、モデルの `authPolicy` に `write` ロールがある場合、scaffold はロール対応のレンダリングを含む UI ページを生成します：
+
+| ページ | 動作 |
+|-------|------|
+| **一覧ページ** | 「Create New」ボタンと「Edit」/「Delete」アクションは、write ロールを持たないユーザーには非表示 |
+| **詳細ページ** | 「Edit」と「Delete」ボタンは、write ロールを持たないユーザーには非表示 |
+| **新規作成・編集ページ** | write ロールがない場合、一覧ページにリダイレクト |
+
+生成コードは認証コンテキストの `useAuth()` フックと `hasAnyRole()` を使用します：
+
+```tsx
+// scaffold が生成するコード（一覧ページの例）
+const { hasAnyRole } = useAuth();
+const canWrite = hasAnyRole(["admin"]);
+
+// canWrite が true の場合のみ "Create New" ボタンをレンダリング
+{canWrite && <Link href="/employee/new">Create New</Link>}
+```
+
+💡 **注意**: フロントエンドのロールチェックは UX の利便性であり、セキュリティ境界ではありません。実際の認可は Azure Functions レイヤーで行われます。ユーザーが UI をバイパスしても、バックエンドは 401/403 で不正なリクエストを拒否します。
+
+### モックサーバーの認証制御
+
+`--mock-connectors` で実行する場合、モックサーバーもコネクタモデルのルートに対して認証を適用します：
+
+- 有効な JWT トークンのないリクエストには `401 Unauthorized` が返される
+- ロールが不足しているリクエストには `403 Forbidden` が返される
+- 認証制御は各モデルの `authPolicy` と `auth.authorization.defaultPolicy` を尊重する
+
+これにより開発時の動作が本番環境と一致します — デプロイ時に驚くことはありません。
 
 ### デフォルトポリシーの動作
 

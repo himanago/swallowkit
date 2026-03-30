@@ -247,7 +247,7 @@ export function generateToken(payload: { id: string; loginId: string; name: stri
   return jwt.sign(
     { sub: payload.id, loginId: payload.loginId, name: payload.name, email: payload.email, roles: payload.roles },
     JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRY || '24h' }
+    { expiresIn: process.env.JWT_EXPIRY || '24h' } as jwt.SignOptions
   );
 }
 

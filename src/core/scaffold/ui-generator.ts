@@ -4,14 +4,25 @@
  */
 
 import { ModelInfo, FieldInfo, toCamelCase, toKebabCase, toPascalCase } from "./model-parser";
+import { ModelAuthPolicy } from "../../types";
+
+/** auth が有効かつ authPolicy が存在する場合に渡されるオプション */
+export interface UIAuthOptions {
+  /** モデル固有のロールポリシー */
+  authPolicy: ModelAuthPolicy;
+}
 
 /**
  * 一覧画面を生成
  */
-export function generateListPage(model: ModelInfo, sharedPackageName: string): string {
+export function generateListPage(model: ModelInfo, sharedPackageName: string, authOptions?: UIAuthOptions): string {
   const modelName = model.name;
   const modelCamel = toCamelCase(modelName);
   const modelKebab = toKebabCase(modelName);
+  
+  const hasAuth = !!authOptions;
+  const writeRoles = authOptions?.authPolicy?.write || authOptions?.authPolicy?.roles;
+  const hasWriteRoles = hasAuth && writeRoles && writeRoles.length > 0;
   
   // フィールドから表示するカラムを抽出（id以外の最初の3つ）
   const displayFields = model.fields
@@ -64,6 +75,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { z } from 'zod/v4';
 ${schemaImportLine}
+${hasAuth ? `import { useAuth } from '@/lib/auth/auth-context';` : ''}
 
 type ${modelName} = z.infer<typeof ${localSchemaName}>;
 
@@ -72,6 +84,9 @@ export default function ${modelName}ListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 ${hasForeignKeys ? foreignKeyStates : ''}
+${hasWriteRoles ? `  const { hasAnyRole } = useAuth();
+  const canWrite = hasAnyRole(${JSON.stringify(writeRoles)});` : hasAuth ? `  const { user } = useAuth();
+  const canWrite = !!user;` : ''}
 
   useEffect(() => {
     fetch('/api/${modelCamel}')
@@ -135,12 +150,19 @@ ${hasForeignKeys ? foreignKeyFetches : ''}
       </div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">${modelName}</h1>
-        <Link
+${hasAuth ? `        {canWrite && (
+          <Link
+            href="/${modelKebab}/new"
+            className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white px-4 py-2 rounded"
+          >
+            Create New
+          </Link>
+        )}` : `        <Link
           href="/${modelKebab}/new"
           className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white px-4 py-2 rounded"
         >
           Create New
-        </Link>
+        </Link>`}
       </div>
 
       {${modelCamel}s.length === 0 ? (
@@ -199,7 +221,22 @@ ${displayFields.map(f => {
                     >
                       View
                     </Link>
-                    <Link
+${hasAuth ? `                    {canWrite && (
+                      <>
+                        <Link
+                          href={\`/${modelKebab}/\${item.id}/edit\`}
+                          className="text-green-600 dark:text-green-400 hover:text-green-900 dark:hover:text-green-300 mr-4"
+                        >
+                          Edit
+                        </Link>
+                        <button
+                          onClick={() => handleDelete(item.id)}
+                          className="text-red-600 dark:text-red-400 hover:text-red-900 dark:hover:text-red-300"
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}` : `                    <Link
                       href={\`/${modelKebab}/\${item.id}/edit\`}
                       className="text-green-600 dark:text-green-400 hover:text-green-900 dark:hover:text-green-300 mr-4"
                     >
@@ -210,7 +247,7 @@ ${displayFields.map(f => {
                       className="text-red-600 dark:text-red-400 hover:text-red-900 dark:hover:text-red-300"
                     >
                       Delete
-                    </button>
+                    </button>`}
                   </td>
                 </tr>
               ))}
@@ -227,10 +264,14 @@ ${displayFields.map(f => {
 /**
  * 詳細画面を生成
  */
-export function generateDetailPage(model: ModelInfo, sharedPackageName: string): string {
+export function generateDetailPage(model: ModelInfo, sharedPackageName: string, authOptions?: UIAuthOptions): string {
   const modelName = model.name;
   const modelCamel = toCamelCase(modelName);
   const modelKebab = toKebabCase(modelName);
+  
+  const hasAuth = !!authOptions;
+  const writeRoles = authOptions?.authPolicy?.write || authOptions?.authPolicy?.roles;
+  const hasWriteRoles = hasAuth && writeRoles && writeRoles.length > 0;
   
   // 外部キーフィールドを検出
   const foreignKeyFields = model.fields.filter(f => f.isForeignKey);
@@ -274,6 +315,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod/v4';
 ${schemaImportLine}
+${hasAuth ? `import { useAuth } from '@/lib/auth/auth-context';` : ''}
 
 type ${modelName} = z.infer<typeof ${localSchemaName}>;
 
@@ -284,6 +326,9 @@ export default function ${modelName}DetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 ${hasForeignKeys ? foreignKeyStates : ''}
+${hasWriteRoles ? `  const { hasAnyRole } = useAuth();
+  const canWrite = hasAnyRole(${JSON.stringify(writeRoles)});` : hasAuth ? `  const { user } = useAuth();
+  const canWrite = !!user;` : ''}
 
   useEffect(() => {
     const id = params?.id as string;
@@ -343,7 +388,22 @@ ${hasForeignKeys ? foreignKeyFetches : ''}
       <div className="max-w-2xl mx-auto">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">${modelName} Details</h1>
-          <div className="space-x-2">
+${hasAuth ? `          {canWrite && (
+            <div className="space-x-2">
+              <Link
+                href={\`/${modelKebab}/\${${modelCamel}.id}/edit\`}
+                className="inline-flex items-center bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 text-white px-4 py-2 rounded"
+              >
+                Edit
+              </Link>
+              <button
+                onClick={handleDelete}
+                className="inline-flex items-center bg-red-600 hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 text-white px-4 py-2 rounded"
+              >
+                Delete
+              </button>
+            </div>
+          )}` : `          <div className="space-x-2">
             <Link
               href={\`/${modelKebab}/\${${modelCamel}.id}/edit\`}
               className="inline-flex items-center bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 text-white px-4 py-2 rounded"
@@ -356,7 +416,7 @@ ${hasForeignKeys ? foreignKeyFetches : ''}
             >
               Delete
             </button>
-          </div>
+          </div>`}
         </div>
 
         <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
@@ -849,13 +909,57 @@ ${f.enumValues.map(v => `          <option value="${v}">${v}</option>`).join('\n
 /**
  * 新規作成画面を生成
  */
-export function generateNewPage(model: ModelInfo): string {
+export function generateNewPage(model: ModelInfo, authOptions?: UIAuthOptions): string {
   const modelName = model.name;
   const modelKebab = toKebabCase(modelName);
   
-  return `import ${modelName}Form from '../_components/${modelName}Form';
+  const hasAuth = !!authOptions;
+  const writeRoles = authOptions?.authPolicy?.write || authOptions?.authPolicy?.roles;
+  const hasWriteRoles = hasAuth && writeRoles && writeRoles.length > 0;
+  
+  if (!hasAuth) {
+    return `import ${modelName}Form from '../_components/${modelName}Form';
 
 export default function New${modelName}Page() {
+  return (
+    <div className="container mx-auto px-4 py-8">
+      <div className="max-w-2xl mx-auto">
+        <h1 className="text-3xl font-bold mb-6">Create New ${modelName}</h1>
+        <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
+          <${modelName}Form />
+        </div>
+      </div>
+    </div>
+  );
+}
+`;
+  }
+  
+  return `'use client';
+
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import ${modelName}Form from '../_components/${modelName}Form';
+import { useAuth } from '@/lib/auth/auth-context';
+
+export default function New${modelName}Page() {
+  const router = useRouter();
+${hasWriteRoles ? `  const { hasAnyRole, loading } = useAuth();
+  const canWrite = hasAnyRole(${JSON.stringify(writeRoles)});` : `  const { user, loading } = useAuth();
+  const canWrite = !!user;`}
+
+  useEffect(() => {
+    if (!loading && !canWrite) {
+      router.push('/${modelKebab}');
+    }
+  }, [loading, canWrite, router]);
+
+  if (loading) {
+    return <div className="flex items-center justify-center min-h-screen"><div className="text-lg">Loading...</div></div>;
+  }
+
+  if (!canWrite) return null;
+
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="max-w-2xl mx-auto">
@@ -873,10 +977,14 @@ export default function New${modelName}Page() {
 /**
  * 編集画面を生成
  */
-export function generateEditPage(model: ModelInfo, sharedPackageName: string): string {
+export function generateEditPage(model: ModelInfo, sharedPackageName: string, authOptions?: UIAuthOptions): string {
   const modelName = model.name;
   const modelCamel = toCamelCase(modelName);
   const modelKebab = toKebabCase(modelName);
+  
+  const hasAuth = !!authOptions;
+  const writeRoles = authOptions?.authPolicy?.write || authOptions?.authPolicy?.roles;
+  const hasWriteRoles = hasAuth && writeRoles && writeRoles.length > 0;
   
   const schemaName = model.schemaName;
   // Zod公式パターン対応: schemaNameとmodelNameが同じ場合はimportエイリアスで名前衝突を回避
@@ -889,17 +997,29 @@ export function generateEditPage(model: ModelInfo, sharedPackageName: string): s
   return `'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import ${modelName}Form from '../../_components/${modelName}Form';
 import { z } from 'zod/v4';
 ${schemaImportLine}
+${hasAuth ? `import { useAuth } from '@/lib/auth/auth-context';` : ''}
 
 type ${modelName} = z.infer<typeof ${localSchemaName}>;
 
 export default function Edit${modelName}Page() {
   const params = useParams();
+${hasAuth ? '  const router = useRouter();' : ''}
   const [${modelCamel}, set${modelName}] = useState<${modelName} | null>(null);
   const [loading, setLoading] = useState(true);
+${hasWriteRoles ? `  const { hasAnyRole, loading: authLoading } = useAuth();
+  const canWrite = hasAnyRole(${JSON.stringify(writeRoles)});` : hasAuth ? `  const { user, loading: authLoading } = useAuth();
+  const canWrite = !!user;` : ''}
+${hasAuth ? `
+  useEffect(() => {
+    if (!authLoading && !canWrite) {
+      router.push('/${modelKebab}');
+    }
+  }, [authLoading, canWrite, router]);
+` : ''}
 
   useEffect(() => {
     const id = params?.id as string;
