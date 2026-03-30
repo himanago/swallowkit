@@ -5,21 +5,32 @@
  */
 
 import { ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
+import { ModelAuthPolicy } from "../../types";
+import { generateAuthImportTS, generateAuthGuardTS } from "./auth-generator";
 
 /**
  * Azure Functions エンティティファイルを生成（インラインハンドラー方式）
  * 各ハンドラーがベタ書きされており、ビジネスロジックの追加・変更が容易
  */
-export function generateCompactAzureFunctionsCRUD(model: ModelInfo, sharedPackageName: string): string {
+export function generateCompactAzureFunctionsCRUD(model: ModelInfo, sharedPackageName: string, authPolicy?: ModelAuthPolicy): string {
   const modelName = model.name;
   const modelCamel = toCamelCase(modelName);
   const modelKebab = toKebabCase(modelName);
   const schemaName = model.schemaName;
 
+  const hasAuth = !!authPolicy;
+  const authImport = hasAuth ? `\n${generateAuthImportTS()}\n` : '';
+  const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read')}\n` : '';
+  const writeGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'write')}\n` : '';
+  const authCatchBlock = hasAuth
+    ? `      const authErr = handleAuthError(error);
+      if (authErr) return authErr;\n`
+    : '';
+
   return `import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { z } from 'zod/v4';
 import crypto from 'crypto';
-import { ${schemaName} } from '${sharedPackageName}';
+import { ${schemaName} } from '${sharedPackageName}';${authImport}
 
 const containerName = '${modelName}s';
 
@@ -39,7 +50,7 @@ app.http('${modelCamel}-get-all', {
     },
   ],
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${readGuard}
       const documents = context.extraInputs.get('cosmosInput') as any[];
 
       if (!documents || !Array.isArray(documents)) {
@@ -51,7 +62,7 @@ app.http('${modelCamel}-get-all', {
 
       return { status: 200, jsonBody: validated };
     } catch (error) {
-      context.error(\`Error fetching from \${containerName}:\`, error);
+${authCatchBlock}      context.error(\`Error fetching from \${containerName}:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to fetch items' } };
     }
   },
@@ -74,7 +85,7 @@ app.http('${modelCamel}-get-by-id', {
     },
   ],
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${readGuard}
       const document = context.extraInputs.get('cosmosInput');
 
       if (!document) {
@@ -84,7 +95,7 @@ app.http('${modelCamel}-get-by-id', {
       const validated = ${schemaName}.parse(document);
       return { status: 200, jsonBody: validated };
     } catch (error) {
-      context.error(\`Error fetching item from \${containerName}:\`, error);
+${authCatchBlock}      context.error(\`Error fetching item from \${containerName}:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to fetch item' } };
     }
   },
@@ -106,7 +117,7 @@ app.http('${modelCamel}-create', {
     },
   ],
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${writeGuard}
       const body = await request.json() as any;
 
       const { id, createdAt, updatedAt, ...userData } = body;
@@ -128,7 +139,7 @@ app.http('${modelCamel}-create', {
       context.extraOutputs.set('cosmosOutput', result.data);
       return { status: 201, jsonBody: result.data };
     } catch (error) {
-      context.error(\`Error creating item in \${containerName}:\`, error);
+${authCatchBlock}      context.error(\`Error creating item in \${containerName}:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to create item' } };
     }
   },
@@ -160,7 +171,7 @@ app.http('${modelCamel}-update', {
     },
   ],
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${writeGuard}
       const id = request.params.id;
       if (!id) {
         return { status: 400, jsonBody: { error: 'ID is required' } };
@@ -191,7 +202,7 @@ app.http('${modelCamel}-update', {
       context.extraOutputs.set('cosmosOutput', result.data);
       return { status: 200, jsonBody: result.data };
     } catch (error) {
-      context.error(\`Error updating item in \${containerName}:\`, error);
+${authCatchBlock}      context.error(\`Error updating item in \${containerName}:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to update item' } };
     }
   },
@@ -203,7 +214,7 @@ app.http('${modelCamel}-delete', {
   route: '${modelCamel}/{id}',
   authLevel: 'anonymous',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
+    try {${writeGuard}
       const id = request.params.id;
       if (!id) {
         return { status: 400, jsonBody: { error: 'ID is required' } };
@@ -229,7 +240,7 @@ app.http('${modelCamel}-delete', {
       if (error.code === 404) {
         return { status: 404, jsonBody: { error: 'Item not found' } };
       }
-      context.error(\`Error deleting item from \${containerName}:\`, error);
+${authCatchBlock}      context.error(\`Error deleting item from \${containerName}:\`, error);
       return { status: 500, jsonBody: { error: 'Failed to delete item' } };
     }
   },

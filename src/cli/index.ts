@@ -11,6 +11,7 @@ import { Command } from "commander";
 import { initCommand, devCommand, devSeedsCommand, scaffoldCommand, createModelCommand } from "./commands";
 import { provisionCommand } from "./commands/provision";
 import { addConnectorCommand } from "./commands/add-connector";
+import { addAuthCommand } from "./commands/add-auth";
 
 const program = new Command();
 
@@ -83,6 +84,16 @@ program
     addConnectorCommand({
       name,
       type: options.type,
+      provider: options.provider,
+    });
+  });
+
+program
+  .command("add-auth")
+  .description("Add authentication and authorization to the project")
+  .option("--provider <provider>", "Auth provider: custom-jwt | swa | swa-custom | none", "custom-jwt")
+  .action((options) => {
+    addAuthCommand({
       provider: options.provider,
     });
   });

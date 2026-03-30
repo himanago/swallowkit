@@ -4,7 +4,9 @@
  * - その他のリクエスト → 実Azure Functions へプロキシ
  */
 
+import * as fs from "fs";
 import * as http from "http";
+import * as path from "path";
 import { ModelInfo, toCamelCase } from "../scaffold/model-parser";
 import { generateMockDocuments } from "./zod-mock-generator";
 import { loadDevSeedFiles } from "../../cli/commands/dev-seeds";
@@ -26,6 +28,19 @@ export interface ConnectorMockServerOptions {
   mockCount?: number;
   /** ホスト名 */
   host?: string;
+  /** Auth configuration for mock auth endpoints */
+  authConfig?: {
+    /** JWT secret for mock token generation/verification */
+    jwtSecret: string;
+    /** Token expiry (e.g., '24h') */
+    tokenExpiry?: string;
+    /** Custom JWT config from swallowkit.config.js */
+    customJwt?: {
+      loginIdColumn: string;
+      passwordHashColumn: string;
+      rolesColumn: string;
+    };
+  };
 }
 
 type MockDocument = Record<string, unknown>;
@@ -37,6 +52,7 @@ export class ConnectorMockServer {
   private server: http.Server | null = null;
   private stores = new Map<string, MockDocument[]>();
   private routeMap = new Map<string, ModelInfo>(); // route → model
+  private authUsers: MockDocument[] = [];
   private options: ConnectorMockServerOptions;
 
   constructor(options: ConnectorMockServerOptions) {
@@ -123,10 +139,39 @@ export class ConnectorMockServer {
         console.warn(`⚠️  Failed to load dev-seeds for connectors: ${(err as Error).message}`);
       }
     }
+
+    // Load auth users from dev-seeds/_auth-users.json
+    if (this.options.seedEnv && this.options.authConfig) {
+      const seedsDir = this.options.seedsDir || path.join(process.cwd(), "dev-seeds");
+      const authUsersPath = path.join(seedsDir, this.options.seedEnv, "_auth-users.json");
+      if (fs.existsSync(authUsersPath)) {
+        try {
+          this.authUsers = JSON.parse(fs.readFileSync(authUsersPath, "utf-8"));
+          console.log(`  🔐 Loaded ${this.authUsers.length} mock auth user(s)`);
+        } catch (err) {
+          console.warn(`⚠️  Failed to load _auth-users.json: ${(err as Error).message}`);
+        }
+      }
+    }
+
+    // Generate default mock auth users if authConfig is present but no users loaded
+    if (this.options.authConfig && this.authUsers.length === 0) {
+      this.authUsers = [
+        { id: "1", loginId: "admin", password: "password123", name: "Admin User", email: "admin@example.com", roles: ["admin"] },
+        { id: "2", loginId: "user", password: "password123", name: "Test User", email: "user@example.com", roles: ["user"] },
+      ];
+      console.log("  🔐 Using default mock auth users (admin/password123, user/password123)");
+    }
   }
 
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     const { route, id } = this.parseRoute(req.url || "");
+
+    // Auth endpoints (when authConfig is set)
+    if (this.options.authConfig && route === "auth") {
+      this.handleAuthRequest(req, res, id);
+      return;
+    }
 
     // コネクタモデルのルートか判定
     if (route && this.routeMap.has(route)) {
@@ -256,6 +301,136 @@ export class ConnectorMockServer {
     });
 
     req.pipe(proxyReq, { end: true });
+  }
+
+  // ─── Auth Endpoints ──────────────────────────────────────
+
+  private handleAuthRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    endpoint: string | null
+  ) {
+    const method = (req.method || "GET").toUpperCase();
+
+    // Handle CORS preflight
+    if (method === "OPTIONS") {
+      req.resume();
+      res.writeHead(200, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      });
+      res.end();
+      return;
+    }
+
+    if (endpoint === "login" && method === "POST") {
+      this.handleLogin(req, res);
+    } else if (endpoint === "me" && method === "GET") {
+      this.handleMe(req, res);
+    } else if (endpoint === "logout" && method === "POST") {
+      req.resume();
+      this.sendJson(res, 200, { message: "Logged out" });
+    } else {
+      req.resume();
+      this.sendJson(res, 404, { error: "Auth endpoint not found" });
+    }
+  }
+
+  private handleLogin(req: http.IncomingMessage, res: http.ServerResponse) {
+    this.readBody(req, (body) => {
+      const loginId = body.loginId as string;
+      const password = body.password as string;
+
+      if (!loginId || !password) {
+        return this.sendJson(res, 400, { error: "loginId and password are required" });
+      }
+
+      const loginField = this.options.authConfig?.customJwt?.loginIdColumn || "loginId";
+      const passwordField = this.options.authConfig?.customJwt?.passwordHashColumn || "password";
+      const rolesField = this.options.authConfig?.customJwt?.rolesColumn || "roles";
+
+      const user = this.authUsers.find(
+        (u) => (u[loginField] || u.loginId) === loginId
+      );
+
+      if (!user) {
+        return this.sendJson(res, 401, { error: "Invalid credentials" });
+      }
+
+      // Plaintext password comparison (mock mode only)
+      const storedPassword = (user[passwordField] || user.password) as string;
+      if (storedPassword !== password) {
+        return this.sendJson(res, 401, { error: "Invalid credentials" });
+      }
+
+      // Parse roles
+      let roles: string[] = [];
+      const rolesValue = user[rolesField] || user.roles;
+      if (Array.isArray(rolesValue)) {
+        roles = rolesValue as string[];
+      } else if (typeof rolesValue === "string") {
+        try {
+          roles = JSON.parse(rolesValue);
+        } catch {
+          roles = (rolesValue as string).split(",").map((r: string) => r.trim());
+        }
+      }
+
+      const authUser = {
+        id: String(user.id),
+        loginId: String(user[loginField] || user.loginId),
+        name: String(user.name || user[loginField] || user.loginId),
+        email: String(user.email || ""),
+        roles,
+      };
+
+      // Generate JWT
+      const jwt = require("jsonwebtoken");
+      const secret = this.options.authConfig!.jwtSecret;
+      const expiry = this.options.authConfig!.tokenExpiry || "24h";
+
+      const token = jwt.sign(
+        {
+          sub: authUser.id,
+          loginId: authUser.loginId,
+          name: authUser.name,
+          email: authUser.email,
+          roles: authUser.roles,
+        },
+        secret,
+        { expiresIn: expiry }
+      );
+
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+      this.sendJson(res, 200, { user: authUser, token, expiresAt });
+    });
+  }
+
+  private handleMe(req: http.IncomingMessage, res: http.ServerResponse) {
+    req.resume();
+
+    const authHeader = req.headers["authorization"];
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return this.sendJson(res, 401, { error: "Missing or invalid Authorization header" });
+    }
+
+    const token = authHeader.slice(7);
+    try {
+      const jwt = require("jsonwebtoken");
+      const secret = this.options.authConfig!.jwtSecret;
+      const payload = jwt.verify(token, secret) as Record<string, unknown>;
+      this.sendJson(res, 200, {
+        sub: payload.sub,
+        loginId: payload.loginId,
+        name: payload.name,
+        email: payload.email,
+        roles: payload.roles,
+      });
+    } catch {
+      this.sendJson(res, 401, { error: "Invalid or expired token" });
+    }
   }
 
   // ─── Utilities ────────────────────────────────────────────

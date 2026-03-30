@@ -15,7 +15,8 @@ function httpRequest(
   port: number,
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
+  headers?: Record<string, string>
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const opts: http.RequestOptions = {
@@ -23,7 +24,7 @@ function httpRequest(
       port,
       path,
       method,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...headers },
     };
 
     const req = http.request(opts, (res) => {
@@ -248,5 +249,153 @@ describe("ConnectorMockServer", () => {
     const store = server.getStore("User");
     expect(store.length).toBe(3);
     expect(store[0].id).toBe("user-001");
+  });
+});
+
+// ============================================================
+// Mock Auth Endpoints
+// ============================================================
+describe("ConnectorMockServer - Auth Endpoints", () => {
+  let server: ConnectorMockServer;
+  const AUTH_PORT = 19877;
+  const JWT_SECRET = "test-jwt-secret-for-mock-auth-tests";
+
+  afterEach(async () => {
+    if (server) {
+      await server.stop();
+    }
+  });
+
+  it("handles POST /api/auth/login with default mock users", async () => {
+    server = new ConnectorMockServer({
+      port: AUTH_PORT,
+      functionsTarget: "localhost:7071",
+      connectorModels: [],
+      authConfig: {
+        jwtSecret: JWT_SECRET,
+        tokenExpiry: "1h",
+      },
+    });
+    await server.start();
+
+    const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
+      loginId: "admin",
+      password: "password123",
+    });
+
+    expect(res.status).toBe(200);
+    const body = res.body as any;
+    expect(body.user).toBeDefined();
+    expect(body.user.loginId).toBe("admin");
+    expect(body.user.roles).toContain("admin");
+    expect(body.token).toBeDefined();
+    expect(typeof body.token).toBe("string");
+    expect(body.expiresAt).toBeDefined();
+  });
+
+  it("returns 401 for invalid credentials", async () => {
+    server = new ConnectorMockServer({
+      port: AUTH_PORT,
+      functionsTarget: "localhost:7071",
+      connectorModels: [],
+      authConfig: { jwtSecret: JWT_SECRET },
+    });
+    await server.start();
+
+    const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
+      loginId: "admin",
+      password: "wrong-password",
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 401 for non-existent user", async () => {
+    server = new ConnectorMockServer({
+      port: AUTH_PORT,
+      functionsTarget: "localhost:7071",
+      connectorModels: [],
+      authConfig: { jwtSecret: JWT_SECRET },
+    });
+    await server.start();
+
+    const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
+      loginId: "nobody",
+      password: "password123",
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it("handles GET /api/auth/me with valid JWT", async () => {
+    server = new ConnectorMockServer({
+      port: AUTH_PORT,
+      functionsTarget: "localhost:7071",
+      connectorModels: [],
+      authConfig: { jwtSecret: JWT_SECRET },
+    });
+    await server.start();
+
+    // Login first
+    const loginRes = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
+      loginId: "admin",
+      password: "password123",
+    });
+    const token = (loginRes.body as any).token;
+
+    // Then call /me
+    const meRes = await httpRequest(AUTH_PORT, "GET", "/api/auth/me", undefined, {
+      Authorization: `Bearer ${token}`,
+    });
+
+    expect(meRes.status).toBe(200);
+    const meBody = meRes.body as any;
+    expect(meBody.loginId).toBe("admin");
+    expect(meBody.roles).toContain("admin");
+  });
+
+  it("returns 401 for /api/auth/me without token", async () => {
+    server = new ConnectorMockServer({
+      port: AUTH_PORT,
+      functionsTarget: "localhost:7071",
+      connectorModels: [],
+      authConfig: { jwtSecret: JWT_SECRET },
+    });
+    await server.start();
+
+    const res = await httpRequest(AUTH_PORT, "GET", "/api/auth/me");
+    expect(res.status).toBe(401);
+  });
+
+  it("handles POST /api/auth/logout", async () => {
+    server = new ConnectorMockServer({
+      port: AUTH_PORT,
+      functionsTarget: "localhost:7071",
+      connectorModels: [],
+      authConfig: { jwtSecret: JWT_SECRET },
+    });
+    await server.start();
+
+    const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/logout");
+    expect(res.status).toBe(200);
+    expect((res.body as any).message).toBe("Logged out");
+  });
+
+  it("does not intercept auth routes when authConfig is not set", async () => {
+    // Without authConfig, auth routes should be proxied (which will fail since no real Functions)
+    server = new ConnectorMockServer({
+      port: AUTH_PORT,
+      functionsTarget: "localhost:19999", // non-existent to trigger proxy error
+      connectorModels: [],
+    });
+    await server.start();
+
+    const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
+      loginId: "admin",
+      password: "password123",
+    });
+
+    // Should get 502 (proxy error) since auth is not handled by mock
+    expect(res.status).toBe(502);
   });
 });

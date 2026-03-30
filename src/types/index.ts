@@ -72,6 +72,47 @@ export interface ApiModelConnectorConfig {
 // モデルに付与するコネクタメタデータの共用型
 export type ModelConnectorConfig = RdbModelConnectorConfig | ApiModelConnectorConfig;
 
+// 認証プロバイダー種別
+export type AuthProvider = "custom-jwt" | "swa" | "swa-custom" | "none";
+
+// custom-jwt プロバイダー設定
+export interface CustomJwtConfig {
+  userConnector: string;
+  userTable: string;
+  loginIdColumn: string;
+  passwordHashColumn: string;
+  rolesColumn: string;
+  jwtSecretEnv?: string;
+  tokenExpiry?: string;
+}
+
+// SWA 認証設定（将来用）
+export interface SwaAuthConfig {
+  allowedProviders?: string[];
+  roleSource?: "swa-roles" | "connector";
+  roleConnector?: string;
+}
+
+// 認可設定
+export interface AuthorizationConfig {
+  defaultPolicy?: "authenticated" | "anonymous";
+}
+
+// 認証設定
+export interface AuthConfig {
+  provider: AuthProvider;
+  customJwt?: CustomJwtConfig;
+  swa?: SwaAuthConfig;
+  authorization?: AuthorizationConfig;
+}
+
+// モデルに付与する認可ポリシー
+export interface ModelAuthPolicy {
+  roles?: string[];
+  read?: string[];
+  write?: string[];
+}
+
 // CLI設定の型
 export interface SwallowKitConfig {
   database?: {
@@ -89,4 +130,5 @@ export interface SwallowKitConfig {
     };
   };
   connectors?: Record<string, ConnectorDefinition>;
+  auth?: AuthConfig;
 }

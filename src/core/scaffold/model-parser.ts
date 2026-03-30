@@ -6,7 +6,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
 
-import { ModelConnectorConfig } from "../../types";
+import { ModelConnectorConfig, ModelAuthPolicy } from "../../types";
 
 export interface ModelInfo {
   name: string; // モデル名（例: "Todo"）
@@ -19,6 +19,7 @@ export interface ModelInfo {
   hasUpdatedAt: boolean; // updatedAt フィールドがあるか
   nestedSchemaRefs: NestedSchemaRef[]; // ネストしたスキーマ参照
   connectorConfig?: ModelConnectorConfig; // コネクタメタデータ（外部データソース用）
+  authPolicy?: ModelAuthPolicy; // 認可ポリシー（ロールベースアクセス制御用）
 }
 
 export interface FieldInfo {
@@ -85,6 +86,9 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
 
   // connectorConfig を抽出（外部データソース用メタデータ）
   const connectorConfig = parseConnectorConfig(content);
+
+  // authPolicy を抽出（ロールベースアクセス制御用メタデータ）
+  const authPolicy = parseAuthPolicy(content);
   
   // ネストしたスキーマ参照を検出
   const nestedSchemaRefs = detectNestedSchemaRefs(modelPath, content, schemaName);
@@ -111,6 +115,7 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
     hasUpdatedAt,
     nestedSchemaRefs,
     ...(connectorConfig ? { connectorConfig } : {}),
+    ...(authPolicy ? { authPolicy } : {}),
   };
 }
 
@@ -724,6 +729,50 @@ export function parseConnectorConfig(content: string): ModelConnectorConfig | un
     connector,
     operations: operations as ModelConnectorConfig['operations'],
     ...(endpoints ? { endpoints } : {}),
+  };
+}
+
+/**
+ * authPolicy をモデルファイルから抽出
+ * パターン: export const authPolicy = { roles: [...], read: [...], write: [...] }
+ */
+export function parseAuthPolicy(content: string): ModelAuthPolicy | undefined {
+  const policyMatch = content.match(/export\s+const\s+authPolicy\s*=\s*\{/);
+  if (!policyMatch) {
+    return undefined;
+  }
+
+  const startIdx = content.indexOf('{', policyMatch.index!);
+  let braceCount = 1;
+  let endIdx = startIdx + 1;
+  while (braceCount > 0 && endIdx < content.length) {
+    if (content[endIdx] === '{') braceCount++;
+    if (content[endIdx] === '}') braceCount--;
+    endIdx++;
+  }
+
+  const objectStr = content.substring(startIdx, endIdx);
+
+  const extractRoles = (key: string): string[] | undefined => {
+    const match = objectStr.match(new RegExp(`${key}\\s*:\\s*\\[([^\\]]*)\\]`));
+    if (!match) return undefined;
+    const entries = match[1].match(/['"]([^'"]+)['"]/g);
+    if (!entries) return [];
+    return entries.map(e => e.replace(/['"]/g, ''));
+  };
+
+  const roles = extractRoles('roles');
+  const read = extractRoles('read');
+  const write = extractRoles('write');
+
+  if (!roles && !read && !write) {
+    return undefined;
+  }
+
+  return {
+    ...(roles ? { roles } : {}),
+    ...(read ? { read } : {}),
+    ...(write ? { write } : {}),
   };
 }
 

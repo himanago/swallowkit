@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { CosmosClient, PartitionKeyKind } from '@azure/cosmos';
-import { ensureSwallowKitProject, getBackendLanguage } from '../../core/config';
+import { ensureSwallowKitProject, getBackendLanguage, getAuthConfig, getFullConfig } from '../../core/config';
 import { ModelInfo } from '../../core/scaffold/model-parser';
 import { applyDevSeedEnvironment, getContainerNameForModel, loadProjectModels } from './dev-seeds';
 import { BackendLanguage } from '../../types';
@@ -709,7 +709,32 @@ async function startDevEnvironment(options: DevOptions) {
       const allModels = await loadProjectModels();
       const connectorModels = allModels.filter((m) => m.connectorConfig);
 
-      if (connectorModels.length > 0) {
+      // Resolve auth config for mock auth endpoints
+      const authConfig = getAuthConfig();
+      let mockAuthConfig: { jwtSecret: string; tokenExpiry?: string; customJwt?: { loginIdColumn: string; passwordHashColumn: string; rolesColumn: string } } | undefined;
+      if (authConfig?.provider === 'custom-jwt' && authConfig.customJwt) {
+        const fullConfig = getFullConfig();
+        // Read JWT_SECRET from functions/local.settings.json if available
+        let jwtSecret = 'dev-jwt-secret-change-in-production-min-32-chars!!';
+        try {
+          const localSettingsPath = path.join(process.cwd(), 'functions', 'local.settings.json');
+          if (fs.existsSync(localSettingsPath)) {
+            const localSettings = JSON.parse(fs.readFileSync(localSettingsPath, 'utf-8'));
+            jwtSecret = localSettings.Values?.[authConfig.customJwt.jwtSecretEnv || 'JWT_SECRET'] || jwtSecret;
+          }
+        } catch { /* ignore */ }
+        mockAuthConfig = {
+          jwtSecret,
+          tokenExpiry: authConfig.customJwt.tokenExpiry,
+          customJwt: {
+            loginIdColumn: authConfig.customJwt.loginIdColumn,
+            passwordHashColumn: authConfig.customJwt.passwordHashColumn,
+            rolesColumn: authConfig.customJwt.rolesColumn,
+          },
+        };
+      }
+
+      if (connectorModels.length > 0 || mockAuthConfig) {
         const mockPort = parseInt(functionsPort, 10) + 1;
         mockServer = new ConnectorMockServer({
           port: mockPort,
@@ -718,6 +743,7 @@ async function startDevEnvironment(options: DevOptions) {
           allModels,
           seedEnv: options.seedEnv,
           host: options.host || 'localhost',
+          authConfig: mockAuthConfig,
         });
 
         await mockServer.start();
@@ -725,15 +751,20 @@ async function startDevEnvironment(options: DevOptions) {
 
         console.log('');
         console.log(`🔌 Connector mock server started (port: ${mockPort})`);
-        console.log(`   Mocking ${connectorModels.length} connector model(s):`);
-        for (const m of connectorModels) {
-          const ops = m.connectorConfig!.operations.join(', ');
-          console.log(`     - ${m.name} [${ops}]`);
+        if (connectorModels.length > 0) {
+          console.log(`   Mocking ${connectorModels.length} connector model(s):`);
+          for (const m of connectorModels) {
+            const ops = m.connectorConfig!.operations.join(', ');
+            console.log(`     - ${m.name} [${ops}]`);
+          }
+        }
+        if (mockAuthConfig) {
+          console.log(`   🔐 Mock auth endpoints enabled (POST /api/auth/login, GET /api/auth/me)`);
         }
         console.log(`   Other routes → proxied to Azure Functions (port: ${functionsPort})`);
       } else {
         console.log('');
-        console.log('ℹ️  --mock-connectors specified but no connector models found. Skipping mock server.');
+        console.log('ℹ️  --mock-connectors specified but no connector models or auth config found. Skipping mock server.');
       }
     }
 

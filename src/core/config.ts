@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { BackendLanguage, ConnectorDefinition, SwallowKitConfig } from "../types";
+import { AuthConfig, BackendLanguage, ConnectorDefinition, SwallowKitConfig } from "../types";
 import { detectFromProject, getCommands } from "../utils/package-manager";
 
 const VALID_BACKEND_LANGUAGES: BackendLanguage[] = ["typescript", "csharp", "python"];
@@ -81,7 +81,10 @@ function mergeConfig(defaultConfig: SwallowKitConfig, userConfig: Partial<Swallo
         ...userConfig.api?.cors,
       },
     },
-    ...(userConfig.connectors ? { connectors: userConfig.connectors } : {}),
+    connectors: userConfig.connectors ?? defaultConfig.connectors,
+    auth: userConfig.auth
+      ? { ...defaultConfig.auth, ...userConfig.auth }
+      : defaultConfig.auth,
   };
 }
 
@@ -175,6 +178,14 @@ export function getFullConfig(configPath?: string): SwallowKitConfig {
 export function getConnectorDefinition(connectorName: string, configPath?: string): ConnectorDefinition | undefined {
   const config = getFullConfig(configPath);
   return config.connectors?.[connectorName];
+}
+
+/**
+ * 認証設定を取得
+ */
+export function getAuthConfig(configPath?: string): AuthConfig | undefined {
+  const config = getFullConfig(configPath);
+  return config.auth;
 }
 
 /**

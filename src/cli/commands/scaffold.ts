@@ -6,7 +6,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { spawn, spawnSync } from "child_process";
-import { getBackendLanguage, getConnectorDefinition, ensureSwallowKitProject } from "../../core/config";
+import { getBackendLanguage, getConnectorDefinition, getAuthConfig, ensureSwallowKitProject } from "../../core/config";
 import { ModelInfo, parseModelFile, toKebabCase, toPascalCase, toCamelCase } from "../../core/scaffold/model-parser";
 import {
   generateCSharpAzureFunctionsCRUD,
@@ -38,6 +38,8 @@ import {
   ApiConnectorConfig,
   RdbModelConnectorConfig,
   ApiModelConnectorConfig,
+  ModelAuthPolicy,
+  AuthConfig,
 } from "../../types";
 
 interface ScaffoldOptions {
@@ -154,6 +156,33 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
 }
 
 /**
+ * モデルの authPolicy と auth config から実効的な認可ポリシーを解決
+ * - モデルに authPolicy があればそれを使用
+ * - なければ auth.authorization.defaultPolicy に従う
+ * - auth 設定がなければ undefined（ガードなし）
+ */
+function resolveAuthPolicy(modelInfo: ModelInfo, authConfig: AuthConfig | undefined): ModelAuthPolicy | undefined {
+  // モデルに明示的な authPolicy がある場合はそれを使用
+  if (modelInfo.authPolicy) {
+    return modelInfo.authPolicy;
+  }
+
+  // auth 設定がない場合はガードなし
+  if (!authConfig || authConfig.provider === 'none') {
+    return undefined;
+  }
+
+  // defaultPolicy が 'authenticated' なら認証のみ（ロール指定なし）のポリシーを返す
+  const defaultPolicy = authConfig.authorization?.defaultPolicy ?? 'authenticated';
+  if (defaultPolicy === 'authenticated') {
+    return {}; // 空のポリシー = 認証のみ、ロール制限なし
+  }
+
+  // defaultPolicy が 'anonymous' なら認証不要
+  return undefined;
+}
+
+/**
  * モデルファイルのパスを解決
  */
 function resolveModelPath(modelInput: string): string {
@@ -252,6 +281,13 @@ async function generateFunctionsCode(
 ): Promise<void> {
   console.log("\n🔨 Generating Azure Functions CRUD code...");
 
+  // Resolve auth policy: model-level authPolicy or global defaultPolicy
+  const authConfig = getAuthConfig();
+  const authPolicy = resolveAuthPolicy(modelInfo, authConfig);
+  if (authPolicy) {
+    console.log(`🔐 Auth policy detected: ${JSON.stringify(authPolicy)}`);
+  }
+
   const modelKebab = toKebabCase(modelInfo.name);
   if (backendLanguage === "typescript") {
     const functionFilePath = path.join(
@@ -266,7 +302,7 @@ async function generateFunctionsCode(
       fs.mkdirSync(functionDir, { recursive: true });
     }
 
-    const code = generateCompactAzureFunctionsCRUD(modelInfo, sharedPackageName);
+    const code = generateCompactAzureFunctionsCRUD(modelInfo, sharedPackageName, authPolicy);
     fs.writeFileSync(functionFilePath, code, "utf-8");
     console.log(`✅ Created: ${functionFilePath}`);
     return;
