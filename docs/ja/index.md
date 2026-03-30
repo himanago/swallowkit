@@ -47,6 +47,9 @@ features:
   - icon: 🔌
     title: 外部データコネクタ
     details: MySQL・PostgreSQL・REST API などの外部データソースを Cosmos DB と並行して統合。同じ Zod 駆動の scaffold ワークフローと完全な型安全性を維持。
+  - icon: 🔐
+    title: 認証・認可
+    details: 外部 RDB ユーザーストアによるカスタム JWT 認証とモデル単位のロールベースアクセス制御を追加。ローカル開発用のモック認証エンドポイントも内蔵。
   - icon: 🧩
     title: VS Code 拡張機能
     details: '<a href="https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode">拡張機能をインストール</a>して、GUI ウィザード・右クリックスキャフォールド・開発サーバーステータスバー・TypeScript スニペットを利用。ターミナル不要で操作可能。'

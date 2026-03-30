@@ -29,6 +29,7 @@ Zod スキーマから自動的に CRUD 操作を生成する Scaffold 機能を
 - **🚀 簡単デプロイ** - Bicep IaC + CI/CD ワークフローを自動生成
 - **🤖 AI フレンドリー** - 自動生成される指示ファイル（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）とレイヤー別ルールにより、GitHub Copilot・Claude Code・OpenAI Codex がプロジェクト規約に従ってコードを生成
 - **🔌 外部データコネクタ** - MySQL・PostgreSQL・REST API などの外部データソースを Cosmos DB と並行して統合。同じ Zod 駆動の scaffold ワークフローで完全な型安全性を維持
+- **🔐 認証・認可** - カスタム JWT 認証（外部 RDB ユーザーストア）とモデル単位のロールベースアクセス制御を組み込みサポート。将来の Static Web Apps 認証統合も計画中
 - **🧩 [VS Code 拡張機能](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)** - init/scaffold/dev の GUI ウィザード、モデルファイル右クリックでスキャフォールド、開発サーバーステータスバー、TypeScript スニペット
 
 
@@ -39,6 +40,7 @@ Zod スキーマから自動的に CRUD 操作を生成する Scaffold 機能を
 - **[CLI リファレンス](https://himanago.github.io/swallowkit/ja/cli-reference)** - 全コマンドの詳細
 - **[Scaffold ガイド](https://himanago.github.io/swallowkit/ja/scaffold-guide)** - CRUD コード生成
 - **[Connector ガイド](https://himanago.github.io/swallowkit/ja/connector-guide)** - 外部データソース統合
+- **[認証ガイド](https://himanago.github.io/swallowkit/ja/auth-guide)** - 認証とロールベースアクセス制御
 - **[Zod スキーマ共有ガイド](https://himanago.github.io/swallowkit/ja/zod-schema-sharing-guide)** - スキーマ設計
 - **[デプロイガイド](https://himanago.github.io/swallowkit/ja/deployment-guide)** - Azure へのデプロイ
 

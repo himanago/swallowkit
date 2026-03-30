@@ -915,14 +915,46 @@ If a connector model's `operations` only includes `getAll` and/or `getById`, sca
 
 Use `swallowkit dev --mock-connectors` to start a mock proxy server that serves Zod-generated fake data for connector models. No real database or API connection is needed during development. See the [Connector Guide](./connector-guide.md) for details.
 
+## Authentication Integration
+
+When authentication is set up via `swallowkit add-auth`, you can add role-based access control to your scaffold-generated Functions by exporting an `authPolicy` from your model:
+
+```typescript
+// shared/models/estimate.ts
+import { z } from 'zod';
+
+export const estimate = z.object({
+  id: z.string(),
+  title: z.string().min(1),
+  amount: z.number(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+
+export type Estimate = z.infer<typeof estimate>;
+export const displayName = 'Estimate';
+
+// Role-based access control
+export const authPolicy = { roles: ['admin', 'estimator'] };
+
+// Or differentiate read vs write permissions
+// export const authPolicy = { read: ['admin', 'estimator'], write: ['admin'] };
+```
+
+When `scaffold` detects `authPolicy`, it automatically injects authentication checks and role guards into the generated Functions handlers.
+
+If `auth.authorization.defaultPolicy` is set to `'authenticated'` in `swallowkit.config.js`, all scaffolded Functions require authentication by default — even without an explicit `authPolicy` export.
+
+> 💡 See the **[Authentication Guide](./auth-guide.md)** for full setup instructions and configuration details.
+
 ## Next Steps
 
 - Learn about [Connector Guide](./connector-guide.md) - Integrate external data sources with the same Zod workflow
+- Learn about [Authentication Guide](./auth-guide.md) - Add authentication and role-based access control
 - Learn about [Zod Schema Sharing](./zod-schema-sharing-guide.md) - Understand the concepts behind type-safe schema sharing
 - Read the [Deployment Guide](./deployment-guide.md) - Deploy your application to Azure
 - Explore the [CLI Reference](./cli-reference.md) - Learn about all available commands
 - Explore Azure Functions configuration in `functions/local.settings.json`
 - Configure Cosmos DB connection for production deployment
-- Add authentication and authorization to your routes
 - Customize generated UI components for your brand
 - Return to the [README](https://github.com/himanago/swallowkit#readme) for more SwallowKit features

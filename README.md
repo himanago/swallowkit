@@ -31,6 +31,7 @@ Featuring Scaffold functionality to automatically generate CRUD operations from 
 - **🚀 Easy Deployment** - Auto-generated Bicep IaC + CI/CD workflows
 - **🤖 AI-Friendly** - Auto-generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) and layer-specific rules help GitHub Copilot, Claude Code, and OpenAI Codex follow project conventions
 - **🔌 External Data Connectors** - Integrate MySQL, PostgreSQL, REST APIs, and other external data sources alongside Cosmos DB — same Zod-driven scaffold workflow with full type safety
+- **🔐 Authentication & Authorization** - Built-in support for custom JWT auth (with external RDB user stores) and role-based access control per model — with planned Static Web Apps auth integration
 - **🧩 [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)** - GUI wizard for init/scaffold/dev, right-click model scaffolding, dev server status bar, and TypeScript snippets
 
 ## 📚 Documentation
@@ -40,6 +41,7 @@ Visit the **[SwallowKit Documentation](https://himanago.github.io/swallowkit/)**
 - **[CLI Reference](https://himanago.github.io/swallowkit/en/cli-reference)** - All commands in detail
 - **[Scaffold Guide](https://himanago.github.io/swallowkit/en/scaffold-guide)** - CRUD code generation
 - **[Connector Guide](https://himanago.github.io/swallowkit/en/connector-guide)** - External data source integration
+- **[Authentication Guide](https://himanago.github.io/swallowkit/en/auth-guide)** - Authentication and role-based access control
 - **[Zod Schema Sharing Guide](https://himanago.github.io/swallowkit/en/zod-schema-sharing-guide)** - Schema design
 - **[Deployment Guide](https://himanago.github.io/swallowkit/en/deployment-guide)** - Deploy to Azure
 

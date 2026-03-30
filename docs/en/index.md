@@ -47,6 +47,9 @@ features:
   - icon: 🔌
     title: External Data Connectors
     details: Connect to MySQL, PostgreSQL, REST APIs, and other external data sources alongside Cosmos DB — with the same Zod-driven scaffold workflow and full type safety.
+  - icon: 🔐
+    title: Authentication & Authorization
+    details: Add custom JWT authentication with external RDB user stores and role-based access control per model. Mock auth endpoints for local development included.
   - icon: 🧩
     title: VS Code Extension
     details: '<a href="https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode">Install the extension</a> for GUI wizards, right-click scaffolding, dev server status bar, and TypeScript snippets — no terminal required.'

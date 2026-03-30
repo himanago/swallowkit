@@ -79,6 +79,10 @@ export default defineConfig({
                   text: 'Connector Guide',
                   link: '/en/connector-guide',
                 },
+                {
+                  text: 'Authentication Guide',
+                  link: '/en/auth-guide',
+                },
               ],
             },
             {
@@ -126,6 +130,10 @@ export default defineConfig({
                 {
                   text: 'Connector ガイド',
                   link: '/ja/connector-guide',
+                },
+                {
+                  text: '認証ガイド',
+                  link: '/ja/auth-guide',
                 },
               ],
             },

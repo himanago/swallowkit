@@ -6,6 +6,8 @@ Comprehensive reference for all SwallowKit CLI commands and options.
 
 - [swallowkit init](#swallowkit-init)
 - [swallowkit create-model](#swallowkit-create-model)
+- [swallowkit add-connector](#swallowkit-add-connector)
+- [swallowkit add-auth](#swallowkit-add-auth)
 - [swallowkit dev](#swallowkit-dev)
 - [swallowkit scaffold](#swallowkit-scaffold)
 - [swallowkit create-dev-seeds](#swallowkit-create-dev-seeds)
@@ -578,6 +580,75 @@ npx swallowkit add-connector backlog --type api --base-url-env BACKLOG_API_BASE_
 # Add REST API connector with bearer token
 npx swallowkit add-connector github --type api --base-url-env GITHUB_API_BASE_URL --auth-type bearer --auth-env GITHUB_TOKEN
 ```
+
+## swallowkit add-auth
+
+Set up authentication and authorization infrastructure for a SwallowKit project.
+
+### Usage
+
+```bash
+npx swallowkit add-auth [options]
+# or
+pnpm dlx swallowkit add-auth [options]
+```
+
+### Options
+
+| Option | Description | Values | Default |
+|--------|-------------|--------|---------|
+| `--provider <provider>` | Authentication provider | `custom-jwt`, `swa`, `swa-custom` | `custom-jwt` |
+
+### What it does
+
+1. Generates shared auth models (`shared/models/auth.ts` — LoginRequest, AuthUser, LoginResponse)
+2. Generates auth Functions (login, me, logout) for the configured backend language (TS/C#/Python)
+3. Generates JWT helper utilities for token verification and role checking
+4. Generates BFF routes (`app/api/auth/login|logout|me/route.ts`) with httpOnly cookie management
+5. Generates Next.js middleware (`middleware.ts`) for cookie-based auth checks and redirects
+6. Generates a login page (`app/login/page.tsx`)
+7. Generates an auth React context (`lib/auth/auth-context.tsx`) with `useAuth` hook
+8. Updates `lib/api/call-function.ts` to forward the `Authorization` header
+9. Adds `auth` section to `swallowkit.config.js` if not present
+10. Installs backend dependencies (JWT library + RDB driver matching your connector provider)
+
+### Prerequisites
+
+- A connector must be registered in `swallowkit.config.js` for the user database (e.g., an RDB connector pointing to PostgreSQL, MySQL, or SQL Server)
+- The `auth.customJwt.userConnector` config must reference that connector name
+
+### Examples
+
+```bash
+# Set up custom JWT authentication (default)
+npx swallowkit add-auth
+
+# Explicitly specify provider
+npx swallowkit add-auth --provider custom-jwt
+```
+
+### Typical workflow
+
+```bash
+# 1. Add RDB connector for user database
+npx swallowkit add-connector userdb --type rdb --provider postgres --connection-env USERDB_CONNECTION_STRING
+
+# 2. Configure auth in swallowkit.config.js (add auth section)
+
+# 3. Run add-auth to generate all auth infrastructure
+npx swallowkit add-auth
+
+# 4. Set JWT_SECRET in functions/local.settings.json
+
+# 5. Add authPolicy to models for role-based access
+# 6. Re-scaffold to inject auth guards into functions
+npx swallowkit scaffold shared/models/estimate.ts
+
+# 7. Start development with mock auth
+npx swallowkit dev --mock-connectors
+```
+
+> 💡 See the **[Authentication Guide](./auth-guide.md)** for full configuration details and architecture overview.
 
 ## swallowkit dev
 
