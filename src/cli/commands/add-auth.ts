@@ -296,6 +296,25 @@ function generateFunctionsAuth(
 
     // __init__.py
     fs.writeFileSync(path.join(authDir, "__init__.py"), "", "utf-8");
+
+    // Register auth blueprint in function_app.py
+    const functionAppPath = path.join(functionsDir, "function_app.py");
+    if (fs.existsSync(functionAppPath)) {
+      const content = fs.readFileSync(functionAppPath, "utf-8");
+      const authImport = "from blueprints.auth import bp as auth_bp";
+      const authRegister = "app.register_blueprint(auth_bp)";
+      if (!content.includes(authImport)) {
+        const marker = "# SwallowKit scaffold registrations";
+        if (content.includes(marker)) {
+          const updated = content.replace(
+            marker,
+            `${authImport}\n${authRegister}\n${marker}`
+          );
+          fs.writeFileSync(functionAppPath, updated, "utf-8");
+          console.log(` Updated: functions/function_app.py (registered auth blueprint)`);
+        }
+      }
+    }
   }
 }
 

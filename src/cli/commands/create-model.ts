@@ -45,7 +45,7 @@ export const displayName = '${pascalName}';
 function generateConnectorModelTemplate(modelName: string, connectorName: string, connectorType: 'rdb' | 'api'): string {
   const pascalName = toPascalCase(modelName);
   const kebabName = modelName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  const pluralName = kebabName + 's';
+  const pluralName = kebabName.endsWith('s') ? kebabName : kebabName + 's';
 
   const schema = `import { z } from 'zod/v4';
 

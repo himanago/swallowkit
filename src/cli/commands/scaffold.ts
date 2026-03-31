@@ -328,13 +328,17 @@ async function generateFunctionsCode(
   }
 
   if (backendLanguage === "csharp") {
-    const functionFilePath = path.join(
-      process.cwd(),
-      functionsDir,
-      "Crud",
-      `${modelInfo.name}Functions.cs`
-    );
-    fs.mkdirSync(path.dirname(functionFilePath), { recursive: true });
+    const crudDir = path.join(process.cwd(), functionsDir, "Crud");
+    const functionFilePath = path.join(crudDir, `${modelInfo.name}Functions.cs`);
+    fs.mkdirSync(crudDir, { recursive: true });
+
+    // Remove init-generated template (singular) to avoid route conflicts
+    const templatePath = path.join(crudDir, `${modelInfo.name}Function.cs`);
+    if (fs.existsSync(templatePath)) {
+      fs.unlinkSync(templatePath);
+      console.log(`🗑️  Removed template: ${templatePath}`);
+    }
+
     fs.writeFileSync(functionFilePath, generateCSharpAzureFunctionsCRUD(modelInfo, authPolicy), "utf-8");
     console.log(`✅ Created: ${functionFilePath}`);
     return;
@@ -834,6 +838,12 @@ function updatePythonFunctionRegistrations(functionAppPath: string, registration
   }
 
   const content = fs.readFileSync(functionAppPath, "utf-8");
+
+  // Check if import line already exists (handles init-generated layout)
+  const importLine = registration.split("\n").find((l) => l.startsWith("from ") || l.startsWith("import "));
+  if (importLine && content.includes(importLine)) {
+    return;
+  }
   if (content.includes(registration)) {
     return;
   }
