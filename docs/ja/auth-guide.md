@@ -154,10 +154,10 @@ Scaffold は `authPolicy` エクスポートを検出し、生成される Funct
 
 ```bash
 # npx
-npx swallowkit dev --mock-connectors
+npx swallowkit dev --mock-connectors --seed-env local
 
 # pnpm
-pnpm dlx swallowkit dev --mock-connectors
+pnpm dlx swallowkit dev --mock-connectors --seed-env local
 ```
 
 `--mock-connectors` はすべての RDB コネクタデータをインメモリでモック化します — `auth.customJwt.userTable` で参照されるユーザーテーブルも含まれます。つまり、実際のデータベースなしでもモックのユーザーデータに対してログインが動作します。他のコネクタモデルと同様に、`dev-seeds/<env>/user.json` でユーザーのシードデータを定義してください：
@@ -278,7 +278,7 @@ export const authPolicy = {
 | `app/api/auth/login/route.ts` | BFF ルート — 認証情報を Functions に転送し、成功時に httpOnly Cookie を設定 |
 | `app/api/auth/logout/route.ts` | BFF ルート — 認証 Cookie をクリア |
 | `app/api/auth/me/route.ts` | BFF ルート — JWT から現在のユーザー情報を返却 |
-| `middleware.ts` | Next.js ミドルウェア — Cookie チェック、有効期限検証、Authorization ヘッダー追加、未認証時は /login にリダイレクト |
+| `proxy.ts` | Next.js プロキシミドルウェア — Cookie チェック、有効期限検証、Authorization ヘッダー追加、未認証時は /login にリダイレクト |
 | `app/login/page.tsx` | フォーム UI 付きログインページ |
 | `lib/auth/auth-context.tsx` | React コンテキストプロバイダーと `useAuth` フック |
 

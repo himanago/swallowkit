@@ -154,10 +154,10 @@ Scaffold detects the `authPolicy` export and injects role guards into the genera
 
 ```bash
 # npx
-npx swallowkit dev --mock-connectors
+npx swallowkit dev --mock-connectors --seed-env local
 
 # pnpm
-pnpm dlx swallowkit dev --mock-connectors
+pnpm dlx swallowkit dev --mock-connectors --seed-env local
 ```
 
 `--mock-connectors` mocks all RDB connector data in-memory — including the user table referenced by `auth.customJwt.userTable`. This means the auth login endpoint works against mock user data without a real database. Define user seed data in `dev-seeds/<env>/user.json` just like any other connector model:
@@ -278,7 +278,7 @@ The `add-auth` command generates the following files:
 | `app/api/auth/login/route.ts` | BFF route — forwards credentials to Functions, sets httpOnly cookie on success |
 | `app/api/auth/logout/route.ts` | BFF route — clears the auth cookie |
 | `app/api/auth/me/route.ts` | BFF route — returns the current user from the JWT |
-| `middleware.ts` | Next.js middleware — checks cookie, validates expiry, adds Authorization header, redirects to /login if unauthenticated |
+| `proxy.ts` | Next.js proxy middleware — checks cookie, validates expiry, adds Authorization header, redirects to /login if unauthenticated |
 | `app/login/page.tsx` | Login page with form UI |
 | `lib/auth/auth-context.tsx` | React context provider and `useAuth` hook |
 
