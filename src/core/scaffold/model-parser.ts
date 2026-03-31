@@ -410,6 +410,8 @@ async function extractFieldsFromSchema(modelPath: string, schemaName: string): P
     // コメントを削除
     modelContent = modelContent.replace(/\/\*[\s\S]*?\*\//g, '');
     modelContent = modelContent.replace(/\/\/.*/g, '');
+    // TypeScript の `as const` アサーションを削除（.mjs では構文エラーになる）
+    modelContent = modelContent.replace(/\s+as\s+const\b/g, '');
     
     // インライン化したローカルインポートを先頭に追加
     const inlinedDeps = localImports.length > 0 ? localImports.join('\n\n') + '\n\n' : '';
