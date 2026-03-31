@@ -458,15 +458,27 @@ async function startDevEnvironment(options: DevOptions) {
   const processes: ChildProcess[] = [];
   let functionsEnv: NodeJS.ProcessEnv = process.env;
   let mockServer: ConnectorMockServer | null = null;
-  let envLocalBackup: string | undefined;
   let envLocalPath = '';
+  let envLocalDefaultUrl = ''; // default Functions URL to restore on shutdown
 
   // Cleanup processes on Ctrl+C
   process.on('SIGINT', async () => {
     console.log('\n🛑 Stopping development servers...');
-    // Restore .env.local if we modified it for mock connectors
-    if (envLocalBackup && envLocalPath) {
-      try { fs.writeFileSync(envLocalPath, envLocalBackup, 'utf-8'); } catch { /* ignore */ }
+    // Restore .env.local to default Functions port on shutdown
+    if (envLocalPath && envLocalDefaultUrl) {
+      try {
+        if (fs.existsSync(envLocalPath)) {
+          const content = fs.readFileSync(envLocalPath, 'utf-8');
+          if (content.includes('BACKEND_FUNCTIONS_BASE_URL=') &&
+              !content.includes(`BACKEND_FUNCTIONS_BASE_URL=${envLocalDefaultUrl}`)) {
+            const restored = content.replace(
+              /^BACKEND_FUNCTIONS_BASE_URL=.*/m,
+              `BACKEND_FUNCTIONS_BASE_URL=${envLocalDefaultUrl}`
+            );
+            fs.writeFileSync(envLocalPath, restored, 'utf-8');
+          }
+        }
+      } catch { /* ignore */ }
     }
     if (mockServer) {
       await mockServer.stop();
@@ -795,22 +807,22 @@ async function startDevEnvironment(options: DevOptions) {
       }, 3000);
     }
 
-    // Ensure .env.local always points to the correct Functions port (7071).
-    // When --mock-connectors is active, process.env override routes BFF to mock (7072).
-    // This restore-on-startup approach handles unclean shutdowns that could leave stale values.
+    // Ensure .env.local points to bffTargetPort so Next.js reads the correct backend URL.
+    // When --mock-connectors is active, bffTargetPort = mock port (7072); otherwise = Functions port (7071).
+    // Next.js may load .env.local values that override spawn env vars, so we must keep them in sync.
     envLocalPath = path.join(process.cwd(), '.env.local');
+    envLocalDefaultUrl = `http://${options.host || 'localhost'}:${functionsPort}`;
+    const bffTargetUrl = `http://${options.host || 'localhost'}:${bffTargetPort}`;
     try {
       if (fs.existsSync(envLocalPath)) {
         const envContent = fs.readFileSync(envLocalPath, 'utf-8');
-        const defaultUrl = `http://${options.host || 'localhost'}:${functionsPort}`;
         if (envContent.includes('BACKEND_FUNCTIONS_BASE_URL=') &&
-            !envContent.includes(`BACKEND_FUNCTIONS_BASE_URL=${defaultUrl}`)) {
-          envLocalBackup = envContent;
-          const restored = envContent.replace(
+            !envContent.includes(`BACKEND_FUNCTIONS_BASE_URL=${bffTargetUrl}`)) {
+          const updated = envContent.replace(
             /^BACKEND_FUNCTIONS_BASE_URL=.*/m,
-            `BACKEND_FUNCTIONS_BASE_URL=${defaultUrl}`
+            `BACKEND_FUNCTIONS_BASE_URL=${bffTargetUrl}`
           );
-          fs.writeFileSync(envLocalPath, restored, 'utf-8');
+          fs.writeFileSync(envLocalPath, updated, 'utf-8');
         }
       }
     } catch { /* ignore */ }
