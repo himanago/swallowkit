@@ -9,7 +9,7 @@ import {
   generateBFFAuthLoginRoute,
   generateBFFAuthLogoutRoute,
   generateBFFAuthMeRoute,
-  generateMiddleware,
+  generateProxy,
   generateLoginPage,
   generateAuthContext,
   generateBFFCallFunctionWithAuth,
@@ -230,49 +230,49 @@ describe("generateBFFAuthMeRoute", () => {
 });
 
 // ============================================================
-// auth-generator: Middleware
+// auth-generator: Proxy (formerly Middleware)
 // ============================================================
-describe("generateMiddleware", () => {
+describe("generateProxy", () => {
   it("checks for auth cookie", () => {
-    const code = generateMiddleware("test-project");
+    const code = generateProxy("test-project");
     expect(code).toContain("test-project-auth-token");
     expect(code).toContain("cookies.get");
   });
 
   it("redirects to /login for unauthenticated page requests", () => {
-    const code = generateMiddleware("test-project");
+    const code = generateProxy("test-project");
     expect(code).toContain("/login");
     expect(code).toContain("redirect");
   });
 
   it("returns 401 for unauthenticated API requests", () => {
-    const code = generateMiddleware("test-project");
+    const code = generateProxy("test-project");
     expect(code).toContain("401");
     expect(code).toContain("Unauthorized");
   });
 
   it("injects Authorization header from cookie", () => {
-    const code = generateMiddleware("test-project");
+    const code = generateProxy("test-project");
     expect(code).toContain("Authorization");
     expect(code).toContain("Bearer");
   });
 
   it("skips public paths", () => {
-    const code = generateMiddleware("test-project");
+    const code = generateProxy("test-project");
     expect(code).toContain("/login");
     expect(code).toContain("/api/auth/login");
   });
 
   it("checks JWT expiry (base64 decode, no signature verification)", () => {
-    const code = generateMiddleware("test-project");
+    const code = generateProxy("test-project");
     expect(code).toContain("atob");
     expect(code).toContain("exp");
   });
 
-  it("exports matcher config", () => {
-    const code = generateMiddleware("test-project");
-    expect(code).toContain("export const config");
-    expect(code).toContain("matcher");
+  it("exports proxy function instead of middleware", () => {
+    const code = generateProxy("test-project");
+    expect(code).toContain("export function proxy");
+    expect(code).not.toContain("export function middleware");
   });
 });
 

@@ -6,7 +6,7 @@
 
 import { ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
 import { ModelAuthPolicy } from "../../types";
-import { generateAuthImportTS, generateAuthGuardTS } from "./auth-generator";
+import { generateAuthImportTS, generateAuthGuardTS, generateAuthGuardCSharp, generateAuthGuardPython } from "./auth-generator";
 
 /**
  * Azure Functions エンティティファイルを生成（インラインハンドラー方式）
@@ -32,7 +32,7 @@ import { z } from 'zod/v4';
 import crypto from 'crypto';
 import { ${schemaName} } from '${sharedPackageName}';${authImport}
 
-const containerName = '${modelName}s';
+const containerName = '${modelName.endsWith('s') ? modelName : modelName + 's'}';
 
 // GET /api/${modelCamel} - 全件取得
 app.http('${modelCamel}-get-all', {
@@ -248,11 +248,16 @@ ${authCatchBlock}      context.error(\`Error deleting item from \${containerName
 `;
 }
 
-export function generateCSharpAzureFunctionsCRUD(model: ModelInfo): string {
+export function generateCSharpAzureFunctionsCRUD(model: ModelInfo, authPolicy?: ModelAuthPolicy): string {
   const modelName = model.name;
   const modelCamel = toCamelCase(modelName);
   const className = `${modelName}Functions`;
-  const containerName = `${modelName}s`;
+  const containerName = modelName.endsWith('s') ? modelName : `${modelName}s`;
+
+  const hasAuth = !!authPolicy;
+  const authUsing = hasAuth ? 'using Functions.Auth;\n' : '';
+  const readGuard = hasAuth ? `\n${generateAuthGuardCSharp(authPolicy!, 'read')}\n` : '';
+  const writeGuard = hasAuth ? `\n${generateAuthGuardCSharp(authPolicy!, 'write')}\n` : '';
 
   return `using System.Net;
 using System.Text;
@@ -263,7 +268,7 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-
+${authUsing}
 namespace SwallowKit.Functions;
 
 public sealed class ${className}
@@ -376,7 +381,7 @@ public sealed class ${className}
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "${modelCamel}")] HttpRequestData request)
     {
         try
-        {
+        {${readGuard}
             using var client = CreateCosmosClient();
             var container = GetContainer(client);
             using var iterator = container.GetItemQueryStreamIterator("SELECT * FROM c");
@@ -418,7 +423,7 @@ public sealed class ${className}
         string id)
     {
         try
-        {
+        {${readGuard}
             using var client = CreateCosmosClient();
             var container = GetContainer(client);
             var item = await ReadCosmosItemAsync(container, id);
@@ -440,7 +445,7 @@ public sealed class ${className}
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "${modelCamel}")] HttpRequestData request)
     {
         try
-        {
+        {${writeGuard}
             var body = await ReadRequestBodyAsync(request);
             var now = DateTimeOffset.UtcNow.ToString("O");
             var id = body["id"]?.GetValue<string>() ?? Guid.NewGuid().ToString();
@@ -475,7 +480,7 @@ public sealed class ${className}
         string id)
     {
         try
-        {
+        {${writeGuard}
             using var client = CreateCosmosClient();
             var container = GetContainer(client);
 
@@ -520,7 +525,7 @@ public sealed class ${className}
         string id)
     {
         try
-        {
+        {${writeGuard}
             using var client = CreateCosmosClient();
             var container = GetContainer(client);
             await container.DeleteItemAsync<JsonObject>(id, new PartitionKey(id));
@@ -541,14 +546,23 @@ public sealed class ${className}
 `;
 }
 
-export function generatePythonAzureFunctionsCRUD(model: ModelInfo): {
+export function generatePythonAzureFunctionsCRUD(model: ModelInfo, authPolicy?: ModelAuthPolicy): {
   blueprint: string;
   registration: string;
 } {
   const modelName = model.name;
   const modelCamel = toCamelCase(modelName);
   const modelSnake = toKebabCase(modelName).replace(/-/g, "_");
-  const containerName = `${modelName}s`;
+  const containerName = modelName.endsWith('s') ? modelName : `${modelName}s`;
+
+  const hasAuth = !!authPolicy;
+  const authImport = hasAuth ? '\nfrom auth.jwt_helper import require_auth, require_roles, handle_auth_error\n' : '';
+  // generateAuthGuardPython outputs at 4-space indent; inside try: we need 8-space
+  const readGuardRaw = hasAuth ? generateAuthGuardPython(authPolicy!, 'read') : '';
+  const writeGuardRaw = hasAuth ? generateAuthGuardPython(authPolicy!, 'write') : '';
+  const readGuard = hasAuth ? '\n' + readGuardRaw.split('\n').map(l => '    ' + l).join('\n') : '';
+  const writeGuard = hasAuth ? '\n' + writeGuardRaw.split('\n').map(l => '    ' + l).join('\n') : '';
+  const authCatch = hasAuth ? `\n        auth_err = handle_auth_error(exc)\n        if auth_err:\n            return auth_err` : '';
 
   return {
     registration: `from blueprints.${modelSnake} import bp as ${modelSnake}_bp\napp.register_blueprint(${modelSnake}_bp)`,
@@ -561,7 +575,7 @@ import os
 import azure.functions as func
 from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
-
+${authImport}
 bp = func.Blueprint()
 CONTAINER_NAME = "${containerName}"
 DATABASE_NAME = os.environ.get("COSMOS_DB_DATABASE_NAME", "AppDatabase")
@@ -603,7 +617,7 @@ def _build_managed_document(source: dict[str, Any], item_id: str, created_at: st
 
 @bp.route(route="${modelCamel}", methods=["GET"])
 def ${modelSnake}_get_all(req: func.HttpRequest) -> func.HttpResponse:
-    try:
+    try:${readGuard}
         container = _get_container()
         items = list(
             container.query_items(
@@ -612,26 +626,26 @@ def ${modelSnake}_get_all(req: func.HttpRequest) -> func.HttpResponse:
             )
         )
         return _json_response(items, 200)
-    except Exception as exc:
+    except Exception as exc:${authCatch}
         return _json_response({"error": "Failed to fetch items", "details": str(exc)}, 500)
 
 
 @bp.route(route="${modelCamel}/{id}", methods=["GET"])
 def ${modelSnake}_get_by_id(req: func.HttpRequest) -> func.HttpResponse:
     item_id = req.route_params.get("id")
-    try:
+    try:${readGuard}
         container = _get_container()
         item = container.read_item(item=item_id, partition_key=item_id)
         return _json_response(item, 200)
     except exceptions.CosmosResourceNotFoundError:
         return _json_response({"error": "${modelName} not found", "id": item_id}, 404)
-    except Exception as exc:
+    except Exception as exc:${authCatch}
         return _json_response({"error": "Failed to fetch item", "id": item_id, "details": str(exc)}, 500)
 
 
 @bp.route(route="${modelCamel}", methods=["POST"])
 def ${modelSnake}_create(req: func.HttpRequest) -> func.HttpResponse:
-    try:
+    try:${writeGuard}
         body = req.get_json()
         now = datetime.now(timezone.utc).isoformat()
         item_id = body.get("id") or str(uuid4())
@@ -642,14 +656,14 @@ def ${modelSnake}_create(req: func.HttpRequest) -> func.HttpResponse:
         return _json_response(payload, 201)
     except ValueError:
         return _json_response({"error": "Request body must be a JSON object."}, 400)
-    except Exception as exc:
+    except Exception as exc:${authCatch}
         return _json_response({"error": "Failed to create item", "details": str(exc)}, 500)
 
 
 @bp.route(route="${modelCamel}/{id}", methods=["PUT"])
 def ${modelSnake}_update(req: func.HttpRequest) -> func.HttpResponse:
     item_id = req.route_params.get("id")
-    try:
+    try:${writeGuard}
         container = _get_container()
         existing = container.read_item(item=item_id, partition_key=item_id)
         body = req.get_json()
@@ -665,20 +679,20 @@ def ${modelSnake}_update(req: func.HttpRequest) -> func.HttpResponse:
         return _json_response({"error": "${modelName} not found", "id": item_id}, 404)
     except ValueError:
         return _json_response({"error": "Request body must be a JSON object.", "id": item_id}, 400)
-    except Exception as exc:
+    except Exception as exc:${authCatch}
         return _json_response({"error": "Failed to update item", "id": item_id, "details": str(exc)}, 500)
 
 
 @bp.route(route="${modelCamel}/{id}", methods=["DELETE"])
 def ${modelSnake}_delete(req: func.HttpRequest) -> func.HttpResponse:
     item_id = req.route_params.get("id")
-    try:
+    try:${writeGuard}
         container = _get_container()
         container.delete_item(item=item_id, partition_key=item_id)
         return func.HttpResponse(status_code=204)
     except exceptions.CosmosResourceNotFoundError:
         return _json_response({"error": "${modelName} not found", "id": item_id}, 404)
-    except Exception as exc:
+    except Exception as exc:${authCatch}
         return _json_response({"error": "Failed to delete item", "id": item_id, "details": str(exc)}, 500)
 `,
   };

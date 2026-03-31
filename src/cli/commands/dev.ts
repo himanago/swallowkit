@@ -458,10 +458,16 @@ async function startDevEnvironment(options: DevOptions) {
   const processes: ChildProcess[] = [];
   let functionsEnv: NodeJS.ProcessEnv = process.env;
   let mockServer: ConnectorMockServer | null = null;
+  let envLocalBackup: string | undefined;
+  let envLocalPath = '';
 
   // Cleanup processes on Ctrl+C
   process.on('SIGINT', async () => {
     console.log('\n🛑 Stopping development servers...');
+    // Restore .env.local if we modified it for mock connectors
+    if (envLocalBackup && envLocalPath) {
+      try { fs.writeFileSync(envLocalPath, envLocalBackup, 'utf-8'); } catch { /* ignore */ }
+    }
     if (mockServer) {
       await mockServer.stop();
     }
@@ -788,6 +794,26 @@ async function startDevEnvironment(options: DevOptions) {
         spawn(start, [url], { shell: true });
       }, 3000);
     }
+
+    // Ensure .env.local always points to the correct Functions port (7071).
+    // When --mock-connectors is active, process.env override routes BFF to mock (7072).
+    // This restore-on-startup approach handles unclean shutdowns that could leave stale values.
+    envLocalPath = path.join(process.cwd(), '.env.local');
+    try {
+      if (fs.existsSync(envLocalPath)) {
+        const envContent = fs.readFileSync(envLocalPath, 'utf-8');
+        const defaultUrl = `http://${options.host || 'localhost'}:${functionsPort}`;
+        if (envContent.includes('BACKEND_FUNCTIONS_BASE_URL=') &&
+            !envContent.includes(`BACKEND_FUNCTIONS_BASE_URL=${defaultUrl}`)) {
+          envLocalBackup = envContent;
+          const restored = envContent.replace(
+            /^BACKEND_FUNCTIONS_BASE_URL=.*/m,
+            `BACKEND_FUNCTIONS_BASE_URL=${defaultUrl}`
+          );
+          fs.writeFileSync(envLocalPath, restored, 'utf-8');
+        }
+      }
+    } catch { /* ignore */ }
 
     const nextEnv: NodeJS.ProcessEnv = {
       ...process.env,

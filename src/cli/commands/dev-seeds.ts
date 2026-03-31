@@ -30,7 +30,7 @@ interface LoadedSeedFile {
 }
 
 export function getContainerNameForModel(model: Pick<ModelInfo, "name">): string {
-  return `${model.name}s`;
+  return model.name.endsWith('s') ? model.name : `${model.name}s`;
 }
 
 export function getSeedEnvironmentDir(environment: string, seedsDir: string = "dev-seeds"): string {

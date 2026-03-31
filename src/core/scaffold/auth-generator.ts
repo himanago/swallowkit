@@ -373,7 +373,7 @@ namespace Functions.Auth
         public async Task<HttpResponseData> Me(
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "auth/me")] HttpRequestData request)
         {
-            var (principal, errorResponse) = JwtHelper.Authorize(request);
+            var (principal, errorResponse) = await JwtHelper.Authorize(request);
             if (errorResponse != null) return errorResponse;
 
             var response = request.CreateResponse(System.Net.HttpStatusCode.OK);
@@ -400,7 +400,9 @@ namespace Functions.Auth
 
     public class LoginRequest
     {
+        [System.Text.Json.Serialization.JsonPropertyName("loginId")]
         public string LoginId { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("password")]
         public string Password { get; set; } = "";
     }
 }
@@ -417,6 +419,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.IdentityModel.Tokens;
 
@@ -498,21 +501,21 @@ namespace Functions.Auth
             }
         }
 
-        public static (JwtPayload?, HttpResponseData?) Authorize(
+        public static async Task<(JwtPayload?, HttpResponseData?)> Authorize(
             HttpRequestData request, params string[] requiredRoles)
         {
             var payload = ValidateToken(request);
             if (payload == null)
             {
                 var unauthorized = request.CreateResponse(System.Net.HttpStatusCode.Unauthorized);
-                unauthorized.WriteAsJsonAsync(new { error = "Unauthorized" }).Wait();
+                await unauthorized.WriteAsJsonAsync(new { error = "Unauthorized" });
                 return (null, unauthorized);
             }
 
             if (requiredRoles.Length > 0 && !requiredRoles.Any(r => payload.Roles.Contains(r)))
             {
                 var forbidden = request.CreateResponse(System.Net.HttpStatusCode.Forbidden);
-                forbidden.WriteAsJsonAsync(new { error = "Forbidden" }).Wait();
+                await forbidden.WriteAsJsonAsync(new { error = "Forbidden" });
                 return (null, forbidden);
             }
 
@@ -765,9 +768,8 @@ export function generateBFFAuthLoginRoute(projectName: string, sharedPackageName
   return `import { NextRequest, NextResponse } from 'next/server';
 import { LoginRequest, LoginResponse } from '${sharedPackageName}';
 
-const FUNCTIONS_BASE_URL = process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
-
 export async function POST(request: NextRequest) {
+  const FUNCTIONS_BASE_URL = process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
   try {
     const body = await request.json();
     const validated = LoginRequest.parse(body);
@@ -818,9 +820,8 @@ export function generateBFFAuthMeRoute(sharedPackageName: string): string {
   return `import { NextResponse } from 'next/server';
 import { headers } from 'next/headers';
 
-const FUNCTIONS_BASE_URL = process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
-
 export async function GET() {
+  const FUNCTIONS_BASE_URL = process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
   try {
     const reqHeaders = await headers();
     const authorization = reqHeaders.get('authorization');
@@ -848,10 +849,10 @@ export async function GET() {
 }
 
 // ============================================================
-// 9. Next.js Middleware
+// 9. Next.js Proxy (formerly Middleware)
 // ============================================================
 
-export function generateMiddleware(projectName: string): string {
+export function generateProxy(projectName: string): string {
   const cookieName = projectName.replace(/^@[^/]+\//, '').replace(/[^a-z0-9-]/g, '-') + '-auth-token';
   return `import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
@@ -859,7 +860,7 @@ import type { NextRequest } from 'next/server';
 const AUTH_COOKIE_NAME = '${cookieName}';
 const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/auth/logout'];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // 公開パス・静的アセットはスキップ
@@ -877,7 +878,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
-  // JWT 有効期限の簡易チェック（署名検証なし = Edge Runtime 互換）
+  // JWT 有効期限の簡易チェック（署名検証なし）
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
     if (payload.exp && payload.exp * 1000 < Date.now()) {
@@ -902,10 +903,6 @@ export function middleware(request: NextRequest) {
     request: { headers: requestHeaders },
   });
 }
-
-export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
-};
 `;
 }
 
@@ -1164,7 +1161,7 @@ export async function callFunction<TInput = any, TOutput = any>(
     const url = functionsBaseUrl + path;
     console.log(\`[BFF] \${method} \${url}\`);
 
-    // Authorization ヘッダーの転送（Middleware が cookie → Authorization に変換済み）
+    // Authorization ヘッダーの転送（Proxy が cookie → Authorization に変換済み）
     const fetchHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
     };
@@ -1262,10 +1259,10 @@ export function generateAuthGuardCSharp(policy: ModelAuthPolicy, operation: 'rea
 
   if (roles.length > 0) {
     const rolesStr = roles.map(r => `"${r}"`).join(', ');
-    return `            var (principal, errorResponse) = JwtHelper.Authorize(request, ${rolesStr});
+    return `            var (principal, errorResponse) = await JwtHelper.Authorize(request, ${rolesStr});
             if (errorResponse != null) return errorResponse;`;
   }
-  return `            var (principal, errorResponse) = JwtHelper.Authorize(request);
+  return `            var (principal, errorResponse) = await JwtHelper.Authorize(request);
             if (errorResponse != null) return errorResponse;`;
 }
 
