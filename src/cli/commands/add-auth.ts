@@ -18,7 +18,7 @@ import {
   generateBFFAuthLoginRoute,
   generateBFFAuthLogoutRoute,
   generateBFFAuthMeRoute,
-  generateMiddleware,
+  generateProxy,
   generateLoginPage,
   generateAuthContext,
   generateBFFCallFunctionWithAuth,
@@ -76,6 +76,9 @@ export async function addAuthCommand(options: AddAuthOptions) {
   fs.writeFileSync(authModelPath, generateAuthModels(), "utf-8");
   console.log(` Created: shared/models/auth.ts`);
 
+  // Ensure shared package has build infrastructure (tsconfig, build script)
+  ensureSharedBuildInfrastructure(cwd);
+
   // Update shared/index.ts to re-export auth
   updateSharedIndex(cwd);
 
@@ -91,11 +94,11 @@ export async function addAuthCommand(options: AddAuthOptions) {
   console.log("\n Generating BFF auth routes...");
   generateBFFAuth(cwd, projectName, sharedPackageName);
 
-  // 4. Generate middleware
-  console.log("\n  Generating middleware...");
-  const middlewarePath = path.join(cwd, "middleware.ts");
-  fs.writeFileSync(middlewarePath, generateMiddleware(projectName), "utf-8");
-  console.log(` Created: middleware.ts`);
+  // 4. Generate proxy
+  console.log("\n  Generating proxy...");
+  const proxyPath = path.join(cwd, "proxy.ts");
+  fs.writeFileSync(proxyPath, generateProxy(projectName), "utf-8");
+  console.log(` Created: proxy.ts`);
 
   // 5. Generate login page
   console.log("\n Generating login page...");
@@ -141,6 +144,73 @@ export async function addAuthCommand(options: AddAuthOptions) {
     console.log("     export const authPolicy = { roles: ['admin'] };");
   }
   console.log(`  5. Run scaffold to regenerate functions with auth guards`);
+}
+
+/**
+ * Ensure the shared package has proper build infrastructure
+ * (tsconfig.json, build script, typescript devDependency).
+ * Required for `dev` command which runs `npm run --workspace=shared build`.
+ */
+function ensureSharedBuildInfrastructure(cwd: string): void {
+  const sharedDir = path.join(cwd, "shared");
+  const pkgPath = path.join(sharedDir, "package.json");
+  if (!fs.existsSync(pkgPath)) return;
+
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+  let updated = false;
+
+  // Ensure scripts.build exists
+  if (!pkg.scripts?.build) {
+    if (!pkg.scripts) pkg.scripts = {};
+    pkg.scripts.build = "tsc";
+    pkg.scripts.watch = "tsc --watch";
+    updated = true;
+  }
+
+  // Ensure main points to compiled output
+  if (!pkg.main || pkg.main === "index.ts") {
+    pkg.main = "dist/index.js";
+    pkg.types = "dist/index.d.ts";
+    updated = true;
+  }
+
+  // Ensure typescript devDependency
+  if (!pkg.devDependencies?.typescript) {
+    if (!pkg.devDependencies) pkg.devDependencies = {};
+    pkg.devDependencies.typescript = "^5.0.0";
+    updated = true;
+  }
+
+  if (updated) {
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2), "utf-8");
+    console.log(` Updated: shared/package.json (added build infrastructure)`);
+  }
+
+  // Ensure tsconfig.json exists
+  const tsconfigPath = path.join(sharedDir, "tsconfig.json");
+  if (!fs.existsSync(tsconfigPath)) {
+    const tsconfig = {
+      compilerOptions: {
+        target: "ES2020",
+        module: "commonjs",
+        moduleResolution: "node",
+        lib: ["ES2020"],
+        outDir: "dist",
+        rootDir: ".",
+        declaration: true,
+        declarationMap: true,
+        sourceMap: true,
+        strict: true,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        forceConsistentCasingInFileNames: true,
+      },
+      include: ["index.ts", "models/**/*"],
+      exclude: ["node_modules", "dist"],
+    };
+    fs.writeFileSync(tsconfigPath, JSON.stringify(tsconfig, null, 2), "utf-8");
+    console.log(` Created: shared/tsconfig.json`);
+  }
 }
 
 function updateSharedIndex(cwd: string): void {

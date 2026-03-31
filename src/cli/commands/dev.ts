@@ -604,28 +604,34 @@ async function startDevEnvironment(options: DevOptions) {
     if (hasFunctions && !options.noFunctions) {
       // Build shared package before starting Functions
       const sharedDir = path.join(process.cwd(), 'shared');
-      if (fs.existsSync(sharedDir) && fs.existsSync(path.join(sharedDir, 'package.json'))) {
-        console.log('📦 Building shared package...');
-        const filterArgs = pm === 'pnpm'
-          ? ['run', '--filter', 'shared', 'build']
-          : ['run', '--workspace=shared', 'build'];
-        const sharedBuild = spawn(pm, filterArgs, {
-          cwd: process.cwd(),
-          shell: true,
-          stdio: 'inherit',
-        });
-
-        await new Promise<void>((resolve, reject) => {
-          sharedBuild.on('close', (code) => {
-            if (code === 0) {
-              console.log('✅ Shared package built successfully');
-              resolve();
-            } else {
-              reject(new Error(`Shared package build failed with code ${code}`));
-            }
+      const sharedPkgPath = path.join(sharedDir, 'package.json');
+      if (fs.existsSync(sharedDir) && fs.existsSync(sharedPkgPath)) {
+        const sharedPkg = JSON.parse(fs.readFileSync(sharedPkgPath, 'utf-8'));
+        if (sharedPkg.scripts?.build) {
+          console.log('📦 Building shared package...');
+          const filterArgs = pm === 'pnpm'
+            ? ['run', '--filter', 'shared', 'build']
+            : ['run', '--workspace=shared', 'build'];
+          const sharedBuild = spawn(pm, filterArgs, {
+            cwd: process.cwd(),
+            shell: true,
+            stdio: 'inherit',
           });
-          sharedBuild.on('error', reject);
-        });
+
+          await new Promise<void>((resolve, reject) => {
+            sharedBuild.on('close', (code) => {
+              if (code === 0) {
+                console.log('✅ Shared package built successfully');
+                resolve();
+              } else {
+                reject(new Error(`Shared package build failed with code ${code}`));
+              }
+            });
+            sharedBuild.on('error', reject);
+          });
+        } else {
+          console.log('⚠️  Shared package has no build script — skipping build. Run "swallowkit add-auth" to fix.');
+        }
       }
 
       // Azure Functions を起動
