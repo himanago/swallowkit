@@ -652,6 +652,18 @@ async function startDevEnvironment(options: DevOptions) {
         }
       }
 
+      // Build TypeScript functions after shared package (functions import from shared)
+      if (backendLanguage === 'typescript') {
+        const functionsPkgPath = path.join(functionsDir, 'package.json');
+        if (fs.existsSync(functionsPkgPath)) {
+          const functionsPkg = JSON.parse(fs.readFileSync(functionsPkgPath, 'utf-8'));
+          if (functionsPkg.scripts?.build) {
+            console.log('📦 Building TypeScript Azure Functions...');
+            await runCommand(pm, ['run', 'build'], functionsDir, `${pm} run build`);
+          }
+        }
+      }
+
       // Azure Functions を起動
       const funcProcess = spawn('func', buildFunctionsStartArgs(functionsPort), {
         cwd: functionsDir,
