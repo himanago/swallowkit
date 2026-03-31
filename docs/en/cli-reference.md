@@ -296,7 +296,7 @@ app.http('{model}-get-all', {
 | UI page directory | `app/{kebab-case}/` | `app/todo/page.tsx` |
 | React component | PascalCase | `TodoForm.tsx` |
 | Cosmos DB container | PascalCase + 's' | `Todos` |
-| Cosmos DB partition key | `/id` | Always `/id` |
+| Cosmos DB partition key | `/id` (default) | Customizable via `export const partitionKey` in model file |
 | Bicep container file | `infra/containers/{kebab-case}-container.bicep` | `infra/containers/todo-container.bicep` |
 
 ## Adding New Models (SwallowKit CLI Skills)
@@ -357,7 +357,7 @@ Deploys Bicep infrastructure: Static Web Apps, Functions, Cosmos DB, Storage, Ma
 - **Do not** manually duplicate model definitions across layers. Use the shared package.
 - **Do not** manually create CRUD boilerplate. Use `swallowkit scaffold`.
 - **Do not** hardcode Cosmos DB connection strings. Use Managed Identity (`CosmosDBConnection__accountEndpoint`) in production and emulator settings locally.
-- **Do not** change the partition key strategy. All containers use `/id` as the partition key.
+- **Do not** change the partition key after a container is already created (it requires data migration). Configure it via `export const partitionKey` in model files before the first `swallowkit scaffold`.
 
 ## Technology Stack
 

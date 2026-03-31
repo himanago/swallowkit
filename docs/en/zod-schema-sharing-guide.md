@@ -278,6 +278,32 @@ export type User = z.infer<typeof user>;
 - Schema name: `camelCase` (e.g., `user`, `product`)
 - Type name: `PascalCase` (e.g., `User`, `Product`)
 
+#### Partition Key Configuration
+
+By default, all Cosmos DB containers use `/id` as the partition key. To use a custom partition key, add an `export const partitionKey` to your model file:
+
+```typescript
+// shared/models/order.ts
+import { z } from 'zod';
+
+export const Order = z.object({
+  id: z.string(),
+  customerId: z.string(),   // ← partition key field
+  product: z.string(),
+  amount: z.number(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type Order = z.infer<typeof Order>;
+
+// Custom partition key (default: '/id')
+export const partitionKey = '/customerId';
+```
+
+The partition key field **must** exist in the Zod schema. This setting is applied across all layers: Bicep templates, Azure Functions CRUD code (TypeScript/C#/Python), `dev` command container initialization, and `dev-seeds` data loading.
+
+> See the [Scaffold Guide — Partition Key Configuration](./scaffold-guide#partition-key-configuration) for details on how it affects generated code.
+
 ### 2. Use safeParse() for Error Handling
 
 ```typescript

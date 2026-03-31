@@ -339,7 +339,7 @@ app.http('{model}-get-all', {
 | UI page directory | `app/{kebab-case}/` | `app/todo/page.tsx` |
 | React component | PascalCase | `TodoForm.tsx` |
 | Cosmos DB container | PascalCase + 's' | `Todos` |
-| Cosmos DB partition key | `/id` | Always `/id` |
+| Cosmos DB partition key | `/id` (default) | Customizable via `export const partitionKey` in model file |
 | Bicep container file | `infra/containers/{kebab-case}-container.bicep` | `infra/containers/todo-container.bicep` |
 
 <!--
@@ -355,7 +355,7 @@ app.http('{model}-get-all', {
 | UI ページディレクトリ | `app/{kebab-case}/` | `app/todo/page.tsx` |
 | React コンポーネント | PascalCase | `TodoForm.tsx` |
 | Cosmos DB コンテナ | PascalCase + 's' | `Todos` |
-| Cosmos DB パーティションキー | `/id` | 常に `/id` |
+| Cosmos DB パーティションキー | `/id`（デフォルト） | モデルファイルの `export const partitionKey` でカスタマイズ可能 |
 | Bicep コンテナファイル | `infra/containers/{kebab-case}-container.bicep` | `infra/containers/todo-container.bicep` |
 -->
 
@@ -441,7 +441,7 @@ Deploys Bicep infrastructure: Static Web Apps, Functions, Cosmos DB, Storage, Ma
 - **Do not** manually duplicate model definitions across layers. Use the shared package.
 - **Do not** manually create CRUD boilerplate. Use `swallowkit scaffold`.
 - **Do not** hardcode Cosmos DB connection strings. Use Managed Identity (`CosmosDBConnection__accountEndpoint`) in production and emulator settings locally.
-- **Do not** change the partition key strategy. All containers use `/id` as the partition key.
+- **Do not** change the partition key after a container is already created (it requires data migration). Configure it via `export const partitionKey` in model files before the first `swallowkit scaffold`.
 
 <!--
 - `app/api/` ルートにビジネスロジックやデータベース呼び出しを置かないでください。BFF 専用です。
@@ -449,7 +449,7 @@ Deploys Bicep infrastructure: Static Web Apps, Functions, Cosmos DB, Storage, Ma
 - モデル定義をレイヤー間で手動複製しないでください。共有パッケージを使用します。
 - CRUD ボイラープレートを手動で作成しないでください。`swallowkit scaffold` を使用します。
 - Cosmos DB 接続文字列をハードコードしないでください。本番では Managed Identity、ローカルではエミュレーター設定を使用します。
-- パーティションキー戦略を変更しないでください。すべてのコンテナは `/id` をパーティションキーとして使用します。
+- コンテナ作成後にパーティションキーを変更しないでください（データ移行が必要です）。最初の `swallowkit scaffold` 実行前にモデルファイルの `export const partitionKey` で設定してください。
 -->
 
 ## Technology Stack

@@ -292,6 +292,32 @@ export type UserType = z.infer<typeof userSchema>;
 - スキーマ名: `camelCase` + `schema` サフィックス（例: `userSchema`, `productSchema`）
 - 型名: `PascalCase` + `Type` サフィックス（例: `UserType`, `ProductType`）
 
+#### パーティションキーの設定
+
+デフォルトでは、すべての Cosmos DB コンテナはパーティションキーとして `/id` を使用します。カスタムパーティションキーを使用するには、モデルファイルに `export const partitionKey` を追加します：
+
+```typescript
+// shared/models/order.ts
+import { z } from 'zod';
+
+export const Order = z.object({
+  id: z.string(),
+  customerId: z.string(),   // ← パーティションキーフィールド
+  product: z.string(),
+  amount: z.number(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type Order = z.infer<typeof Order>;
+
+// カスタムパーティションキー（デフォルト: '/id'）
+export const partitionKey = '/customerId';
+```
+
+パーティションキーフィールドは Zod スキーマ内に**必ず存在する必要があります**。この設定は、Bicep テンプレート、Azure Functions CRUD コード（TypeScript/C#/Python）、`dev` コマンドのコンテナ初期化、`dev-seeds` のデータ読み込みなど、すべてのレイヤーに反映されます。
+
+> 生成コードへの影響の詳細は [Scaffold ガイド — パーティションキーの設定](./scaffold-guide#パーティションキーの設定) を参照してください。
+
 ### 2. エラーハンドリングには safeParse() を使用
 
 ```typescript
