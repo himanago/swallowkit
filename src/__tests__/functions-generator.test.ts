@@ -98,4 +98,140 @@ describe("generateCompactAzureFunctionsCRUD", () => {
     expect(generated.blueprint).toContain("container.replace_item");
     expect(generated.blueprint).toContain("container.delete_item");
   });
+
+  // --- Custom Partition Key Tests ---
+
+  describe("custom partition key (TS)", () => {
+    it("uses input binding when partitionKey is /id (default)", () => {
+      const model = createBasicModelInfo({ partitionKey: "/id" });
+      const code = generateCompactAzureFunctionsCRUD(model, "@myapp/shared");
+      expect(code).toContain("partitionKey: '{id}'");
+      expect(code).toContain("container.item(id, id).delete()");
+    });
+
+    it("uses SDK direct call when partitionKey is not /id", () => {
+      const model = createBasicModelInfo({
+        partitionKey: "/tenantId",
+        fields: [
+          { name: "id", type: "string", isOptional: false, isArray: false },
+          { name: "tenantId", type: "string", isOptional: false, isArray: false },
+          { name: "title", type: "string", isOptional: false, isArray: false },
+          { name: "createdAt", type: "string", isOptional: false, isArray: false },
+          { name: "updatedAt", type: "string", isOptional: false, isArray: false },
+        ],
+      });
+      const code = generateCompactAzureFunctionsCRUD(model, "@myapp/shared");
+
+      // Should NOT have input binding with partitionKey
+      expect(code).not.toContain("partitionKey: '{id}'");
+      // getById should use SDK query
+      expect(code).toContain("custom partition key");
+      expect(code).toContain("SELECT * FROM c WHERE c.id = @id");
+      // delete should read doc first to get PK value
+      expect(code).toContain("resources[0].tenantId");
+      expect(code).toContain("container.item(id, pkValue).delete()");
+    });
+
+    it("generates snapshot for custom partition key TS", () => {
+      const model = createBasicModelInfo({
+        partitionKey: "/tenantId",
+        fields: [
+          { name: "id", type: "string", isOptional: false, isArray: false },
+          { name: "tenantId", type: "string", isOptional: false, isArray: false },
+          { name: "title", type: "string", isOptional: false, isArray: false },
+          { name: "createdAt", type: "string", isOptional: false, isArray: false },
+          { name: "updatedAt", type: "string", isOptional: false, isArray: false },
+        ],
+      });
+      const code = generateCompactAzureFunctionsCRUD(model, "@myapp/shared");
+      expect(code).toMatchSnapshot();
+    });
+  });
+
+  describe("custom partition key (C#)", () => {
+    it("uses ReadItemStreamAsync when partitionKey is /id", () => {
+      const model = createBasicModelInfo({ partitionKey: "/id" });
+      const code = generateCSharpAzureFunctionsCRUD(model);
+      expect(code).toContain("ReadItemStreamAsync(id, new PartitionKey(id))");
+      expect(code).toContain("DeleteItemAsync<JsonObject>(id, new PartitionKey(id))");
+    });
+
+    it("uses query when partitionKey is not /id", () => {
+      const model = createBasicModelInfo({
+        partitionKey: "/tenantId",
+        fields: [
+          { name: "id", type: "string", isOptional: false, isArray: false },
+          { name: "tenantId", type: "string", isOptional: false, isArray: false },
+          { name: "title", type: "string", isOptional: false, isArray: false },
+          { name: "createdAt", type: "string", isOptional: false, isArray: false },
+          { name: "updatedAt", type: "string", isOptional: false, isArray: false },
+        ],
+      });
+      const code = generateCSharpAzureFunctionsCRUD(model);
+      // ReadCosmosItemAsync should use query instead of point read
+      expect(code).toContain("GetItemQueryStreamIterator(query)");
+      expect(code).not.toContain("ReadItemStreamAsync(id, new PartitionKey(id))");
+      // Delete should read doc first for PK value
+      expect(code).toContain('existing["tenantId"]');
+    });
+
+    it("generates snapshot for custom partition key C#", () => {
+      const model = createBasicModelInfo({
+        partitionKey: "/tenantId",
+        fields: [
+          { name: "id", type: "string", isOptional: false, isArray: false },
+          { name: "tenantId", type: "string", isOptional: false, isArray: false },
+          { name: "title", type: "string", isOptional: false, isArray: false },
+          { name: "createdAt", type: "string", isOptional: false, isArray: false },
+          { name: "updatedAt", type: "string", isOptional: false, isArray: false },
+        ],
+      });
+      const code = generateCSharpAzureFunctionsCRUD(model);
+      expect(code).toMatchSnapshot();
+    });
+  });
+
+  describe("custom partition key (Python)", () => {
+    it("uses read_item with partition_key=item_id when partitionKey is /id", () => {
+      const model = createBasicModelInfo({ partitionKey: "/id" });
+      const generated = generatePythonAzureFunctionsCRUD(model);
+      expect(generated.blueprint).toContain("partition_key=item_id");
+    });
+
+    it("uses cross-partition query when partitionKey is not /id", () => {
+      const model = createBasicModelInfo({
+        partitionKey: "/tenantId",
+        fields: [
+          { name: "id", type: "string", isOptional: false, isArray: false },
+          { name: "tenantId", type: "string", isOptional: false, isArray: false },
+          { name: "title", type: "string", isOptional: false, isArray: false },
+          { name: "createdAt", type: "string", isOptional: false, isArray: false },
+          { name: "updatedAt", type: "string", isOptional: false, isArray: false },
+        ],
+      });
+      const generated = generatePythonAzureFunctionsCRUD(model);
+      // Should not use direct read_item with partition_key=item_id
+      expect(generated.blueprint).not.toContain("partition_key=item_id");
+      // Should use cross-partition query
+      expect(generated.blueprint).toContain("enable_cross_partition_query=True");
+      expect(generated.blueprint).toContain('SELECT * FROM c WHERE c.id = @id');
+      // Delete should get PK value from document
+      expect(generated.blueprint).toContain('.get("tenantId")');
+    });
+
+    it("generates snapshot for custom partition key Python", () => {
+      const model = createBasicModelInfo({
+        partitionKey: "/tenantId",
+        fields: [
+          { name: "id", type: "string", isOptional: false, isArray: false },
+          { name: "tenantId", type: "string", isOptional: false, isArray: false },
+          { name: "title", type: "string", isOptional: false, isArray: false },
+          { name: "createdAt", type: "string", isOptional: false, isArray: false },
+          { name: "updatedAt", type: "string", isOptional: false, isArray: false },
+        ],
+      });
+      const generated = generatePythonAzureFunctionsCRUD(model);
+      expect(generated.blueprint).toMatchSnapshot();
+    });
+  });
 });

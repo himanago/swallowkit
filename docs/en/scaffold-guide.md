@@ -947,6 +947,38 @@ If `auth.authorization.defaultPolicy` is set to `'authenticated'` in `swallowkit
 
 > 💡 See the **[Authentication Guide](./auth-guide.md)** for full setup instructions and configuration details.
 
+### Partition Key Configuration
+
+By default, all Cosmos DB containers use `/id` as the partition key. To use a custom partition key, export it from your model file:
+
+```typescript
+// shared/models/order.ts
+import { z } from 'zod';
+
+export const Order = z.object({
+  id: z.string(),
+  customerId: z.string(),
+  product: z.string(),
+  amount: z.number(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+export type Order = z.infer<typeof Order>;
+
+export const partitionKey = '/customerId';
+```
+
+The partition key field **must** exist in the Zod schema. When `scaffold` detects a custom `partitionKey`:
+
+- **Bicep templates** use the specified partition key path instead of `/id`
+- **TypeScript Functions** switch from Cosmos DB input bindings to SDK direct calls for read/update/delete operations
+- **C# Functions** use query-based document lookups instead of point reads
+- **Python Functions** use cross-partition queries for document retrieval
+- **`dev` command** creates Cosmos DB containers with the correct partition key path
+- **`dev-seeds` command** recreates containers with the correct partition key path
+
+If `partitionKey` is not exported, the default `/id` is used — **existing projects work without any changes**.
+
 ## Next Steps
 
 - Learn about [Connector Guide](./connector-guide.md) - Integrate external data sources with the same Zod workflow

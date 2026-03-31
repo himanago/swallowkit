@@ -1,5 +1,699 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`generateCompactAzureFunctionsCRUD custom partition key (C#) generates snapshot for custom partition key C# 1`] = `
+"using System.Net;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Azure.Identity;
+using Microsoft.Azure.Cosmos;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.Extensions.Logging;
+
+namespace SwallowKit.Functions;
+
+public sealed class TodoFunctions
+{
+    private readonly ILogger<TodoFunctions> _logger;
+    private static readonly string ContainerName = "Todos";
+
+    public TodoFunctions(ILogger<TodoFunctions> logger)
+    {
+        _logger = logger;
+    }
+
+    private static string DatabaseName => Environment.GetEnvironmentVariable("COSMOS_DB_DATABASE_NAME") ?? "AppDatabase";
+
+    private static bool IsLocalCosmosEndpoint(string endpoint) =>
+        endpoint.Contains("localhost:8081", StringComparison.OrdinalIgnoreCase) ||
+        endpoint.Contains("127.0.0.1:8081", StringComparison.OrdinalIgnoreCase);
+
+    private static CosmosClient CreateCosmosClient()
+    {
+        var endpoint = Environment.GetEnvironmentVariable("CosmosDBConnection__accountEndpoint");
+        if (!string.IsNullOrWhiteSpace(endpoint))
+        {
+            var options = IsLocalCosmosEndpoint(endpoint)
+                ? new CosmosClientOptions { ConnectionMode = ConnectionMode.Gateway }
+                : new CosmosClientOptions();
+            return new CosmosClient(endpoint, new DefaultAzureCredential(), options);
+        }
+
+        var connectionString = Environment.GetEnvironmentVariable("CosmosDBConnection");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException("Cosmos DB connection is not configured.");
+        }
+
+        var connectionOptions = IsLocalCosmosEndpoint(connectionString)
+            ? new CosmosClientOptions { ConnectionMode = ConnectionMode.Gateway }
+            : new CosmosClientOptions();
+
+        return new CosmosClient(connectionString, connectionOptions);
+    }
+
+    private static Container GetContainer(CosmosClient client) => client.GetContainer(DatabaseName, ContainerName);
+
+    private static async Task<JsonObject> ReadRequestBodyAsync(HttpRequestData request)
+    {
+        using var reader = new StreamReader(request.Body, Encoding.UTF8);
+        var raw = await reader.ReadToEndAsync();
+        var node = JsonNode.Parse(raw) as JsonObject;
+
+        if (node is null)
+        {
+            throw new JsonException("Request body must be a JSON object.");
+        }
+
+        return node;
+    }
+
+    private static JsonObject BuildManagedDocument(JsonObject source, string id, string createdAt, string updatedAt)
+    {
+        var payload = new JsonObject();
+
+        foreach (var entry in source)
+        {
+            if (entry.Key is "id" or "createdAt" or "updatedAt")
+            {
+                continue;
+            }
+
+            payload[entry.Key] = entry.Value?.DeepClone();
+        }
+
+        payload["id"] = id;
+        payload["createdAt"] = createdAt;
+        payload["updatedAt"] = updatedAt;
+
+        return payload;
+    }
+
+    private static Stream CreateJsonStream(JsonObject payload) =>
+        new MemoryStream(Encoding.UTF8.GetBytes(payload.ToJsonString()));
+
+    private static async Task<JsonObject> ReadCosmosItemAsync(Container container, string id)
+    {
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.id = @id")
+            .WithParameter("@id", id);
+        using var iterator = container.GetItemQueryStreamIterator(query);
+
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            if (!page.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException($"Cosmos query failed with status {(int)page.StatusCode}.");
+            }
+
+            using var document = await JsonDocument.ParseAsync(page.Content);
+            if (document.RootElement.TryGetProperty("Documents", out var documents))
+            {
+                foreach (var item in documents.EnumerateArray())
+                {
+                    return JsonNode.Parse(item.GetRawText())?.AsObject()
+                        ?? throw new JsonException("Cosmos item payload must be a JSON object.");
+                }
+            }
+        }
+
+        throw new CosmosException("Item not found", HttpStatusCode.NotFound, 0, "", 0);
+    }
+
+    private static async Task<HttpResponseData> WriteJsonAsync(HttpRequestData request, HttpStatusCode status, object payload)
+    {
+        var response = request.CreateResponse(status);
+        await response.WriteAsJsonAsync(payload);
+        return response;
+    }
+
+    [Function("todoGetAll")]
+    public async Task<HttpResponseData> GetAll(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "todo")] HttpRequestData request)
+    {
+        try
+        {
+            using var client = CreateCosmosClient();
+            var container = GetContainer(client);
+            using var iterator = container.GetItemQueryStreamIterator("SELECT * FROM c");
+            var items = new List<JsonElement>();
+
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                if (!page.IsSuccessStatusCode)
+                {
+                    throw new InvalidOperationException($"Cosmos query failed with status {(int)page.StatusCode}.");
+                }
+
+                using var document = await JsonDocument.ParseAsync(page.Content);
+                if (!document.RootElement.TryGetProperty("Documents", out var documents))
+                {
+                    continue;
+                }
+
+                foreach (var item in documents.EnumerateArray())
+                {
+                    items.Add(item.Clone());
+                }
+            }
+
+            _logger.LogInformation("Fetched {Count} Todo item(s) from {Container}.", items.Count, ContainerName);
+            return await WriteJsonAsync(request, HttpStatusCode.OK, items);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch Todo items from Cosmos DB.");
+            return await WriteJsonAsync(request, HttpStatusCode.InternalServerError, new { error = "Failed to fetch items" });
+        }
+    }
+
+    [Function("todoGetById")]
+    public async Task<HttpResponseData> GetById(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "todo/{id}")] HttpRequestData request,
+        string id)
+    {
+        try
+        {
+            using var client = CreateCosmosClient();
+            var container = GetContainer(client);
+            var item = await ReadCosmosItemAsync(container, id);
+            return await WriteJsonAsync(request, HttpStatusCode.OK, item);
+        }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return await WriteJsonAsync(request, HttpStatusCode.NotFound, new { error = "Todo not found", id });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch Todo item {Id} from Cosmos DB.", id);
+            return await WriteJsonAsync(request, HttpStatusCode.InternalServerError, new { error = "Failed to fetch item", id });
+        }
+    }
+
+    [Function("todoCreate")]
+    public async Task<HttpResponseData> Create(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "todo")] HttpRequestData request)
+    {
+        try
+        {
+            var body = await ReadRequestBodyAsync(request);
+            var now = DateTimeOffset.UtcNow.ToString("O");
+            var id = body["id"]?.GetValue<string>() ?? Guid.NewGuid().ToString();
+            var payload = BuildManagedDocument(body, id, now, now);
+
+            using var client = CreateCosmosClient();
+            var container = GetContainer(client);
+            using var stream = CreateJsonStream(payload);
+            var pkValue = payload["tenantId"]?.GetValue<string>() ?? throw new InvalidOperationException("Partition key field 'tenantId' is required.");
+            var response = await container.CreateItemStreamAsync(stream, new PartitionKey(pkValue));
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException($"Cosmos create failed with status {(int)response.StatusCode}.");
+            }
+
+            return await WriteJsonAsync(request, HttpStatusCode.Created, payload);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Invalid Todo create payload.");
+            return await WriteJsonAsync(request, HttpStatusCode.BadRequest, new { error = "Request body must be a JSON object." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create Todo item in Cosmos DB.");
+            return await WriteJsonAsync(request, HttpStatusCode.InternalServerError, new { error = "Failed to create item" });
+        }
+    }
+
+    [Function("todoUpdate")]
+    public async Task<HttpResponseData> Update(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "todo/{id}")] HttpRequestData request,
+        string id)
+    {
+        try
+        {
+            using var client = CreateCosmosClient();
+            var container = GetContainer(client);
+
+            JsonObject existing;
+            try
+            {
+                existing = await ReadCosmosItemAsync(container, id);
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                return await WriteJsonAsync(request, HttpStatusCode.NotFound, new { error = "Todo not found", id });
+            }
+
+            var body = await ReadRequestBodyAsync(request);
+            var createdAt = existing["createdAt"]?.GetValue<string>() ?? DateTimeOffset.UtcNow.ToString("O");
+            var payload = BuildManagedDocument(body, id, createdAt, DateTimeOffset.UtcNow.ToString("O"));
+
+            using var stream = CreateJsonStream(payload);
+            var response = await container.ReplaceItemStreamAsync(stream, id, new PartitionKey(payload["tenantId"]?.GetValue<string>()));
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException($"Cosmos replace failed with status {(int)response.StatusCode}.");
+            }
+
+            return await WriteJsonAsync(request, HttpStatusCode.OK, payload);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Invalid Todo update payload for {Id}.", id);
+            return await WriteJsonAsync(request, HttpStatusCode.BadRequest, new { error = "Request body must be a JSON object.", id });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update Todo item {Id} in Cosmos DB.", id);
+            return await WriteJsonAsync(request, HttpStatusCode.InternalServerError, new { error = "Failed to update item", id });
+        }
+    }
+
+    [Function("todoDelete")]
+    public async Task<HttpResponseData> Delete(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "todo/{id}")] HttpRequestData request,
+        string id)
+    {
+        try
+        {
+            using var client = CreateCosmosClient();
+            var container = GetContainer(client);
+            var existing = await ReadCosmosItemAsync(container, id);
+            var pkValue = existing["tenantId"]?.GetValue<string>();
+            await container.DeleteItemAsync<JsonObject>(id, new PartitionKey(pkValue));
+
+            return request.CreateResponse(HttpStatusCode.NoContent);
+        }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return await WriteJsonAsync(request, HttpStatusCode.NotFound, new { error = "Todo not found", id });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete Todo item {Id} from Cosmos DB.", id);
+            return await WriteJsonAsync(request, HttpStatusCode.InternalServerError, new { error = "Failed to delete item", id });
+        }
+    }
+}
+"
+`;
+
+exports[`generateCompactAzureFunctionsCRUD custom partition key (Python) generates snapshot for custom partition key Python 1`] = `
+"import json
+from datetime import datetime, timezone
+from typing import Any
+from uuid import uuid4
+import os
+
+import azure.functions as func
+from azure.cosmos import CosmosClient, exceptions
+from azure.identity import DefaultAzureCredential
+
+bp = func.Blueprint()
+CONTAINER_NAME = "Todos"
+DATABASE_NAME = os.environ.get("COSMOS_DB_DATABASE_NAME", "AppDatabase")
+
+
+def _json_response(payload: Any, status_code: int) -> func.HttpResponse:
+    return func.HttpResponse(
+        body=json.dumps(payload, ensure_ascii=False),
+        status_code=status_code,
+        mimetype="application/json",
+    )
+
+
+def _get_container():
+    endpoint = os.environ.get("CosmosDBConnection__accountEndpoint")
+    if endpoint:
+        client = CosmosClient(endpoint, credential=DefaultAzureCredential())
+    else:
+        connection_string = os.environ.get("CosmosDBConnection")
+        if not connection_string:
+            raise RuntimeError("Cosmos DB connection is not configured.")
+        client = CosmosClient.from_connection_string(connection_string)
+
+    database = client.get_database_client(DATABASE_NAME)
+    return database.get_container_client(CONTAINER_NAME)
+
+
+def _build_managed_document(source: dict[str, Any], item_id: str, created_at: str, updated_at: str) -> dict[str, Any]:
+    payload = {
+        key: value
+        for key, value in source.items()
+        if key not in {"id", "createdAt", "updatedAt"}
+    }
+    payload["id"] = item_id
+    payload["createdAt"] = created_at
+    payload["updatedAt"] = updated_at
+    return payload
+
+
+@bp.route(route="todo", methods=["GET"])
+def todo_get_all(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        container = _get_container()
+        items = list(
+            container.query_items(
+                query="SELECT * FROM c",
+                enable_cross_partition_query=True,
+            )
+        )
+        return _json_response(items, 200)
+    except Exception as exc:
+        return _json_response({"error": "Failed to fetch items", "details": str(exc)}, 500)
+
+
+@bp.route(route="todo/{id}", methods=["GET"])
+def todo_get_by_id(req: func.HttpRequest) -> func.HttpResponse:
+    item_id = req.route_params.get("id")
+    try:
+        container = _get_container()
+        items = list(container.query_items(
+            query="SELECT * FROM c WHERE c.id = @id",
+            parameters=[{"name": "@id", "value": item_id}],
+            enable_cross_partition_query=True,
+        ))
+        if not items:
+            return _json_response({"error": "Todo not found", "id": item_id}, 404)
+        return _json_response(items[0], 200)
+    except exceptions.CosmosResourceNotFoundError:
+        return _json_response({"error": "Todo not found", "id": item_id}, 404)
+    except Exception as exc:
+        return _json_response({"error": "Failed to fetch item", "id": item_id, "details": str(exc)}, 500)
+
+
+@bp.route(route="todo", methods=["POST"])
+def todo_create(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        body = req.get_json()
+        now = datetime.now(timezone.utc).isoformat()
+        item_id = body.get("id") or str(uuid4())
+        payload = _build_managed_document(body, item_id, now, now)
+
+        container = _get_container()
+        container.create_item(payload)
+        return _json_response(payload, 201)
+    except ValueError:
+        return _json_response({"error": "Request body must be a JSON object."}, 400)
+    except Exception as exc:
+        return _json_response({"error": "Failed to create item", "details": str(exc)}, 500)
+
+
+@bp.route(route="todo/{id}", methods=["PUT"])
+def todo_update(req: func.HttpRequest) -> func.HttpResponse:
+    item_id = req.route_params.get("id")
+    try:
+        container = _get_container()
+        items = list(container.query_items(
+            query="SELECT * FROM c WHERE c.id = @id",
+            parameters=[{"name": "@id", "value": item_id}],
+            enable_cross_partition_query=True,
+        ))
+        if not items:
+            return _json_response({"error": "Todo not found", "id": item_id}, 404)
+        existing = items[0]
+        body = req.get_json()
+        payload = _build_managed_document(
+            body,
+            item_id,
+            existing.get("createdAt") or datetime.now(timezone.utc).isoformat(),
+            datetime.now(timezone.utc).isoformat(),
+        )
+        container.replace_item(item=existing, body=payload)
+        return _json_response(payload, 200)
+    except exceptions.CosmosResourceNotFoundError:
+        return _json_response({"error": "Todo not found", "id": item_id}, 404)
+    except ValueError:
+        return _json_response({"error": "Request body must be a JSON object.", "id": item_id}, 400)
+    except Exception as exc:
+        return _json_response({"error": "Failed to update item", "id": item_id, "details": str(exc)}, 500)
+
+
+@bp.route(route="todo/{id}", methods=["DELETE"])
+def todo_delete(req: func.HttpRequest) -> func.HttpResponse:
+    item_id = req.route_params.get("id")
+    try:
+        container = _get_container()
+        items = list(container.query_items(
+            query="SELECT * FROM c WHERE c.id = @id",
+            parameters=[{"name": "@id", "value": item_id}],
+            enable_cross_partition_query=True,
+        ))
+        if not items:
+            return _json_response({"error": "Todo not found", "id": item_id}, 404)
+        pk_value = items[0].get("tenantId")
+        container.delete_item(item=item_id, partition_key=pk_value)
+        return func.HttpResponse(status_code=204)
+    except exceptions.CosmosResourceNotFoundError:
+        return _json_response({"error": "Todo not found", "id": item_id}, 404)
+    except Exception as exc:
+        return _json_response({"error": "Failed to delete item", "id": item_id, "details": str(exc)}, 500)
+"
+`;
+
+exports[`generateCompactAzureFunctionsCRUD custom partition key (TS) generates snapshot for custom partition key TS 1`] = `
+"import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
+import { z } from 'zod/v4';
+import crypto from 'crypto';
+import { todoSchema } from '@myapp/shared';
+
+const containerName = 'Todos';
+
+// GET /api/todo - 全件取得
+app.http('todo-get-all', {
+  methods: ['GET'],
+  route: 'todo',
+  authLevel: 'anonymous',
+  extraInputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosInput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+      sqlQuery: 'SELECT * FROM c',
+    },
+  ],
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const documents = context.extraInputs.get('cosmosInput') as any[];
+
+      if (!documents || !Array.isArray(documents)) {
+        return { status: 200, jsonBody: [] };
+      }
+
+      const validated = z.array(todoSchema).parse(documents);
+      context.log(\`Fetched \${validated.length} items from \${containerName}\`);
+
+      return { status: 200, jsonBody: validated };
+    } catch (error) {
+      context.error(\`Error fetching from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to fetch items' } };
+    }
+  },
+});
+
+// GET /api/todo/{id} - ID指定取得 (custom partition key)
+app.http('todo-get-by-id', {
+  methods: ['GET'],
+  route: 'todo/{id}',
+  authLevel: 'anonymous',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const id = request.params.id;
+      if (!id) {
+        return { status: 400, jsonBody: { error: 'ID is required' } };
+      }
+
+      const { CosmosClient } = await import('@azure/cosmos');
+      const endpoint = process.env.CosmosDBConnection__accountEndpoint;
+      let client: InstanceType<typeof CosmosClient>;
+      if (endpoint) {
+        const { DefaultAzureCredential } = await import('@azure/identity');
+        client = new CosmosClient({ endpoint, aadCredentials: new DefaultAzureCredential() });
+      } else {
+        client = new CosmosClient(process.env.CosmosDBConnection!);
+      }
+      const database = client.database(process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase');
+      const container = database.container(containerName);
+
+      const { resources } = await container.items.query({
+        query: 'SELECT * FROM c WHERE c.id = @id',
+        parameters: [{ name: '@id', value: id }],
+      }).fetchAll();
+
+      if (!resources || resources.length === 0) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+
+      const validated = todoSchema.parse(resources[0]);
+      return { status: 200, jsonBody: validated };
+    } catch (error) {
+      context.error(\`Error fetching item from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to fetch item' } };
+    }
+  },
+});
+
+// POST /api/todo - 新規作成
+app.http('todo-create', {
+  methods: ['POST'],
+  route: 'todo',
+  authLevel: 'anonymous',
+  extraOutputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosOutput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+      createIfNotExists: true,
+    },
+  ],
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const body = await request.json() as any;
+
+      const { id, createdAt, updatedAt, ...userData } = body;
+      const now = new Date().toISOString();
+      const dataWithManagedFields = {
+        ...userData,
+        id: id || crypto.randomUUID(),
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const result = todoSchema.safeParse(dataWithManagedFields);
+
+      if (!result.success) {
+        context.error('Validation failed:', result.error.issues);
+        return { status: 400, jsonBody: { error: 'Validation failed', details: result.error.issues } };
+      }
+
+      context.extraOutputs.set('cosmosOutput', result.data);
+      return { status: 201, jsonBody: result.data };
+    } catch (error) {
+      context.error(\`Error creating item in \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to create item' } };
+    }
+  },
+});
+
+// PUT /api/todo/{id} - 更新 (custom partition key)
+app.http('todo-update', {
+  methods: ['PUT'],
+  route: 'todo/{id}',
+  authLevel: 'anonymous',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const id = request.params.id;
+      if (!id) {
+        return { status: 400, jsonBody: { error: 'ID is required' } };
+      }
+
+      const { CosmosClient } = await import('@azure/cosmos');
+      const endpoint = process.env.CosmosDBConnection__accountEndpoint;
+      let client: InstanceType<typeof CosmosClient>;
+      if (endpoint) {
+        const { DefaultAzureCredential } = await import('@azure/identity');
+        client = new CosmosClient({ endpoint, aadCredentials: new DefaultAzureCredential() });
+      } else {
+        client = new CosmosClient(process.env.CosmosDBConnection!);
+      }
+      const database = client.database(process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase');
+      const container = database.container(containerName);
+
+      const { resources } = await container.items.query({
+        query: 'SELECT * FROM c WHERE c.id = @id',
+        parameters: [{ name: '@id', value: id }],
+      }).fetchAll();
+
+      if (!resources || resources.length === 0) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+
+      const existingDocument = resources[0];
+      const body = await request.json() as any;
+      const { createdAt, updatedAt, ...userData } = body;
+
+      const dataWithManagedFields = {
+        ...userData,
+        id,
+        createdAt: existingDocument.createdAt,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const result = todoSchema.safeParse(dataWithManagedFields);
+
+      if (!result.success) {
+        context.error('Validation failed:', result.error.issues);
+        return { status: 400, jsonBody: { error: 'Validation failed', details: result.error.issues } };
+      }
+
+      const pkValue = result.data.tenantId;
+      await container.items.upsert(result.data);
+      return { status: 200, jsonBody: result.data };
+    } catch (error) {
+      context.error(\`Error updating item in \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to update item' } };
+    }
+  },
+});
+
+// DELETE /api/todo/{id} - 削除 (custom partition key)
+app.http('todo-delete', {
+  methods: ['DELETE'],
+  route: 'todo/{id}',
+  authLevel: 'anonymous',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const id = request.params.id;
+      if (!id) {
+        return { status: 400, jsonBody: { error: 'ID is required' } };
+      }
+
+      const { CosmosClient } = await import('@azure/cosmos');
+      const endpoint = process.env.CosmosDBConnection__accountEndpoint;
+      let client: InstanceType<typeof CosmosClient>;
+      if (endpoint) {
+        const { DefaultAzureCredential } = await import('@azure/identity');
+        client = new CosmosClient({ endpoint, aadCredentials: new DefaultAzureCredential() });
+      } else {
+        client = new CosmosClient(process.env.CosmosDBConnection!);
+      }
+      const database = client.database(process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase');
+      const container = database.container(containerName);
+
+      // パーティションキー値を取得するためにドキュメントを読み取り
+      const { resources } = await container.items.query({
+        query: 'SELECT * FROM c WHERE c.id = @id',
+        parameters: [{ name: '@id', value: id }],
+      }).fetchAll();
+
+      if (!resources || resources.length === 0) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+
+      const pkValue = resources[0].tenantId;
+      await container.item(id, pkValue).delete();
+      context.log(\`Deleted item \${id} from \${containerName}\`);
+
+      return { status: 204 };
+    } catch (error: any) {
+      if (error.code === 404) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+      context.error(\`Error deleting item from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to delete item' } };
+    }
+  },
+});
+"
+`;
+
 exports[`generateCompactAzureFunctionsCRUD generates correct CRUD code for a basic model 1`] = `
 "import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { z } from 'zod/v4';

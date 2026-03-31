@@ -135,7 +135,7 @@ export async function applyDevSeedEnvironment({
   console.log(`🧪 Applying Cosmos DB seed data for environment "${environment}"...`);
 
   for (const seedFile of seedFiles) {
-    await recreateContainer(database, seedFile.containerName);
+    await recreateContainer(database, seedFile.containerName, seedFile.model.partitionKey);
     const container = database.container(seedFile.containerName);
 
     for (const document of seedFile.documents) {
@@ -326,7 +326,7 @@ function validateSeedDocuments(documents: SeedDocument[], filePath: string): voi
   });
 }
 
-async function recreateContainer(database: Database, containerName: string): Promise<void> {
+async function recreateContainer(database: Database, containerName: string, partitionKeyPath: string = '/id'): Promise<void> {
   try {
     await database.container(containerName).delete();
   } catch (error: any) {
@@ -339,7 +339,7 @@ async function recreateContainer(database: Database, containerName: string): Pro
     await database.containers.createIfNotExists({
       id: containerName,
       partitionKey: {
-        paths: ["/id"],
+        paths: [partitionKeyPath],
         kind: PartitionKeyKind.Hash,
         version: 2,
       },
@@ -351,7 +351,7 @@ async function recreateContainer(database: Database, containerName: string): Pro
     await database.containers.createIfNotExists({
       id: containerName,
       partitionKey: {
-        paths: ["/id"],
+        paths: [partitionKeyPath],
       },
     });
   }

@@ -20,6 +20,7 @@ export interface ModelInfo {
   nestedSchemaRefs: NestedSchemaRef[]; // ネストしたスキーマ参照
   connectorConfig?: ModelConnectorConfig; // コネクタメタデータ（外部データソース用）
   authPolicy?: ModelAuthPolicy; // 認可ポリシー（ロールベースアクセス制御用）
+  partitionKey: string; // Cosmos DB パーティションキーパス（デフォルト: "/id"）
 }
 
 export interface FieldInfo {
@@ -89,6 +90,9 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
 
   // authPolicy を抽出（ロールベースアクセス制御用メタデータ）
   const authPolicy = parseAuthPolicy(content);
+
+  // partitionKey を抽出（Cosmos DB パーティションキー）
+  const partitionKey = parsePartitionKey(content);
   
   // ネストしたスキーマ参照を検出
   const nestedSchemaRefs = detectNestedSchemaRefs(modelPath, content, schemaName);
@@ -103,6 +107,17 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
   const hasId = fields.some(f => f.name === "id");
   const hasCreatedAt = fields.some(f => f.name === "createdAt");
   const hasUpdatedAt = fields.some(f => f.name === "updatedAt");
+
+  // パーティションキーのバリデーション
+  if (partitionKey !== '/id') {
+    if (!partitionKey.startsWith('/')) {
+      console.warn(`⚠️  [${modelName}] partitionKey should start with '/': got '${partitionKey}'`);
+    }
+    const pkField = partitionKey.startsWith('/') ? partitionKey.slice(1) : partitionKey;
+    if (fields.length > 0 && !fields.some(f => f.name === pkField)) {
+      console.warn(`⚠️  [${modelName}] partitionKey field '${pkField}' not found in schema fields`);
+    }
+  }
   
   return {
     name: modelName,
@@ -114,6 +129,7 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
     hasCreatedAt,
     hasUpdatedAt,
     nestedSchemaRefs,
+    partitionKey,
     ...(connectorConfig ? { connectorConfig } : {}),
     ...(authPolicy ? { authPolicy } : {}),
   };
@@ -776,6 +792,16 @@ export function parseAuthPolicy(content: string): ModelAuthPolicy | undefined {
     ...(read ? { read } : {}),
     ...(write ? { write } : {}),
   };
+}
+
+/**
+ * パーティションキーを抽出する
+ * export const partitionKey = '/tenantId' のようなエクスポートを検出
+ * 未指定の場合はデフォルト '/id' を返す
+ */
+export function parsePartitionKey(content: string): string {
+  const match = content.match(/export\s+const\s+partitionKey\s*=\s*['"]([^'"]+)['"]/);
+  return match ? match[1] : '/id';
 }
 
 /**

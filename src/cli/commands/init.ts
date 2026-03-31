@@ -1781,7 +1781,7 @@ app.http('{model}-get-all', {
 | UI page directory | \`app/{kebab-case}/\` | \`app/todo/page.tsx\` |
 | React component | PascalCase | \`TodoForm.tsx\` |
 | Cosmos DB container | PascalCase + 's' | \`Todos\` |
-| Cosmos DB partition key | \`/id\` | Always \`/id\` |
+| Cosmos DB partition key | \`/id\` (default) | Custom: \`export const partitionKey = '/field'\` |
 | Bicep container file | \`infra/containers/{kebab-case}-container.bicep\` | \`infra/containers/todo-container.bicep\` |
 
 ## Adding New Models (SwallowKit CLI Skills)
@@ -1842,7 +1842,7 @@ Deploys Bicep infrastructure: Static Web Apps, Functions, Cosmos DB, Storage, Ma
 - **Do not** manually duplicate model definitions across layers. Use the shared package.
 - **Do not** manually create CRUD boilerplate. Use \`swallowkit scaffold\`.
 - **Do not** hardcode Cosmos DB connection strings. Use Managed Identity (\`CosmosDBConnection__accountEndpoint\`) in production and emulator settings locally.
-- **Do not** change the partition key strategy. All containers use \`/id\` as the partition key.
+- By default, all containers use \`/id\` as the partition key. To use a custom partition key, add \`export const partitionKey = '/yourField'\` to the model file. The scaffold command will apply it across all layers.
 
 ## Technology Stack
 
@@ -1920,7 +1920,7 @@ Frontend (Next.js App Router) → BFF (Next.js API Routes) → Backend (Azure Fu
 
 - Schema/type: PascalCase, same name for both (\`export const Todo = z.object({...}); export type Todo = z.infer<typeof Todo>;\`)
 - Files: kebab-case (\`shared/models/todo.ts\`, backend handlers under \`functions/\`)
-- Cosmos DB containers: PascalCase + 's' (\`Todos\`), partition key always \`/id\`
+- Cosmos DB containers: PascalCase + 's' (\`Todos\`), partition key default \`/id\` (customizable via \`export const partitionKey\`)
 
 ## Managed Fields
 
@@ -2017,7 +2017,7 @@ Files in \`functions/\` contain all business logic and data access for this appl
 - For TypeScript backends, use Cosmos DB **input/output bindings** (\`extraInputs\`/\`extraOutputs\`) for reads and writes.
 - For C#/Python backends, consume the generated OpenAPI-derived assets in \`functions/generated/\`.
 - Auto-generate \`id\` (UUID), \`createdAt\`, and \`updatedAt\` on the backend. Never trust client-sent values.
-- Container names are PascalCase + 's' (e.g., \`Todos\`). Partition key is always \`/id\`.
+- Container names are PascalCase + 's' (e.g., \`Todos\`). Partition key defaults to \`/id\` but can be customized per model.
 
 ## Handler Pattern
 

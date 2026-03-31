@@ -947,7 +947,7 @@ param databaseName string
 param containerName string = '${modelPascal}s'
 
 @description('Partition key path')
-param partitionKeyPath string = '/id'
+param partitionKeyPath string = '${modelInfo.partitionKey}'
 
 @description('Throughput (RU/s) - only used for Free Tier')
 param throughput int = 400

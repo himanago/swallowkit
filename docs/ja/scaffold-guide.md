@@ -947,6 +947,38 @@ export const authPolicy = { roles: ['admin', 'estimator'] };
 
 > 💡 セットアップ手順と設定の詳細については **[認証ガイド](./auth-guide)** をご参照ください。
 
+### パーティションキーの設定
+
+デフォルトでは、すべての Cosmos DB コンテナはパーティションキーとして `/id` を使用します。カスタムパーティションキーを使用するには、モデルファイルからエクスポートします：
+
+```typescript
+// shared/models/order.ts
+import { z } from 'zod';
+
+export const Order = z.object({
+  id: z.string(),
+  customerId: z.string(),
+  product: z.string(),
+  amount: z.number(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+export type Order = z.infer<typeof Order>;
+
+export const partitionKey = '/customerId';
+```
+
+パーティションキーフィールドは Zod スキーマ内に**必ず存在する必要があります**。`scaffold` がカスタム `partitionKey` を検出すると：
+
+- **Bicep テンプレート**は `/id` の代わりに指定されたパーティションキーパスを使用
+- **TypeScript Functions** は Cosmos DB 入力バインディングから SDK 直接呼び出しに切り替え（読み取り/更新/削除操作）
+- **C# Functions** はポイントリードの代わりにクエリベースのドキュメント検索を使用
+- **Python Functions** はドキュメント取得にクロスパーティションクエリを使用
+- **`dev` コマンド**は正しいパーティションキーパスで Cosmos DB コンテナを作成
+- **`dev-seeds` コマンド**は正しいパーティションキーパスでコンテナを再作成
+
+`partitionKey` がエクスポートされていない場合、デフォルトの `/id` が使用されます — **既存プロジェクトは変更なしでそのまま動作します**。
+
 ## 次のステップ
 
 - [Connector ガイド](./connector-guide) - 同じ Zod ワークフローで外部データソースを統合

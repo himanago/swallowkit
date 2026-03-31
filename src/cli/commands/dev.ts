@@ -395,11 +395,11 @@ async function initializeCosmosDB(databaseName: string): Promise<CosmosInitializ
       let containerCreated = false;
       
       try {
-        console.log(`🔧 Creating container "${containerName}" with partition key /id...`);
+        console.log(`🔧 Creating container "${containerName}" with partition key ${model.partitionKey}...`);
         const containerResponse = await database.containers.createIfNotExists({
           id: containerName,
           partitionKey: {
-            paths: ['/id'],
+            paths: [model.partitionKey],
             kind: PartitionKeyKind.Hash,
             version: 2
           }
@@ -418,7 +418,7 @@ async function initializeCosmosDB(databaseName: string): Promise<CosmosInitializ
           const containerResponse = await database.containers.createIfNotExists({
             id: containerName,
             partitionKey: {
-              paths: ['/id']
+              paths: [model.partitionKey]
             }
           });
           console.log(`✅ Container "${containerName}" ready (status: ${containerResponse.statusCode})`);

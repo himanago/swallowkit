@@ -18,6 +18,10 @@ export function generateCompactAzureFunctionsCRUD(model: ModelInfo, sharedPackag
   const modelKebab = toKebabCase(modelName);
   const schemaName = model.schemaName;
 
+  const partitionKeyPath = model.partitionKey; // e.g. "/tenantId"
+  const partitionKeyField = partitionKeyPath.slice(1); // e.g. "tenantId"
+  const isIdPartition = partitionKeyField === 'id';
+
   const hasAuth = !!authPolicy;
   const authImport = hasAuth ? `\n${generateAuthImportTS()}\n` : '';
   const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read')}\n` : '';
@@ -26,6 +30,34 @@ export function generateCompactAzureFunctionsCRUD(model: ModelInfo, sharedPackag
     ? `      const authErr = handleAuthError(error);
       if (authErr) return authErr;\n`
     : '';
+
+  // SDK クライアント初期化ヘルパー（PK≠/id の場合、および delete で使用）
+  const sdkClientInit = `const { CosmosClient } = await import('@azure/cosmos');
+      const endpoint = process.env.CosmosDBConnection__accountEndpoint;
+      let client: InstanceType<typeof CosmosClient>;
+      if (endpoint) {
+        const { DefaultAzureCredential } = await import('@azure/identity');
+        client = new CosmosClient({ endpoint, aadCredentials: new DefaultAzureCredential() });
+      } else {
+        client = new CosmosClient(process.env.CosmosDBConnection!);
+      }
+      const database = client.database(process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase');
+      const container = database.container(containerName);`;
+
+  // getById ハンドラー: PK=/id の場合は input binding、それ以外は SDK
+  const getByIdHandler = isIdPartition
+    ? generateGetByIdWithBinding(modelCamel, schemaName, readGuard, authCatchBlock)
+    : generateGetByIdWithSdk(modelCamel, schemaName, readGuard, authCatchBlock, sdkClientInit);
+
+  // update ハンドラー: PK=/id の場合は input binding、それ以外は SDK
+  const updateHandler = isIdPartition
+    ? generateUpdateWithBinding(modelCamel, schemaName, writeGuard, authCatchBlock)
+    : generateUpdateWithSdk(modelCamel, schemaName, partitionKeyField, writeGuard, authCatchBlock, sdkClientInit);
+
+  // delete ハンドラー: 常に SDK（既存パターン）、PK に応じて分岐
+  const deleteHandler = isIdPartition
+    ? generateDeleteIdPartition(modelCamel, writeGuard, authCatchBlock, sdkClientInit)
+    : generateDeleteCustomPartition(modelCamel, partitionKeyField, writeGuard, authCatchBlock, sdkClientInit);
 
   return `import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { z } from 'zod/v4';
@@ -68,38 +100,7 @@ ${authCatchBlock}      context.error(\`Error fetching from \${containerName}:\`,
   },
 });
 
-// GET /api/${modelCamel}/{id} - ID指定取得
-app.http('${modelCamel}-get-by-id', {
-  methods: ['GET'],
-  route: '${modelCamel}/{id}',
-  authLevel: 'anonymous',
-  extraInputs: [
-    {
-      type: 'cosmosDB',
-      name: 'cosmosInput',
-      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
-      containerName,
-      connection: 'CosmosDBConnection',
-      id: '{id}',
-      partitionKey: '{id}',
-    },
-  ],
-  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {${readGuard}
-      const document = context.extraInputs.get('cosmosInput');
-
-      if (!document) {
-        return { status: 404, jsonBody: { error: 'Item not found' } };
-      }
-
-      const validated = ${schemaName}.parse(document);
-      return { status: 200, jsonBody: validated };
-    } catch (error) {
-${authCatchBlock}      context.error(\`Error fetching item from \${containerName}:\`, error);
-      return { status: 500, jsonBody: { error: 'Failed to fetch item' } };
-    }
-  },
-});
+${getByIdHandler}
 
 // POST /api/${modelCamel} - 新規作成
 app.http('${modelCamel}-create', {
@@ -145,7 +146,87 @@ ${authCatchBlock}      context.error(\`Error creating item in \${containerName}:
   },
 });
 
-// PUT /api/${modelCamel}/{id} - 更新
+${updateHandler}
+
+${deleteHandler}
+`;
+}
+
+// --- TS getById ハンドラー生成ヘルパー ---
+
+function generateGetByIdWithBinding(modelCamel: string, schemaName: string, readGuard: string, authCatchBlock: string): string {
+  return `// GET /api/${modelCamel}/{id} - ID指定取得
+app.http('${modelCamel}-get-by-id', {
+  methods: ['GET'],
+  route: '${modelCamel}/{id}',
+  authLevel: 'anonymous',
+  extraInputs: [
+    {
+      type: 'cosmosDB',
+      name: 'cosmosInput',
+      databaseName: process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase',
+      containerName,
+      connection: 'CosmosDBConnection',
+      id: '{id}',
+      partitionKey: '{id}',
+    },
+  ],
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {${readGuard}
+      const document = context.extraInputs.get('cosmosInput');
+
+      if (!document) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+
+      const validated = ${schemaName}.parse(document);
+      return { status: 200, jsonBody: validated };
+    } catch (error) {
+${authCatchBlock}      context.error(\`Error fetching item from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to fetch item' } };
+    }
+  },
+});`;
+}
+
+function generateGetByIdWithSdk(modelCamel: string, schemaName: string, readGuard: string, authCatchBlock: string, sdkClientInit: string): string {
+  return `// GET /api/${modelCamel}/{id} - ID指定取得 (custom partition key)
+app.http('${modelCamel}-get-by-id', {
+  methods: ['GET'],
+  route: '${modelCamel}/{id}',
+  authLevel: 'anonymous',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {${readGuard}
+      const id = request.params.id;
+      if (!id) {
+        return { status: 400, jsonBody: { error: 'ID is required' } };
+      }
+
+      ${sdkClientInit}
+
+      const { resources } = await container.items.query({
+        query: 'SELECT * FROM c WHERE c.id = @id',
+        parameters: [{ name: '@id', value: id }],
+      }).fetchAll();
+
+      if (!resources || resources.length === 0) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+
+      const validated = ${schemaName}.parse(resources[0]);
+      return { status: 200, jsonBody: validated };
+    } catch (error) {
+${authCatchBlock}      context.error(\`Error fetching item from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to fetch item' } };
+    }
+  },
+});`;
+}
+
+// --- TS update ハンドラー生成ヘルパー ---
+
+function generateUpdateWithBinding(modelCamel: string, schemaName: string, writeGuard: string, authCatchBlock: string): string {
+  return `// PUT /api/${modelCamel}/{id} - 更新
 app.http('${modelCamel}-update', {
   methods: ['PUT'],
   route: '${modelCamel}/{id}',
@@ -206,9 +287,66 @@ ${authCatchBlock}      context.error(\`Error updating item in \${containerName}:
       return { status: 500, jsonBody: { error: 'Failed to update item' } };
     }
   },
-});
+});`;
+}
 
-// DELETE /api/${modelCamel}/{id} - 削除
+function generateUpdateWithSdk(modelCamel: string, schemaName: string, partitionKeyField: string, writeGuard: string, authCatchBlock: string, sdkClientInit: string): string {
+  return `// PUT /api/${modelCamel}/{id} - 更新 (custom partition key)
+app.http('${modelCamel}-update', {
+  methods: ['PUT'],
+  route: '${modelCamel}/{id}',
+  authLevel: 'anonymous',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {${writeGuard}
+      const id = request.params.id;
+      if (!id) {
+        return { status: 400, jsonBody: { error: 'ID is required' } };
+      }
+
+      ${sdkClientInit}
+
+      const { resources } = await container.items.query({
+        query: 'SELECT * FROM c WHERE c.id = @id',
+        parameters: [{ name: '@id', value: id }],
+      }).fetchAll();
+
+      if (!resources || resources.length === 0) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+
+      const existingDocument = resources[0];
+      const body = await request.json() as any;
+      const { createdAt, updatedAt, ...userData } = body;
+
+      const dataWithManagedFields = {
+        ...userData,
+        id,
+        createdAt: existingDocument.createdAt,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const result = ${schemaName}.safeParse(dataWithManagedFields);
+
+      if (!result.success) {
+        context.error('Validation failed:', result.error.issues);
+        return { status: 400, jsonBody: { error: 'Validation failed', details: result.error.issues } };
+      }
+
+      const pkValue = result.data.${partitionKeyField};
+      await container.items.upsert(result.data);
+      return { status: 200, jsonBody: result.data };
+    } catch (error) {
+${authCatchBlock}      context.error(\`Error updating item in \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to update item' } };
+    }
+  },
+});`;
+}
+
+// --- TS delete ハンドラー生成ヘルパー ---
+
+function generateDeleteIdPartition(modelCamel: string, writeGuard: string, authCatchBlock: string, sdkClientInit: string): string {
+  return `// DELETE /api/${modelCamel}/{id} - 削除
 app.http('${modelCamel}-delete', {
   methods: ['DELETE'],
   route: '${modelCamel}/{id}',
@@ -220,17 +358,7 @@ app.http('${modelCamel}-delete', {
         return { status: 400, jsonBody: { error: 'ID is required' } };
       }
 
-      const { CosmosClient } = await import('@azure/cosmos');
-      const endpoint = process.env.CosmosDBConnection__accountEndpoint;
-      let client: InstanceType<typeof CosmosClient>;
-      if (endpoint) {
-        const { DefaultAzureCredential } = await import('@azure/identity');
-        client = new CosmosClient({ endpoint, aadCredentials: new DefaultAzureCredential() });
-      } else {
-        client = new CosmosClient(process.env.CosmosDBConnection!);
-      }
-      const database = client.database(process.env.COSMOS_DB_DATABASE_NAME || 'AppDatabase');
-      const container = database.container(containerName);
+      ${sdkClientInit}
 
       await container.item(id, id).delete();
       context.log(\`Deleted item \${id} from \${containerName}\`);
@@ -244,8 +372,48 @@ ${authCatchBlock}      context.error(\`Error deleting item from \${containerName
       return { status: 500, jsonBody: { error: 'Failed to delete item' } };
     }
   },
-});
-`;
+});`;
+}
+
+function generateDeleteCustomPartition(modelCamel: string, partitionKeyField: string, writeGuard: string, authCatchBlock: string, sdkClientInit: string): string {
+  return `// DELETE /api/${modelCamel}/{id} - 削除 (custom partition key)
+app.http('${modelCamel}-delete', {
+  methods: ['DELETE'],
+  route: '${modelCamel}/{id}',
+  authLevel: 'anonymous',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {${writeGuard}
+      const id = request.params.id;
+      if (!id) {
+        return { status: 400, jsonBody: { error: 'ID is required' } };
+      }
+
+      ${sdkClientInit}
+
+      // パーティションキー値を取得するためにドキュメントを読み取り
+      const { resources } = await container.items.query({
+        query: 'SELECT * FROM c WHERE c.id = @id',
+        parameters: [{ name: '@id', value: id }],
+      }).fetchAll();
+
+      if (!resources || resources.length === 0) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+
+      const pkValue = resources[0].${partitionKeyField};
+      await container.item(id, pkValue).delete();
+      context.log(\`Deleted item \${id} from \${containerName}\`);
+
+      return { status: 204 };
+    } catch (error: any) {
+      if (error.code === 404) {
+        return { status: 404, jsonBody: { error: 'Item not found' } };
+      }
+${authCatchBlock}      context.error(\`Error deleting item from \${containerName}:\`, error);
+      return { status: 500, jsonBody: { error: 'Failed to delete item' } };
+    }
+  },
+});`;
 }
 
 export function generateCSharpAzureFunctionsCRUD(model: ModelInfo, authPolicy?: ModelAuthPolicy): string {
@@ -254,10 +422,77 @@ export function generateCSharpAzureFunctionsCRUD(model: ModelInfo, authPolicy?: 
   const className = `${modelName}Functions`;
   const containerName = modelName.endsWith('s') ? modelName : `${modelName}s`;
 
+  const partitionKeyPath = model.partitionKey;
+  const partitionKeyField = partitionKeyPath.slice(1);
+  const isIdPartition = partitionKeyField === 'id';
+
   const hasAuth = !!authPolicy;
   const authUsing = hasAuth ? 'using Functions.Auth;\n' : '';
   const readGuard = hasAuth ? `\n${generateAuthGuardCSharp(authPolicy!, 'read')}\n` : '';
   const writeGuard = hasAuth ? `\n${generateAuthGuardCSharp(authPolicy!, 'write')}\n` : '';
+
+  // PK値の取得ロジック（create 用）
+  const createPkExpr = isIdPartition
+    ? 'id'
+    : `payload["${partitionKeyField}"]?.GetValue<string>() ?? throw new InvalidOperationException("Partition key field '${partitionKeyField}' is required.")`;
+
+  // ReadCosmosItemAsync: PK=/id の場合は直接読み取り、それ以外はクエリ
+  const readItemMethod = isIdPartition
+    ? `    private static async Task<JsonObject> ReadCosmosItemAsync(Container container, string id)
+    {
+        var response = await container.ReadItemStreamAsync(id, new PartitionKey(id));
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            throw new CosmosException("Item not found", HttpStatusCode.NotFound, 0, response.Headers.ActivityId, response.Headers.RequestCharge);
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Cosmos read failed with status {(int)response.StatusCode}.");
+        }
+
+        using var document = await JsonDocument.ParseAsync(response.Content);
+        return JsonNode.Parse(document.RootElement.GetRawText())?.AsObject()
+            ?? throw new JsonException("Cosmos item payload must be a JSON object.");
+    }`
+    : `    private static async Task<JsonObject> ReadCosmosItemAsync(Container container, string id)
+    {
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.id = @id")
+            .WithParameter("@id", id);
+        using var iterator = container.GetItemQueryStreamIterator(query);
+
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            if (!page.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException($"Cosmos query failed with status {(int)page.StatusCode}.");
+            }
+
+            using var document = await JsonDocument.ParseAsync(page.Content);
+            if (document.RootElement.TryGetProperty("Documents", out var documents))
+            {
+                foreach (var item in documents.EnumerateArray())
+                {
+                    return JsonNode.Parse(item.GetRawText())?.AsObject()
+                        ?? throw new JsonException("Cosmos item payload must be a JSON object.");
+                }
+            }
+        }
+
+        throw new CosmosException("Item not found", HttpStatusCode.NotFound, 0, "", 0);
+    }`;
+
+  // Replace / Delete の PK 解決ロジック
+  const replacePkExpr = isIdPartition
+    ? 'new PartitionKey(id)'
+    : `new PartitionKey(payload["${partitionKeyField}"]?.GetValue<string>())`;
+
+  const deleteLogic = isIdPartition
+    ? `            await container.DeleteItemAsync<JsonObject>(id, new PartitionKey(id));`
+    : `            var existing = await ReadCosmosItemAsync(container, id);
+            var pkValue = existing["${partitionKeyField}"]?.GetValue<string>();
+            await container.DeleteItemAsync<JsonObject>(id, new PartitionKey(pkValue));`;
 
   return `using System.Net;
 using System.Text;
@@ -351,23 +586,7 @@ public sealed class ${className}
     private static Stream CreateJsonStream(JsonObject payload) =>
         new MemoryStream(Encoding.UTF8.GetBytes(payload.ToJsonString()));
 
-    private static async Task<JsonObject> ReadCosmosItemAsync(Container container, string id)
-    {
-        var response = await container.ReadItemStreamAsync(id, new PartitionKey(id));
-        if (response.StatusCode == HttpStatusCode.NotFound)
-        {
-            throw new CosmosException("Item not found", HttpStatusCode.NotFound, 0, response.Headers.ActivityId, response.Headers.RequestCharge);
-        }
-
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new InvalidOperationException($"Cosmos read failed with status {(int)response.StatusCode}.");
-        }
-
-        using var document = await JsonDocument.ParseAsync(response.Content);
-        return JsonNode.Parse(document.RootElement.GetRawText())?.AsObject()
-            ?? throw new JsonException("Cosmos item payload must be a JSON object.");
-    }
+${readItemMethod}
 
     private static async Task<HttpResponseData> WriteJsonAsync(HttpRequestData request, HttpStatusCode status, object payload)
     {
@@ -454,7 +673,8 @@ public sealed class ${className}
             using var client = CreateCosmosClient();
             var container = GetContainer(client);
             using var stream = CreateJsonStream(payload);
-            var response = await container.CreateItemStreamAsync(stream, new PartitionKey(id));
+            var pkValue = ${createPkExpr};
+            var response = await container.CreateItemStreamAsync(stream, new PartitionKey(pkValue));
             if (!response.IsSuccessStatusCode)
             {
                 throw new InvalidOperationException($"Cosmos create failed with status {(int)response.StatusCode}.");
@@ -499,7 +719,7 @@ public sealed class ${className}
             var payload = BuildManagedDocument(body, id, createdAt, DateTimeOffset.UtcNow.ToString("O"));
 
             using var stream = CreateJsonStream(payload);
-            var response = await container.ReplaceItemStreamAsync(stream, id, new PartitionKey(id));
+            var response = await container.ReplaceItemStreamAsync(stream, id, ${replacePkExpr});
             if (!response.IsSuccessStatusCode)
             {
                 throw new InvalidOperationException($"Cosmos replace failed with status {(int)response.StatusCode}.");
@@ -528,7 +748,7 @@ public sealed class ${className}
         {${writeGuard}
             using var client = CreateCosmosClient();
             var container = GetContainer(client);
-            await container.DeleteItemAsync<JsonObject>(id, new PartitionKey(id));
+${deleteLogic}
 
             return request.CreateResponse(HttpStatusCode.NoContent);
         }
@@ -555,6 +775,10 @@ export function generatePythonAzureFunctionsCRUD(model: ModelInfo, authPolicy?: 
   const modelSnake = toKebabCase(modelName).replace(/-/g, "_");
   const containerName = modelName.endsWith('s') ? modelName : `${modelName}s`;
 
+  const partitionKeyPath = model.partitionKey;
+  const partitionKeyField = partitionKeyPath.slice(1);
+  const isIdPartition = partitionKeyField === 'id';
+
   const hasAuth = !!authPolicy;
   const authImport = hasAuth ? '\nfrom auth.jwt_helper import require_auth, require_roles, handle_auth_error\n' : '';
   // generateAuthGuardPython outputs at 4-space indent; inside try: we need 8-space
@@ -563,6 +787,76 @@ export function generatePythonAzureFunctionsCRUD(model: ModelInfo, authPolicy?: 
   const readGuard = hasAuth ? '\n' + readGuardRaw.split('\n').map(l => '    ' + l).join('\n') : '';
   const writeGuard = hasAuth ? '\n' + writeGuardRaw.split('\n').map(l => '    ' + l).join('\n') : '';
   const authCatch = hasAuth ? `\n        auth_err = handle_auth_error(exc)\n        if auth_err:\n            return auth_err` : '';
+
+  // getById / update の読み取りロジック
+  const getByIdRead = isIdPartition
+    ? `container.read_item(item=item_id, partition_key=item_id)`
+    : `list(container.query_items(
+            query="SELECT * FROM c WHERE c.id = @id",
+            parameters=[{"name": "@id", "value": item_id}],
+            enable_cross_partition_query=True,
+        ))`;
+
+  const getByIdBody = isIdPartition
+    ? `        container = _get_container()
+        item = container.read_item(item=item_id, partition_key=item_id)
+        return _json_response(item, 200)`
+    : `        container = _get_container()
+        items = list(container.query_items(
+            query="SELECT * FROM c WHERE c.id = @id",
+            parameters=[{"name": "@id", "value": item_id}],
+            enable_cross_partition_query=True,
+        ))
+        if not items:
+            return _json_response({"error": "${modelName} not found", "id": item_id}, 404)
+        return _json_response(items[0], 200)`;
+
+  const updateBody = isIdPartition
+    ? `        container = _get_container()
+        existing = container.read_item(item=item_id, partition_key=item_id)
+        body = req.get_json()
+        payload = _build_managed_document(
+            body,
+            item_id,
+            existing.get("createdAt") or datetime.now(timezone.utc).isoformat(),
+            datetime.now(timezone.utc).isoformat(),
+        )
+        container.replace_item(item=item_id, body=payload)
+        return _json_response(payload, 200)`
+    : `        container = _get_container()
+        items = list(container.query_items(
+            query="SELECT * FROM c WHERE c.id = @id",
+            parameters=[{"name": "@id", "value": item_id}],
+            enable_cross_partition_query=True,
+        ))
+        if not items:
+            return _json_response({"error": "${modelName} not found", "id": item_id}, 404)
+        existing = items[0]
+        body = req.get_json()
+        payload = _build_managed_document(
+            body,
+            item_id,
+            existing.get("createdAt") or datetime.now(timezone.utc).isoformat(),
+            datetime.now(timezone.utc).isoformat(),
+        )
+        container.replace_item(item=existing, body=payload)
+        return _json_response(payload, 200)`;
+
+  const deleteBody = isIdPartition
+    ? `        container = _get_container()
+        container.delete_item(item=item_id, partition_key=item_id)
+        return func.HttpResponse(status_code=204)`
+    : `        container = _get_container()
+        items = list(container.query_items(
+            query="SELECT * FROM c WHERE c.id = @id",
+            parameters=[{"name": "@id", "value": item_id}],
+            enable_cross_partition_query=True,
+        ))
+        if not items:
+            return _json_response({"error": "${modelName} not found", "id": item_id}, 404)
+        pk_value = items[0].get("${partitionKeyField}")
+        container.delete_item(item=item_id, partition_key=pk_value)
+        return func.HttpResponse(status_code=204)`;
 
   return {
     registration: `from blueprints.${modelSnake} import bp as ${modelSnake}_bp\napp.register_blueprint(${modelSnake}_bp)`,
@@ -634,9 +928,7 @@ def ${modelSnake}_get_all(req: func.HttpRequest) -> func.HttpResponse:
 def ${modelSnake}_get_by_id(req: func.HttpRequest) -> func.HttpResponse:
     item_id = req.route_params.get("id")
     try:${readGuard}
-        container = _get_container()
-        item = container.read_item(item=item_id, partition_key=item_id)
-        return _json_response(item, 200)
+${getByIdBody}
     except exceptions.CosmosResourceNotFoundError:
         return _json_response({"error": "${modelName} not found", "id": item_id}, 404)
     except Exception as exc:${authCatch}
@@ -664,17 +956,7 @@ def ${modelSnake}_create(req: func.HttpRequest) -> func.HttpResponse:
 def ${modelSnake}_update(req: func.HttpRequest) -> func.HttpResponse:
     item_id = req.route_params.get("id")
     try:${writeGuard}
-        container = _get_container()
-        existing = container.read_item(item=item_id, partition_key=item_id)
-        body = req.get_json()
-        payload = _build_managed_document(
-            body,
-            item_id,
-            existing.get("createdAt") or datetime.now(timezone.utc).isoformat(),
-            datetime.now(timezone.utc).isoformat(),
-        )
-        container.replace_item(item=item_id, body=payload)
-        return _json_response(payload, 200)
+${updateBody}
     except exceptions.CosmosResourceNotFoundError:
         return _json_response({"error": "${modelName} not found", "id": item_id}, 404)
     except ValueError:
@@ -687,9 +969,7 @@ def ${modelSnake}_update(req: func.HttpRequest) -> func.HttpResponse:
 def ${modelSnake}_delete(req: func.HttpRequest) -> func.HttpResponse:
     item_id = req.route_params.get("id")
     try:${writeGuard}
-        container = _get_container()
-        container.delete_item(item=item_id, partition_key=item_id)
-        return func.HttpResponse(status_code=204)
+${deleteBody}
     except exceptions.CosmosResourceNotFoundError:
         return _json_response({"error": "${modelName} not found", "id": item_id}, 404)
     except Exception as exc:${authCatch}

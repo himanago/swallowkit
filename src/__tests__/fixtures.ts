@@ -21,6 +21,7 @@ export function createBasicModelInfo(overrides?: Partial<ModelInfo>): ModelInfo 
     hasCreatedAt: true,
     hasUpdatedAt: true,
     nestedSchemaRefs: [],
+    partitionKey: '/id',
     ...overrides,
   };
 }
