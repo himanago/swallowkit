@@ -5,6 +5,7 @@
  */
 
 import * as http from "http";
+import jwt, { SignOptions } from "jsonwebtoken";
 import { ModelInfo, toCamelCase } from "../scaffold/model-parser";
 import { generateMockDocuments } from "./zod-mock-generator";
 import { loadDevSeedFiles } from "../../cli/commands/dev-seeds";
@@ -240,15 +241,17 @@ export class ConnectorMockServer {
         return;
 
       case "DELETE":
-        req.resume();
-        if (!ops.includes("delete")) {
-          return this.sendJson(res, 405, { error: "delete not supported" });
+        {
+          req.resume();
+          if (!ops.includes("delete")) {
+            return this.sendJson(res, 405, { error: "delete not supported" });
+          }
+          if (!id) return this.sendJson(res, 400, { error: "id required" });
+          const deleteIdx = store.findIndex((doc) => doc.id === id);
+          if (deleteIdx === -1) return this.sendJson(res, 404, { error: "Item not found" });
+          store.splice(deleteIdx, 1);
+          return this.sendJson(res, 204, null);
         }
-        if (!id) return this.sendJson(res, 400, { error: "id required" });
-        const deleteIdx = store.findIndex((doc) => doc.id === id);
-        if (deleteIdx === -1) return this.sendJson(res, 404, { error: "Item not found" });
-        store.splice(deleteIdx, 1);
-        return this.sendJson(res, 204, null);
 
       default:
         req.resume();
@@ -376,9 +379,8 @@ export class ConnectorMockServer {
       };
 
       // Generate JWT
-      const jwt = require("jsonwebtoken");
       const secret = this.options.authConfig!.jwtSecret;
-      const expiry = this.options.authConfig!.tokenExpiry || "24h";
+      const expiry = (this.options.authConfig!.tokenExpiry || "24h") as SignOptions["expiresIn"];
 
       const token = jwt.sign(
         {
@@ -408,7 +410,6 @@ export class ConnectorMockServer {
 
     const token = authHeader.slice(7);
     try {
-      const jwt = require("jsonwebtoken");
       const secret = this.options.authConfig!.jwtSecret;
       const payload = jwt.verify(token, secret) as Record<string, unknown>;
       this.sendJson(res, 200, {
@@ -470,7 +471,6 @@ export class ConnectorMockServer {
 
     const token = authHeader.slice(7);
     try {
-      const jwt = require("jsonwebtoken");
       const payload = jwt.verify(token, authCfg.jwtSecret) as Record<string, unknown>;
 
       // ロールチェック

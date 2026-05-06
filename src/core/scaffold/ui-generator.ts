@@ -3,7 +3,7 @@
  * CRUD 画面（一覧、詳細、新規作成、編集）を生成する
  */
 
-import { ModelInfo, FieldInfo, toCamelCase, toKebabCase, toPascalCase } from "./model-parser";
+import { ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
 import { ModelAuthPolicy } from "../../types";
 
 /** auth が有効かつ authPolicy が存在する場合に渡されるオプション */
@@ -32,10 +32,6 @@ export function generateListPage(model: ModelInfo, sharedPackageName: string, au
   // 外部キーフィールドを検出
   const foreignKeyFields = displayFields.filter(f => f.isForeignKey);
   const hasForeignKeys = foreignKeyFields.length > 0;
-  
-  // ネストスキーマフィールドを検出
-  const nestedFields = displayFields.filter(f => f.isNestedSchema);
-  const hasNestedSchemas = nestedFields.length > 0;
   
   // 外部キー用のstate定義を生成
   const foreignKeyStates = foreignKeyFields.map(f => {

@@ -5,7 +5,6 @@
 
 import { ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
 import {
-  ConnectorDefinition,
   RdbConnectorConfig,
   ApiConnectorConfig,
   RdbModelConnectorConfig,
@@ -125,7 +124,6 @@ export function generateRdbConnectorFunctionTS(
   const hasAuth = !!authPolicy;
   const authImport = hasAuth ? `\n${generateAuthImportTS()}\n` : '';
   const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read')}\n` : '';
-  const writeGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'write')}\n` : '';
   const authCatchBlock = hasAuth
     ? `      const authErr = handleAuthError(error);
       if (authErr) return authErr;\n      `

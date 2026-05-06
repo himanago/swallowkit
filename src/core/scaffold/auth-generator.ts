@@ -3,7 +3,7 @@
  * add-auth コマンドおよび scaffold ロールガード挿入で使用するテンプレート群
  */
 
-import { CustomJwtConfig, ModelAuthPolicy, AuthConfig, RdbConnectorConfig } from "../../types";
+import { CustomJwtConfig, ModelAuthPolicy, RdbConnectorConfig } from "../../types";
 
 type RdbProvider = RdbConnectorConfig["provider"]; // "mysql" | "postgres" | "sqlserver"
 
@@ -816,7 +816,8 @@ export async function POST() {
 `;
 }
 
-export function generateBFFAuthMeRoute(sharedPackageName: string): string {
+export function generateBFFAuthMeRoute(_sharedPackageName?: string): string {
+  void _sharedPackageName;
   return `import { NextResponse } from 'next/server';
 import { headers } from 'next/headers';
 

@@ -15,7 +15,6 @@ import { generateAuthImportTS, generateAuthGuardTS, generateAuthGuardCSharp, gen
 export function generateCompactAzureFunctionsCRUD(model: ModelInfo, sharedPackageName: string, authPolicy?: ModelAuthPolicy): string {
   const modelName = model.name;
   const modelCamel = toCamelCase(modelName);
-  const modelKebab = toKebabCase(modelName);
   const schemaName = model.schemaName;
 
   const partitionKeyPath = model.partitionKey; // e.g. "/tenantId"
@@ -789,14 +788,6 @@ export function generatePythonAzureFunctionsCRUD(model: ModelInfo, authPolicy?: 
   const authCatch = hasAuth ? `\n        auth_err = handle_auth_error(exc)\n        if auth_err:\n            return auth_err` : '';
 
   // getById / update の読み取りロジック
-  const getByIdRead = isIdPartition
-    ? `container.read_item(item=item_id, partition_key=item_id)`
-    : `list(container.query_items(
-            query="SELECT * FROM c WHERE c.id = @id",
-            parameters=[{"name": "@id", "value": item_id}],
-            enable_cross_partition_query=True,
-        ))`;
-
   const getByIdBody = isIdPartition
     ? `        container = _get_container()
         item = container.read_item(item=item_id, partition_key=item_id)

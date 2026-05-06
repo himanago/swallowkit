@@ -6,7 +6,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { ensureSwallowKitProject } from "../../core/config";
-import { ConnectorDefinition } from "../../types";
+import { ApiConnectorConfig, ConnectorDefinition } from "../../types";
 
 interface AddConnectorOptions {
   name: string;
@@ -32,7 +32,7 @@ export async function addConnectorCommand(options: AddConnectorOptions) {
   const connectorDef = buildConnectorDefinition(options);
 
   // Update config file
-  updateConfigWithConnector(configPath, options.name, connectorDef, options);
+  updateConfigWithConnector(configPath, options.name, connectorDef);
 
   console.log(`\n✅ Connector '${options.name}' added successfully!`);
   console.log("\n📝 Next steps:");
@@ -81,8 +81,7 @@ function buildConnectorDefinition(options: AddConnectorOptions): ConnectorDefini
 export function updateConfigWithConnector(
   configPath: string,
   connectorName: string,
-  connectorDef: ConnectorDefinition,
-  options: AddConnectorOptions
+  connectorDef: ConnectorDefinition
 ): void {
   const content = fs.readFileSync(configPath, "utf-8");
 
@@ -101,7 +100,7 @@ export function updateConfigWithConnector(
   // JS config — append connectors section
   if (content.includes("connectors:") || content.includes("connectors :")) {
     console.log(`⚠️  'connectors' section already exists in ${configPath}. Please add the connector manually:`);
-    console.log(formatConnectorSnippet(connectorName, connectorDef, options));
+    console.log(formatConnectorSnippet(connectorName, connectorDef));
     return;
   }
 
@@ -109,7 +108,7 @@ export function updateConfigWithConnector(
   const closingBraceIdx = content.lastIndexOf("}");
   if (closingBraceIdx === -1) {
     console.error("❌ Could not parse config file structure. Please add the connector manually:");
-    console.log(formatConnectorSnippet(connectorName, connectorDef, options));
+    console.log(formatConnectorSnippet(connectorName, connectorDef));
     return;
   }
 
@@ -117,7 +116,7 @@ export function updateConfigWithConnector(
   const beforeClosing = content.substring(0, closingBraceIdx).trimEnd();
   const needsComma = !beforeClosing.endsWith(",") && !beforeClosing.endsWith("{");
 
-  const connectorBlock = generateConnectorJSBlock(connectorName, connectorDef, options);
+  const connectorBlock = generateConnectorJSBlock(connectorName, connectorDef);
   const insertion = `${needsComma ? "," : ""}\n  // コネクタ定義\n  connectors: {\n${connectorBlock}\n  },\n`;
 
   const newContent = content.substring(0, closingBraceIdx) + insertion + content.substring(closingBraceIdx);
@@ -125,16 +124,16 @@ export function updateConfigWithConnector(
   console.log(`✅ Updated: ${configPath}`);
 }
 
-function generateConnectorJSBlock(name: string, def: ConnectorDefinition, options: AddConnectorOptions): string {
+function generateConnectorJSBlock(name: string, def: ConnectorDefinition): string {
   if (def.type === "rdb") {
     return `    ${name}: {
       type: 'rdb',
-      provider: '${(def as any).provider}',
+      provider: '${def.provider}',
       connectionEnvVar: '${def.connectionEnvVar}',
     },`;
   }
 
-  const apiDef = def as any;
+  const apiDef: ApiConnectorConfig = def;
   let authBlock = "";
   if (apiDef.auth) {
     authBlock = `
@@ -152,6 +151,6 @@ function generateConnectorJSBlock(name: string, def: ConnectorDefinition, option
     },`;
 }
 
-function formatConnectorSnippet(name: string, def: ConnectorDefinition, options: AddConnectorOptions): string {
+function formatConnectorSnippet(name: string, def: ConnectorDefinition): string {
   return `\n  ${name}: ${JSON.stringify(def, null, 4)}\n`;
 }

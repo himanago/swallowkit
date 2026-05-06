@@ -4,7 +4,7 @@
  * callFunction ヘルパー方式
  */
 
-import { ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
+import { ModelInfo, toCamelCase } from "./model-parser";
 
 /**
  * BFF callFunction ヘルパー (lib/api/call-function.ts) のコードを生成
@@ -129,7 +129,6 @@ export function generateCompactBFFRoutes(model: ModelInfo, sharedPackageName: st
 } {
   const modelName = model.name;
   const modelCamel = toCamelCase(modelName);
-  const modelKebab = toKebabCase(modelName);
   const schemaName = model.schemaName;
 
   const listRoute = `import { NextRequest } from 'next/server';

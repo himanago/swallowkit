@@ -3,10 +3,11 @@
  */
 
 import * as fs from "fs";
+import { execSync } from "child_process";
 import * as path from "path";
-import { pathToFileURL } from "url";
 
 import { ModelConnectorConfig, ModelAuthPolicy } from "../../types";
+import { detectFromProject, getCommands } from "../../utils/package-manager";
 
 export interface ModelInfo {
   name: string; // モデル名（例: "Todo"）
@@ -383,12 +384,8 @@ async function extractFieldsFromSchema(modelPath: string, schemaName: string): P
   const fields: FieldInfo[] = [];
   
   try {
-    // child_processでtsxを実行
-    const { execSync } = require('child_process');
-    const { writeFileSync, unlinkSync, readFileSync } = require('fs');
-    
     // モデルファイルの内容を読み込む
-    let modelContent = readFileSync(modelPath, 'utf8');
+    let modelContent = fs.readFileSync(modelPath, 'utf8');
     const modelDir = path.dirname(path.resolve(modelPath));
     
     // ローカル相対インポートを再帰的にインライン化して保持
@@ -543,12 +540,11 @@ if (isObject) {
 }
 `;
     
-    writeFileSync(tempScript, scriptCode, 'utf8');
+    fs.writeFileSync(tempScript, scriptCode, 'utf8');
     
     try {
       // プロジェクトルートでtsxを実行 (npm/pnpm 両対応)
       // Detect package manager from project lockfile
-      const { detectFromProject, getCommands } = require('../../utils/package-manager');
       const pm = detectFromProject(projectRoot);
       const pmCmd = getCommands(pm);
       const result = execSync(`${pmCmd.exec} tsx "${tempScript}"`, {
@@ -565,7 +561,7 @@ if (isObject) {
     } finally {
       // 一時ファイルを削除
       try {
-        unlinkSync(tempScript);
+        fs.unlinkSync(tempScript);
       } catch (e) {
         // ファイル削除失敗は無視
       }

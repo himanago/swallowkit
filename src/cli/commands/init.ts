@@ -1806,7 +1806,7 @@ npx swallowkit scaffold shared/models/<name>.ts
 \`\`\`
 
 Generates:
-- Azure Functions handlers (${backendLanguage === 'typescript' ? '\`functions/src/<name>.ts\`' : '\`functions/\` language-specific CRUD files + \`functions/generated/\` schema assets'})
+- Azure Functions handlers (${backendLanguage === 'typescript' ? '`functions/src/<name>.ts`' : '`functions/` language-specific CRUD files + `functions/generated/` schema assets'})
 - BFF API routes (\`app/api/<name>/route.ts\`, \`app/api/<name>/[id]/route.ts\`)
 - UI pages (\`app/<name>/page.tsx\`, detail, create, edit pages)
 - Cosmos DB Bicep container config (\`infra/containers/<name>-container.bicep\`)
@@ -3223,8 +3223,6 @@ async function createGitHubActionsWorkflows(
   backendLanguage: BackendLanguage
 ) {
   console.log('📦 Creating GitHub Actions workflows...\n');
-  
-  const pmCmd = getCommands(pm);
   const workflowsDir = path.join(projectDir, '.github', 'workflows');
   fs.mkdirSync(workflowsDir, { recursive: true });
 

@@ -23,7 +23,6 @@ import {
   generateAuthContext,
   generateBFFCallFunctionWithAuth,
 } from "../../core/scaffold/auth-generator";
-import { detectFromProject, getCommands } from "../../utils/package-manager";
 
 interface AddAuthOptions {
   provider?: string;
@@ -346,7 +345,7 @@ function generateBFFAuth(cwd: string, projectName: string, sharedPackageName: st
   fs.mkdirSync(meDir, { recursive: true });
   fs.writeFileSync(
     path.join(meDir, "route.ts"),
-    generateBFFAuthMeRoute(sharedPackageName),
+    generateBFFAuthMeRoute(),
     "utf-8"
   );
   console.log(` Created: app/api/auth/me/route.ts`);
@@ -426,9 +425,6 @@ function updateEnvironmentFiles(cwd: string): void {
 }
 
 async function installAuthDependencies(cwd: string, backendLanguage: BackendLanguage, provider: "mysql" | "postgres" | "sqlserver" = "mysql"): Promise<void> {
-  const pm = detectFromProject();
-  const cmds = getCommands(pm);
-
   if (backendLanguage === "typescript") {
     const funcPkgPath = path.join(cwd, "functions", "package.json");
     if (fs.existsSync(funcPkgPath)) {

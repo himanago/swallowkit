@@ -20,7 +20,6 @@ import {
   generateApiConnectorFunctionCSharp,
   generateRdbConnectorFunctionPython,
   generateApiConnectorFunctionPython,
-  isReadOnlyConnector,
 } from "../../core/scaffold/connector-functions-generator";
 import { generateCompactBFFRoutes, generateBFFCallFunction, generateConnectorBFFRoutes } from "../../core/scaffold/nextjs-generator";
 import { generateOpenApiDocument } from "../../core/scaffold/openapi-generator";
@@ -508,7 +507,6 @@ async function installConnectorDriverDependencies(
     const pm = detectFromProject(functionsPath);
     const cmds = getCommands(pm);
 
-    const { spawnSync } = require("child_process");
     if (entry.deps.length > 0) {
       spawnSync(cmds.name, [pm === "pnpm" ? "add" : "install", ...entry.deps], {
         cwd: functionsPath, stdio: "inherit", shell: true,
@@ -532,7 +530,6 @@ async function installConnectorDriverDependencies(
     const pkg = nugetMap[rdbDef.provider];
     if (!pkg) return;
     console.log(`\n📦 Installing ${rdbDef.provider} NuGet package...`);
-    const { spawnSync } = require("child_process");
     spawnSync("dotnet", ["add", path.join(functionsPath, "functions.csproj"), "package", pkg], {
       cwd: functionsPath, stdio: "inherit", shell: true,
     });
@@ -867,7 +864,6 @@ async function generateBFFRoutes(
 ): Promise<void> {
   console.log("\n🔨 Generating Next.js BFF API routes...");
 
-  const modelKebab = toKebabCase(modelInfo.name);
   const modelCamel = modelInfo.name.charAt(0).toLowerCase() + modelInfo.name.slice(1);
 
   // List route: app/api/[model]/route.ts

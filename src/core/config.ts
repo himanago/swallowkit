@@ -1,7 +1,19 @@
 import * as fs from "fs";
+import { createRequire } from "module";
 import * as path from "path";
 import { AuthConfig, BackendLanguage, ConnectorDefinition, SwallowKitConfig } from "../types";
 import { detectFromProject, getCommands } from "../utils/package-manager";
+
+const requireFromHere = createRequire(__filename);
+
+function unwrapConfigModule(
+  loadedConfig: Partial<SwallowKitConfig> | { default?: Partial<SwallowKitConfig> }
+): Partial<SwallowKitConfig> {
+  if (typeof loadedConfig === "object" && loadedConfig !== null && "default" in loadedConfig) {
+    return loadedConfig.default ?? {};
+  }
+  return loadedConfig as Partial<SwallowKitConfig>;
+}
 
 const VALID_BACKEND_LANGUAGES: BackendLanguage[] = ["typescript", "csharp", "python"];
 
@@ -46,9 +58,9 @@ export function loadConfig(configPath?: string): SwallowKitConfig {
           const userConfig = JSON.parse(configData);
           return mergeConfig(DEFAULT_CONFIG, userConfig);
         } else if (filePath.endsWith(".js")) {
-          delete require.cache[fullPath];
-          const userConfig = require(fullPath);
-          return mergeConfig(DEFAULT_CONFIG, userConfig.default || userConfig);
+          delete requireFromHere.cache[fullPath];
+          const loadedConfig = requireFromHere(fullPath) as Partial<SwallowKitConfig> | { default?: Partial<SwallowKitConfig> };
+          return mergeConfig(DEFAULT_CONFIG, unwrapConfigModule(loadedConfig));
         }
       } catch (error) {
         console.warn(`⚠️ 設定ファイルの読み込みに失敗: ${filePath}`, error);

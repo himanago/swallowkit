@@ -3,15 +3,16 @@ import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as net from 'net';
 import { CosmosClient, PartitionKeyKind } from '@azure/cosmos';
-import { ensureSwallowKitProject, getBackendLanguage, getAuthConfig, getFullConfig } from '../../core/config';
+import { ensureSwallowKitProject, getBackendLanguage, getAuthConfig } from '../../core/config';
 import { ModelInfo } from '../../core/scaffold/model-parser';
 import { applyDevSeedEnvironment, getContainerNameForModel, loadProjectModels } from './dev-seeds';
 import { BackendLanguage } from '../../types';
 import { detectFromProject, getCommands } from '../../utils/package-manager';
 import { ConnectorMockServer } from '../../core/mock/connector-mock-server';
 
-interface DevOptions {
+export interface DevOptions {
   port?: string;
   functionsPort?: string;
   host?: string;
@@ -20,6 +21,17 @@ interface DevOptions {
   noFunctions?: boolean;
   seedEnv?: string;
   mockConnectors?: boolean;
+}
+
+type ParsedDevActionOptions = DevOptions & {
+  functions?: boolean;
+};
+
+function normalizeParsedDevOptions(options: ParsedDevActionOptions): DevOptions {
+  return {
+    ...options,
+    noFunctions: options.noFunctions ?? options.functions === false,
+  };
 }
 
 export function buildFunctionsStartArgs(functionsPort: string): string[] {
@@ -292,7 +304,6 @@ async function preparePythonFunctionsEnvironment(functionsDir: string): Promise<
  */
 async function checkCosmosDBEmulator(): Promise<boolean> {
   return new Promise((resolve) => {
-    const net = require('net');
     const socket = new net.Socket();
     
     const timeout = setTimeout(() => {
@@ -315,28 +326,37 @@ async function checkCosmosDBEmulator(): Promise<boolean> {
   });
 }
 
-export const devCommand = new Command()
-  .name('dev')
-  .description('Start SwallowKit development server (Cosmos DB + Next.js + Azure Functions)')
-  .option('-p, --port <port>', 'Next.js port', '3000')
-  .option('-f, --functions-port <port>', 'Azure Functions port', '7071')
-  .option('--host <host>', 'Host name', 'localhost')
-  .option('--open', 'Open browser automatically', false)
-  .option('--verbose', 'Show verbose logs', false)
-  .option('--no-functions', 'Skip Azure Functions startup', false)
-  .option('--seed-env <environment>', 'Replace Cosmos DB Emulator data from dev-seeds/<environment> before startup')
-  .option('--mock-connectors', 'Start mock server for connector models (serves Zod-generated data)', false)
-  .action(async (options: DevOptions & { functionsPort?: string; noFunctions?: boolean; seedEnv?: string; mockConnectors?: boolean }) => {
-    // SwallowKit プロジェクトディレクトリかどうかを検証
-    ensureSwallowKitProject("dev");
+export function buildDevCommand(
+  runDevEnvironment: (options: DevOptions) => Promise<void> = startDevEnvironment,
+  verifyProject: (commandName: string, projectRoot?: string) => void = ensureSwallowKitProject
+): Command {
+  return new Command()
+    .name('dev')
+    .description('Start SwallowKit development server (Cosmos DB + Next.js + Azure Functions)')
+    .option('-p, --port <port>', 'Next.js port', '3000')
+    .option('-f, --functions-port <port>', 'Azure Functions port', '7071')
+    .option('--host <host>', 'Host name', 'localhost')
+    .option('--open', 'Open browser automatically', false)
+    .option('--verbose', 'Show verbose logs', false)
+    .option('--no-functions', 'Skip Azure Functions startup', false)
+    .option('--seed-env <environment>', 'Replace Cosmos DB Emulator data from dev-seeds/<environment> before startup')
+    .option('--mock-connectors', 'Start mock server for connector models (serves Zod-generated data)', false)
+    .action(async (options: ParsedDevActionOptions) => {
+      const normalizedOptions = normalizeParsedDevOptions(options);
 
-    console.log('🚀 Starting SwallowKit development environment...');
-    if (options.verbose) {
-      console.log('⚙️  Options:', options);
-    }
+      // SwallowKit プロジェクトディレクトリかどうかを検証
+      verifyProject("dev");
 
-    await startDevEnvironment(options);
-  });
+      console.log('🚀 Starting SwallowKit development environment...');
+      if (normalizedOptions.verbose) {
+        console.log('⚙️  Options:', normalizedOptions);
+      }
+
+      await runDevEnvironment(normalizedOptions);
+    });
+}
+
+export const devCommand = buildDevCommand();
 
 interface CosmosInitializationResult {
   endpoint: string;
@@ -749,7 +769,6 @@ async function startDevEnvironment(options: DevOptions) {
       const authConfig = getAuthConfig();
       let mockAuthConfig: { jwtSecret: string; tokenExpiry?: string; customJwt?: { userTable: string; loginIdColumn: string; passwordHashColumn: string; rolesColumn: string }; defaultPolicy?: "authenticated" | "anonymous" } | undefined;
       if (authConfig?.provider === 'custom-jwt' && authConfig.customJwt) {
-        const fullConfig = getFullConfig();
         // Read JWT_SECRET from functions/local.settings.json if available
         let jwtSecret = 'dev-jwt-secret-change-in-production-min-32-chars!!';
         try {

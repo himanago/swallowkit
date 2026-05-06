@@ -1,101 +1,185 @@
 #!/usr/bin/env node
 
-// Ensure UTF-8 console output on Windows (fixes emoji/Unicode garbling in PowerShell 5.1)
-if (process.platform === 'win32') {
-  try {
-    require('child_process').execSync('chcp 65001', { stdio: 'ignore' });
-  } catch { /* ignore — non-critical */ }
-}
-
+import { execSync } from "child_process";
 import { Command } from "commander";
 import { initCommand, devCommand, devSeedsCommand, scaffoldCommand, createModelCommand } from "./commands";
 import { provisionCommand } from "./commands/provision";
 import { addConnectorCommand } from "./commands/add-connector";
 import { addAuthCommand } from "./commands/add-auth";
 
-const program = new Command();
+const DEV_OPTION_ARITY = new Map<string, 0 | 1>([
+  ["-p", 1],
+  ["--port", 1],
+  ["-f", 1],
+  ["--functions-port", 1],
+  ["--host", 1],
+  ["--seed-env", 1],
+  ["-o", 0],
+  ["--open", 0],
+  ["-v", 0],
+  ["--verbose", 0],
+  ["--no-functions", 0],
+  ["--mock-connectors", 0],
+]);
 
-program
-  .name("swallowkit")
-  .description("Next.js framework optimized for Azure deployment - Automatically splits SSR into individual Azure Functions")
-  .version("1.0.0-beta.9");
+function ensureUtf8ConsoleOnWindows(): void {
+  if (process.platform === 'win32') {
+    try {
+      execSync('chcp 65001', { stdio: 'ignore' });
+    } catch {
+      // ignore — non-critical
+    }
+  }
+}
 
-// Register commands
-program
-  .command("init [project-name]")
-  .description("Initialize a new SwallowKit project")
-  .option("--template <template>", "Template to use", "default")
-  .option("--next-version <version>", "Next.js version to install (e.g., 16.0.7, latest)", "latest")
-  .option("--cicd <provider>", "CI/CD provider: github | azure | skip")
-  .option("--backend-language <language>", "Azure Functions backend language: typescript | csharp | python")
-  .option("--cosmos-db-mode <mode>", "Cosmos DB mode: freetier | serverless")
-  .option("--vnet <option>", "Network security: outbound | none")
-  .action((projectName, options) => {
-    initCommand({
-      name: projectName || "swallowkit-app",
-      template: options.template,
-      nextVersion: options.nextVersion,
-      cicd: options.cicd,
-      backendLanguage: options.backendLanguage,
-      cosmosDbMode: options.cosmosDbMode,
-      vnet: options.vnet,
+function isDevOptionSequence(tokens: string[]): boolean {
+  if (tokens.length === 0) {
+    return false;
+  }
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const arity = DEV_OPTION_ARITY.get(token);
+
+    if (arity === undefined) {
+      return false;
+    }
+
+    if (arity === 1) {
+      const value = tokens[index + 1];
+      if (value === undefined || value === "dev") {
+        return false;
+      }
+      index += 1;
+    }
+  }
+
+  return true;
+}
+
+export function normalizeDevCommandArgv(argv: string[]): string[] {
+  if (argv.length <= 3) {
+    return argv;
+  }
+
+  const prefix = argv.slice(0, 2);
+  const args = argv.slice(2);
+  const devIndex = args.indexOf("dev");
+
+  if (devIndex <= 0) {
+    return argv;
+  }
+
+  const leadingTokens = args.slice(0, devIndex);
+  if (!isDevOptionSequence(leadingTokens)) {
+    return argv;
+  }
+
+  return [
+    ...prefix,
+    "dev",
+    ...leadingTokens,
+    ...args.slice(devIndex + 1),
+  ];
+}
+
+export function createProgram(devCommandOverride: Command = devCommand): Command {
+  const program = new Command();
+
+  program
+    .name("swallowkit")
+    .description("Next.js framework optimized for Azure deployment - Automatically splits SSR into individual Azure Functions")
+    .version("1.0.0-beta.9");
+
+  // Register commands
+  program
+    .command("init [project-name]")
+    .description("Initialize a new SwallowKit project")
+    .option("--template <template>", "Template to use", "default")
+    .option("--next-version <version>", "Next.js version to install (e.g., 16.0.7, latest)", "latest")
+    .option("--cicd <provider>", "CI/CD provider: github | azure | skip")
+    .option("--backend-language <language>", "Azure Functions backend language: typescript | csharp | python")
+    .option("--cosmos-db-mode <mode>", "Cosmos DB mode: freetier | serverless")
+    .option("--vnet <option>", "Network security: outbound | none")
+    .action((projectName, options) => {
+      initCommand({
+        name: projectName || "swallowkit-app",
+        template: options.template,
+        nextVersion: options.nextVersion,
+        cicd: options.cicd,
+        backendLanguage: options.backendLanguage,
+        cosmosDbMode: options.cosmosDbMode,
+        vnet: options.vnet,
+      });
     });
-  });
 
-program.addCommand(devCommand);
-program.addCommand(devSeedsCommand);
+  program.addCommand(devCommandOverride);
+  program.addCommand(devSeedsCommand);
 
-program.addCommand(provisionCommand);
+  program.addCommand(provisionCommand);
 
-program
-  .command("create-model <names...>")
-  .description("Create model template files with id, createdAt, and updatedAt fields")
-  .option("--models-dir <dir>", "Models directory", "shared/models")
-  .option("--connector <name>", "Associate model with a connector defined in swallowkit.config.js")
-  .action((names, options) => {
-    createModelCommand({
-      names,
-      modelsDir: options.modelsDir,
-      connector: options.connector,
+  program
+    .command("create-model <names...>")
+    .description("Create model template files with id, createdAt, and updatedAt fields")
+    .option("--models-dir <dir>", "Models directory", "shared/models")
+    .option("--connector <name>", "Associate model with a connector defined in swallowkit.config.js")
+    .action((names, options) => {
+      createModelCommand({
+        names,
+        modelsDir: options.modelsDir,
+        connector: options.connector,
+      });
     });
-  });
 
-program
-  .command("scaffold <model>")
-  .description("Generate CRUD code for Azure Functions and Next.js BFF from Zod models")
-  .option("--functions-dir <dir>", "Azure Functions directory", "functions")
-  .option("--api-dir <dir>", "Next.js API routes directory", "app/api")
-  .option("--api-only", "Generate API only, skip UI components", false)
-  .action((model, options) => {
-    scaffoldCommand({
-      model,
-      functionsDir: options.functionsDir,
-      apiDir: options.apiDir,
-      apiOnly: options.apiOnly,
+  program
+    .command("scaffold <model>")
+    .description("Generate CRUD code for Azure Functions and Next.js BFF from Zod models")
+    .option("--functions-dir <dir>", "Azure Functions directory", "functions")
+    .option("--api-dir <dir>", "Next.js API routes directory", "app/api")
+    .option("--api-only", "Generate API only, skip UI components", false)
+    .action((model, options) => {
+      scaffoldCommand({
+        model,
+        functionsDir: options.functionsDir,
+        apiDir: options.apiDir,
+        apiOnly: options.apiOnly,
+      });
     });
-  });
 
-program
-  .command("add-connector <name>")
-  .description("Add an external data source connector configuration")
-  .requiredOption("--type <type>", "Connector type: rdb | api")
-  .option("--provider <provider>", "RDB provider: mysql | postgres | sqlserver", "mysql")
-  .action((name, options) => {
-    addConnectorCommand({
-      name,
-      type: options.type,
-      provider: options.provider,
+  program
+    .command("add-connector <name>")
+    .description("Add an external data source connector configuration")
+    .requiredOption("--type <type>", "Connector type: rdb | api")
+    .option("--provider <provider>", "RDB provider: mysql | postgres | sqlserver", "mysql")
+    .action((name, options) => {
+      addConnectorCommand({
+        name,
+        type: options.type,
+        provider: options.provider,
+      });
     });
-  });
 
-program
-  .command("add-auth")
-  .description("Add authentication and authorization to the project")
-  .option("--provider <provider>", "Auth provider: custom-jwt | swa | swa-custom | none", "custom-jwt")
-  .action((options) => {
-    addAuthCommand({
-      provider: options.provider,
+  program
+    .command("add-auth")
+    .description("Add authentication and authorization to the project")
+    .option("--provider <provider>", "Auth provider: custom-jwt | swa | swa-custom | none", "custom-jwt")
+    .action((options) => {
+      addAuthCommand({
+        provider: options.provider,
+      });
     });
-  });
 
-program.parse();
+  return program;
+}
+
+export async function runCli(argv: string[] = process.argv): Promise<void> {
+  ensureUtf8ConsoleOnWindows();
+  await createProgram().parseAsync(normalizeDevCommandArgv(argv));
+}
+
+if (require.main === module) {
+  void runCli().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
