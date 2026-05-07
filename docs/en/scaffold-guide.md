@@ -110,6 +110,9 @@ The scaffold command generates the following files:
 **Configuration:**
 - `lib/scaffold-config.ts` - Navigation menu configuration
 
+**Infrastructure (Cosmos DB):**
+- `infra/containers/product-container.bicep` - Cosmos DB container definition generated from the model schema
+
 **OpenAPI bridge for C#/Python backends:**
 - `functions/openapi/product.openapi.json` - OpenAPI exported from the Zod model graph
 - `functions/generated/csharp-models/` or `functions/generated/python-models/` - generated backend schema assets

@@ -4,13 +4,15 @@
 
 SwallowKit の **Authentication（認証）** 機能は、プロジェクトに完全な認証基盤を追加します — ユーザーログイン、JWT トークン管理、ロールベース認可、React 認証コンテキスト — すべてが設定から単一の CLI コマンドで生成されます。
 
-3 つの認証プロバイダーモードをサポートしています：
+現時点の実装状況は次のとおりです：
 
 | モード | 説明 | ステータス |
 |-------|------|----------|
 | `custom-jwt` | 外部 RDB ユーザーデータベース + JWT トークン | ✅ 利用可能（v1） |
 | `swa` | Static Web Apps 組み込み認証 | 🔜 計画中 |
 | `swa-custom` | ハイブリッド（SWA 認証 + カスタム拡張） | 🔜 計画中 |
+
+> **現在の挙動**: 現在実装されているのは `custom-jwt` のみです。CLI には将来向けの provider 名も残っていますが、現行の生成結果は `custom-jwt` ベースです。
 
 💡 **ポイント**: `custom-jwt` は JWT（セッションではなく）を使用します。これは Azure Functions がステートレスであることが原則だからです。BFF レイヤーが Cookie 管理（トランスポート層の責務）を担い、Functions がトークンの発行と検証（セキュリティの責務）を担います。
 
@@ -185,7 +187,7 @@ pnpm dlx swallowkit dev --mock-connectors --seed-env local
 
 | プロパティ | 型 | 必須 | 説明 |
 |----------|-----|------|------|
-| `provider` | `'custom-jwt'` \| `'swa'` \| `'swa-custom'` | ✅ | 認証プロバイダーモード。v1 では `custom-jwt` のみ利用可能 |
+| `provider` | `'custom-jwt'` | ✅ | v1 で現在実装されている認証プロバイダーモード |
 
 ### auth.customJwt
 
@@ -404,8 +406,8 @@ const canWrite = hasAnyRole(["admin"]);
 ### プロバイダーモードの選択
 
 - ✅ 既存のユーザーデータベースがあり、認証フローを完全に制御したい場合は `custom-jwt` を使用
-- ✅ Azure AD / GitHub / ソーシャルログインで十分なシンプルなプロジェクトには `swa`（利用可能時）を使用
-- ✅ SWA の利便性にカスタム拡張を加えたい場合は `swa-custom`（利用可能時）を使用
+- ⏳ Azure AD / GitHub / ソーシャルログインで十分なシンプルなプロジェクト向けの `swa` は計画中です
+- ⏳ SWA の利便性にカスタム拡張を加える `swa-custom` は計画中です
 
 ### シークレット管理
 

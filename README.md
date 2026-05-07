@@ -302,12 +302,12 @@ Deploy your Next.js app to Azure Static Web Apps using standalone mode, and conn
 **1. Provision resources (Bicep IaC)**
 
 ```bash
-npx swallowkit provision --resource-group my-app-rg --location japaneast
+npx swallowkit provision --resource-group my-app-rg
 # or
-pnpm dlx swallowkit provision --resource-group my-app-rg --location japaneast
+pnpm dlx swallowkit provision --resource-group my-app-rg
 ```
 
-After provisioning, the required CI/CD secret values are displayed in the terminal. Copy them.
+The command prompts you to choose the primary region and the Static Web App region. After provisioning, the terminal displays the CI/CD values you need for setup. Copy them.
 
 **2. Push code**
 
@@ -317,7 +317,7 @@ git push origin main
 
 **3. Cancel the auto-triggered CI/CD run** — it will fail because secrets are not registered yet.
 
-**4. Register the displayed secret values** in GitHub (Settings → Secrets) or Azure DevOps (Pipelines → Library).
+**4. Register the displayed secrets / variables** in GitHub (Settings → Secrets) or Azure DevOps (Pipelines → Library).
 
 **5. Manually re-run the CI/CD workflow.**
 

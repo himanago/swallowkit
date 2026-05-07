@@ -34,26 +34,36 @@ cd my-app
 ### 2. Azure リソースのプロビジョニング
 
 ```bash
-npx swallowkit provision \
-  --resource-group my-app-rg \
-  --location japaneast
+npx swallowkit provision --resource-group my-app-rg
 ```
+
+このコマンドを実行すると、次を対話式に選択します:
+- Functions / Cosmos DB 用のプライマリリージョン
+- Static Web App のリージョン
 
 このコマンドは Bicep テンプレートを使用して以下を作成します:
 - Azure Static Web Apps
-- Azure Functions (Consumption プラン)
-- Azure Cosmos DB (サーバーレス)
+- Azure Functions (Flex Consumption)
+- Azure Cosmos DB（初期化時に選択した Free Tier または Serverless）
 - マネージド ID（サービス間の安全な接続）
 
-プロビジョニング完了後、CI/CD に必要なシークレット値がターミナルに表示されます：
+プロビジョニング完了後、ターミナルにはリソース情報に続いて、CI/CD 用の secrets/variables が次のように表示されます：
 
 ```
-=== CI/CD Secrets ===
-AZURE_STATIC_WEB_APPS_API_TOKEN: <トークン値>
-AZURE_FUNCTIONAPP_PUBLISH_PROFILE: <プロファイル XML>
+📝 Next Steps:
+  1. Configure CI/CD secrets/variables:
+
+     [AZURE_STATIC_WEB_APPS_API_TOKEN]
+       <トークン値>
+
+     [AZURE_FUNCTIONAPP_NAME]
+       <Function App 名>
+
+     [AZURE_FUNCTIONAPP_PUBLISH_PROFILE]
+       <プロファイル XML>
 ```
 
-> **重要**: これらの値をコピーしておいてください。ステップ 4 で使用します。
+> **重要**: これらの値をコピーしておいてください。ステップ 4 で使用します。なお、CLI がトークンや publish profile の取得に失敗した場合は、代わりに手動取得用の `az` コマンドが表示されます。
 
 ### 3. コードのプッシュ
 
@@ -76,22 +86,24 @@ git push origin main
 - **GitHub Actions**: Actions タブ → 実行中のワークフローをクリック → Cancel workflow
 - **Azure Pipelines**: Pipelines → 実行中のパイプラインをクリック → Cancel
 
-#### ステップ 4-2: `provision` で表示されたシークレットを登録
+#### ステップ 4-2: `provision` で表示された secrets / variables を登録
 
 ##### GitHub Actions の場合
 
 1. GitHub リポジトリの Settings → Secrets and variables → Actions
 2. プロビジョニング時に表示された値を使って以下のシークレットを追加：
-   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
-   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
+  - `AZURE_STATIC_WEB_APPS_API_TOKEN`
+  - `AZURE_FUNCTIONAPP_NAME`
+  - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
 
 ##### Azure Pipelines の場合
 
 1. Azure DevOps → Pipelines → Library → Variable groups
 2. `azure-deployment` という名前のグループを作成
 3. プロビジョニング時に表示された値を使って以下を追加：
-   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
-   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
+  - `AZURE_STATIC_WEB_APPS_API_TOKEN`
+  - `AZURE_FUNCTIONAPP_NAME`
+  - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
 
 #### ステップ 4-3: CI/CD ワークフローを手動で再実行
 
@@ -111,7 +123,7 @@ git push origin main
 
 ### Azure Functions
 
-- **プラン**: Consumption（従量課金）
+- **プラン**: Flex Consumption
 - **ランタイム**: Node.js 22
 - **機能**:
   - HTTP トリガー
@@ -120,7 +132,7 @@ git push origin main
 
 ### Azure Cosmos DB
 
-- **モード**: Serverless
+- **モード**: 初期化時に選択した Free Tier または Serverless
 - **機能**:
   - 自動スケーリング
   - グローバル分散
@@ -235,9 +247,7 @@ infra/
 
 ```bash
 # Bicep ファイルを編集後
-npx swallowkit provision \
-  --resource-group my-app-rg \
-  --location japaneast
+npx swallowkit provision --resource-group my-app-rg
 ```
 
 ### 一般的なカスタマイズ

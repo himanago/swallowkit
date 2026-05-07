@@ -4,13 +4,15 @@
 
 SwallowKit's **Authentication** feature adds a complete auth infrastructure to your project — user login, JWT token management, role-based authorization, and React auth context — all generated from config with a single CLI command.
 
-Three auth provider modes are supported:
+Current implementation status:
 
 | Mode | Description | Status |
 |------|-------------|--------|
 | `custom-jwt` | External RDB user database + JWT tokens | ✅ Available (v1) |
 | `swa` | Static Web Apps built-in authentication | 🔜 Planned |
 | `swa-custom` | Hybrid (SWA auth + custom extensions) | 🔜 Planned |
+
+> **Current behavior**: Only `custom-jwt` is implemented today. The CLI still accepts reserved provider names for future modes, but the generated auth flow is currently `custom-jwt`-based.
 
 💡 **Key concept**: `custom-jwt` uses JWT (not sessions) because Azure Functions is stateless. The BFF layer manages cookies (transport concern), while Functions handle token generation and verification (security concern).
 
@@ -185,7 +187,7 @@ The field names must match the column names configured in `auth.customJwt` (`log
 
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
-| `provider` | `'custom-jwt'` \| `'swa'` \| `'swa-custom'` | ✅ | Auth provider mode. Only `custom-jwt` is available in v1 |
+| `provider` | `'custom-jwt'` | ✅ | Auth provider mode currently implemented in v1 |
 
 ### auth.customJwt
 
@@ -404,8 +406,8 @@ This means an expired token is rejected early at the edge (fast, low cost), whil
 ### Choosing a Provider Mode
 
 - ✅ Use `custom-jwt` when you have an existing user database and need full control over the auth flow
-- ✅ Use `swa` (when available) for simple projects where Azure AD / GitHub / social login is sufficient
-- ✅ Use `swa-custom` (when available) when you need SWA convenience with custom extensions
+- ⏳ `swa` is planned for simple projects where Azure AD / GitHub / social login is sufficient
+- ⏳ `swa-custom` is planned for cases where you need SWA convenience with custom extensions
 
 ### Secret Management
 

@@ -110,6 +110,9 @@ scaffold コマンドは以下のファイルを生成します：
 **設定:**
 - `lib/scaffold-config.ts` - ナビゲーションメニュー設定
 
+**インフラストラクチャ（Cosmos DB）:**
+- `infra/containers/product-container.bicep` - モデルスキーマから生成される Cosmos DB コンテナ定義
+
 **C#/Python バックエンド向け OpenAPI ブリッジ:**
 - `functions/openapi/product.openapi.json` - Zod モデルグラフから出力された OpenAPI
 - `functions/generated/csharp-models/` または `functions/generated/python-models/` - 生成されたバックエンド用スキーマ資産

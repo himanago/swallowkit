@@ -338,10 +338,11 @@ Checks for Cosmos DB Emulator availability.
 ### Skill: Provision Azure resources
 
 ```bash
-npx swallowkit provision --resource-group <name> --location <region>
+npx swallowkit provision --resource-group <name>
 ```
 
 Deploys Bicep infrastructure: Static Web Apps, Functions, Cosmos DB, Storage, Managed Identity.
+Prompts for the primary region and the Static Web App region during execution.
 
 ### Typical workflow for "add a new feature/model"
 
@@ -400,7 +401,7 @@ architecture, conventions, and rules.
 | Create model | `npx swallowkit create-model <name>` |
 | Generate CRUD | `npx swallowkit scaffold shared/models/<name>.ts` |
 | Dev servers | `npx swallowkit dev` |
-| Provision Azure | `npx swallowkit provision -g <rg> -l <region>` |
+| Provision Azure | `npx swallowkit provision -g <rg>` |
 
 ## Workflow: Add a new model
 
@@ -597,7 +598,9 @@ pnpm dlx swallowkit add-auth [options]
 
 | Option | Description | Values | Default |
 |--------|-------------|--------|---------|
-| `--provider <provider>` | Authentication provider | `custom-jwt`, `swa`, `swa-custom` | `custom-jwt` |
+| `--provider <provider>` | Authentication provider | `custom-jwt` | `custom-jwt` |
+
+> Note: `swa` and `swa-custom` are reserved for future releases, but are not implemented by the current generated auth flow.
 
 ### What it does
 
@@ -987,14 +990,35 @@ pnpm dlx swallowkit provision [options]
 | Option | Short | Description | Required |
 |--------|-------|-------------|----------|
 | `--resource-group <name>` | `-g` | Resource group name | ✅ |
-| `--location <location>` | `-l` | Azure region | ✅ |
 | `--subscription <id>` | | Subscription ID | |
 
-### Azure Regions
+### Region Selection
 
-Recommended regions:
+The command prompts for these regions interactively:
+- Primary location for Functions and Cosmos DB
+- Static Web App location
+
+Recommended region combinations:
+- `japaneast` + `eastasia`
+- `japanwest` + `eastasia`
+- `eastus2` + `eastus2`
+- `westeurope` + `westeurope`
+
+Primary location choices:
 - `japaneast` - Japan East
 - `japanwest` - Japan West
+- `eastasia` - East Asia
+- `southeastasia` - Southeast Asia
+- `eastus` - East US
+- `eastus2` - East US 2
+- `westus2` - West US 2
+- `centralus` - Central US
+- `westeurope` - West Europe
+
+Static Web App location choices:
+- `eastasia` - Recommended for Japan
+- `westus2` - West US 2
+- `centralus` - Central US
 - `eastus2` - East US 2
 - `westeurope` - West Europe
 
@@ -1010,12 +1034,12 @@ az account list-locations --output table
    - Build config: standalone Next.js
 
 2. **Azure Functions**
-   - Plan: Consumption (pay-per-execution)
+   - Plan: Flex Consumption
    - Runtime: Node.js 22
    - OS: Linux
 
 3. **Azure Cosmos DB**
-   - Mode: Serverless
+   - Mode: Free Tier or Serverless (selected during initialization)
    - API: NoSQL
    - Consistency: Session
 
@@ -1031,18 +1055,12 @@ az account list-locations --output table
 
 ```bash
 # Basic usage
-npx swallowkit provision \
-  --resource-group my-app-rg \
-  --location japaneast
+npx swallowkit provision --resource-group my-app-rg
 
 # With subscription
 npx swallowkit provision \
   --resource-group my-app-rg \
-  --location japaneast \
   --subscription "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
-# Short options
-npx swallowkit provision -g my-app-rg -l japaneast
 ```
 
 ### After Provisioning

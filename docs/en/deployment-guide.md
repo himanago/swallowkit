@@ -34,26 +34,36 @@ Choose CI/CD provider during initialization:
 ### 2. Provision Azure Resources
 
 ```bash
-npx swallowkit provision \
-  --resource-group my-app-rg \
-  --location japaneast
+npx swallowkit provision --resource-group my-app-rg
 ```
+
+The command then prompts you to choose:
+- Primary location for Functions and Cosmos DB
+- Static Web App location
 
 This creates using Bicep templates:
 - Azure Static Web Apps
-- Azure Functions (Consumption plan)
-- Azure Cosmos DB (serverless)
+- Azure Functions (Flex Consumption)
+- Azure Cosmos DB (the Free Tier or Serverless option selected during initialization)
 - Managed Identity (secure service connections)
 
-After provisioning completes, the terminal displays the secret values required for CI/CD:
+After provisioning completes, the terminal shows resource information followed by the CI/CD secrets/variables in this format:
 
 ```
-=== CI/CD Secrets ===
-AZURE_STATIC_WEB_APPS_API_TOKEN: <token-value>
-AZURE_FUNCTIONAPP_PUBLISH_PROFILE: <profile-xml>
+📝 Next Steps:
+  1. Configure CI/CD secrets/variables:
+
+     [AZURE_STATIC_WEB_APPS_API_TOKEN]
+       <token-value>
+
+     [AZURE_FUNCTIONAPP_NAME]
+       <Function App name>
+
+     [AZURE_FUNCTIONAPP_PUBLISH_PROFILE]
+       <profile-xml>
 ```
 
-> **Important**: Copy these values — you will need them in step 4.
+> **Important**: Copy these values — you will need them in step 4. If the CLI cannot retrieve the token or publish profile automatically, it prints the `az` command to run manually instead.
 
 ### 3. Push Code
 
@@ -76,22 +86,24 @@ The initial push triggers a CI/CD run that cannot succeed without secrets. Cance
 - **GitHub Actions**: Go to the Actions tab → click the running workflow → Cancel workflow
 - **Azure Pipelines**: Go to Pipelines → click the running pipeline → Cancel
 
-#### Step 4-2: Register the secrets displayed by `provision`
+#### Step 4-2: Register the secrets / variables displayed by `provision`
 
 ##### For GitHub Actions
 
 1. Go to your GitHub repository → Settings → Secrets and variables → Actions
 2. Add the following secrets using the values displayed after provisioning:
-   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
-   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
+  - `AZURE_STATIC_WEB_APPS_API_TOKEN`
+  - `AZURE_FUNCTIONAPP_NAME`
+  - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
 
 ##### For Azure Pipelines
 
 1. Azure DevOps → Pipelines → Library → Variable groups
 2. Create group named `azure-deployment`
 3. Add the following variables using the values displayed after provisioning:
-   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
-   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
+  - `AZURE_STATIC_WEB_APPS_API_TOKEN`
+  - `AZURE_FUNCTIONAPP_NAME`
+  - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
 
 #### Step 4-3: Manually re-run the CI/CD workflow
 
@@ -111,7 +123,7 @@ The initial push triggers a CI/CD run that cannot succeed without secrets. Cance
 
 ### Azure Functions
 
-- **Plan**: Consumption (pay-per-execution)
+- **Plan**: Flex Consumption
 - **Runtime**: Node.js 22
 - **Features**:
   - HTTP triggers
@@ -120,7 +132,7 @@ The initial push triggers a CI/CD run that cannot succeed without secrets. Cance
 
 ### Azure Cosmos DB
 
-- **Mode**: Serverless
+- **Mode**: The Free Tier or Serverless option selected during initialization
 - **Features**:
   - Automatic scaling
   - Global distribution
@@ -235,9 +247,7 @@ infra/
 
 ```bash
 # After editing Bicep files
-npx swallowkit provision \
-  --resource-group my-app-rg \
-  --location japaneast
+npx swallowkit provision --resource-group my-app-rg
 ```
 
 ### Common Customizations
