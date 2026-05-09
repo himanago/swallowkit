@@ -7,9 +7,15 @@ import {
   DevOptions,
   getPythonVirtualEnvPaths,
 } from "../cli/commands/dev";
-import { createProgram, normalizeDevCommandArgv } from "../cli/index";
+import { CLI_VERSION, createProgram, normalizeDevCommandArgv } from "../cli/index";
+
+const { version: packageVersion } = require("../../package.json");
 
 describe("dev command helpers", () => {
+  it("keeps the CLI version in sync with package.json", () => {
+    expect(CLI_VERSION).toBe(packageVersion);
+  });
+
   it("passes the requested port to Azure Functions Core Tools", () => {
     expect(buildFunctionsStartArgs("7076")).toEqual(["start", "--port", "7076"]);
   });

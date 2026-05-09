@@ -8,6 +8,8 @@ import { addConnectorCommand } from "./commands/add-connector";
 import { addAuthCommand } from "./commands/add-auth";
 import { isMachineCommand, runMachineCli } from "../machine";
 
+export const CLI_VERSION = require("../../package.json").version as string;
+
 const DEV_OPTION_ARITY = new Map<string, 0 | 1>([
   ["-p", 1],
   ["--port", 1],
@@ -90,7 +92,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
   program
     .name("swallowkit")
     .description("Next.js framework optimized for Azure deployment - Automatically splits SSR into individual Azure Functions")
-    .version("1.0.0-beta.9");
+    .version(CLI_VERSION);
 
   // Register commands
   program
