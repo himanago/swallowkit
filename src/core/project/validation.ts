@@ -102,9 +102,9 @@ function validateGeneratedArtifacts(manifest: ProjectManifest, violations: Proje
     pushViolation(violations, {
       code: "missing-openapi-artifacts",
       severity: "warning",
-      message: `No OpenAPI schema artifacts were found for ${manifest.backendLanguage} backend generation.`,
+      message: `No OpenAPI export or native schema artifacts were found for ${manifest.backendLanguage} backend generation.`,
       location: { path: "functions/openapi" },
-      suggestedFix: "Run scaffold to regenerate the OpenAPI-backed backend schema artifacts.",
+      suggestedFix: "Run scaffold to regenerate the OpenAPI export and native backend schema artifacts.",
     });
   }
 }

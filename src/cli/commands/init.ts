@@ -15,6 +15,10 @@ import {
   getFunctionsStartScript,
 } from "../../utils/package-manager";
 import { syncProjectManifest } from "../../core/project/manifest";
+import {
+  buildCSharpCodegenToolManifestSource,
+  buildPythonCodegenRequirementsSource,
+} from "../../core/scaffold/native-schema-generator";
 
 interface InitOptions {
   name: string;
@@ -473,13 +477,6 @@ async function addSwallowKitFiles(
     ...buildGeneratedProjectDependencies(projectName),
   };
 
-  if (backendLanguage !== "typescript") {
-    packageJson.devDependencies = {
-      ...packageJson.devDependencies,
-      '@openapitools/openapi-generator-cli': '^2.21.0',
-    };
-  }
-  
   packageJson.scripts = {
     ...packageJson.scripts,
     'build': getBuildScript(pm),
@@ -955,8 +952,9 @@ tsconfig.json
 !dist/**/*.js
 `);
   } else if (backendLanguage === 'python') {
-    gitignoreLines.unshift('.venv', '__pycache__', '.python_packages');
+    gitignoreLines.unshift('.venv', '.codegen-venv', '__pycache__', '.python_packages');
     fs.writeFileSync(path.join(functionsDir, '.funcignore'), `.venv
+.codegen-venv
 __pycache__
 .pytest_cache
 .mypy_cache
@@ -1083,6 +1081,11 @@ function createCSharpFunctionsProject(projectDir: string, functionsDir: string):
   const csprojName = `${projectPascal}.Functions.csproj`;
 
   fs.writeFileSync(path.join(functionsDir, csprojName), buildCSharpFunctionsProjectSource());
+  fs.mkdirSync(path.join(functionsDir, '.config'), { recursive: true });
+  fs.writeFileSync(
+    path.join(functionsDir, '.config', 'dotnet-tools.json'),
+    buildCSharpCodegenToolManifestSource()
+  );
 
   fs.writeFileSync(path.join(functionsDir, 'Program.cs'), buildCSharpFunctionsProgramSource());
 
@@ -1130,6 +1133,10 @@ function createPythonFunctionsProject(projectDir: string, functionsDir: string):
 azure-cosmos>=4.9.0
 azure-identity>=1.19.0
 `);
+  fs.writeFileSync(
+    path.join(functionsDir, 'requirements.codegen.txt'),
+    buildPythonCodegenRequirementsSource()
+  );
 
   const blueprintsDir = path.join(functionsDir, 'blueprints');
   fs.mkdirSync(blueprintsDir, { recursive: true });
@@ -1398,17 +1405,17 @@ function createReadme(
   const backendLanguageLabel = getBackendLanguageLabel(backendLanguage);
   const schemaBridgeDescription = backendLanguage === 'typescript'
     ? 'Zod (shared between frontend and backend)'
-    : `Zod + OpenAPI bridge (Zod in shared/, generated ${backendLanguageLabel} schemas in functions/generated/)`;
+    : `Zod + OpenAPI export (Zod in shared/, native-generated ${backendLanguageLabel} schemas in functions/generated/)`;
   const functionsTree = backendLanguage === 'typescript'
     ? `│   └── src/\n│       └── greet.ts      # Sample function`
     : backendLanguage === 'csharp'
-      ? `│   ├── Crud/\n│   │   └── GreetFunction.cs\n│   └── generated/       # OpenAPI-derived C# models`
-      : `│   ├── blueprints/\n│   │   └── greet.py\n│   └── generated/       # OpenAPI-derived Python models`;
+      ? `│   ├── Crud/\n│   │   └── GreetFunction.cs\n│   └── generated/       # Native-generated C# schema assets`
+      : `│   ├── blueprints/\n│   │   └── greet.py\n│   └── generated/       # Native-generated Python schema assets`;
   const backendScaffoldNote = backendLanguage === 'typescript'
     ? '- Azure Functions CRUD endpoints'
-    : `- Azure Functions ${backendLanguageLabel} CRUD handlers\n- OpenAPI spec + generated ${backendLanguageLabel} schema assets`;
+    : `- Azure Functions ${backendLanguageLabel} CRUD handlers\n- OpenAPI export + native-generated ${backendLanguageLabel} schema assets`;
   const pythonLocalDevNote = backendLanguage === 'python'
-    ? `\n**Python local dev note**: SwallowKit uses \`functions/.venv\` for local Azure Functions development. If \`uv\` is installed, \`swallowkit dev\` uses it to create/manage that virtual environment; otherwise it falls back to the standard \`venv\` + \`pip\` workflow. Keep \`functions/requirements.txt\` as the dependency source of truth for Azure Functions compatibility.\n`
+    ? `\n**Python local dev note**: SwallowKit uses \`functions/.venv\` for local Azure Functions development. If \`uv\` is installed, \`swallowkit dev\` uses it to create/manage that virtual environment; otherwise it falls back to the standard \`venv\` + \`pip\` workflow. Keep \`functions/requirements.txt\` as the dependency source of truth for Azure Functions compatibility. Scaffold uses a separate \`functions/.codegen-venv\` for Python schema generation.\n`
     : '';
 
   const readme = `# ${projectName}
@@ -1626,14 +1633,14 @@ function createAiAgentFiles(projectDir: string, projectName: string, backendLang
   const functionsStructureLine = backendLanguage === 'typescript'
     ? `│   └── src/               # HTTP trigger handlers with Cosmos DB bindings`
     : backendLanguage === 'csharp'
-      ? `│   ├── Crud/              # C# HTTP trigger handlers\n│   └── generated/         # OpenAPI-derived C# schema assets`
-      : `│   ├── blueprints/        # Python HTTP trigger handlers\n│   └── generated/         # OpenAPI-derived Python schema assets`;
+      ? `│   ├── Crud/              # C# HTTP trigger handlers\n│   └── generated/         # Native-generated C# schema assets`
+      : `│   ├── blueprints/        # Python HTTP trigger handlers\n│   └── generated/         # Native-generated Python schema assets`;
   const backendSchemaNote = backendLanguage === 'typescript'
     ? `- The shared package (\`@${projectName}/shared\`) is consumed by both Next.js and Azure Functions as a workspace dependency.`
-    : `- The frontend/BFF source of truth stays in \`shared/models/\` as Zod schemas.\n- \`swallowkit scaffold\` exports OpenAPI into \`functions/openapi/\` and generates ${backendLanguageLabel} schema assets into \`functions/generated/\` for backend use.`;
+    : `- The frontend/BFF source of truth stays in \`shared/models/\` as Zod schemas.\n- \`swallowkit scaffold\` exports OpenAPI into \`functions/openapi/\` and generates ${backendLanguageLabel} schema assets into \`functions/generated/\` with native ${backendLanguageLabel} tooling.`;
   const backendRulesNote = backendLanguage === 'typescript'
     ? `- All CRUD operations and business logic live in \`functions/src/\`.\n- Use Azure Functions Cosmos DB **input/output bindings** (\`extraInputs\`/\`extraOutputs\`) for reads and writes.\n- Use the Cosmos DB SDK client directly **only** for delete operations (bindings do not support delete).\n- Validate all data against Zod schemas before writing to Cosmos DB.\n- The backend auto-generates \`id\` (UUID), \`createdAt\`, and \`updatedAt\` — never trust client-sent values for these fields.`
-    : `- All business logic lives in \`functions/\` and the generated handlers perform real Cosmos DB CRUD.\n- Keep Zod schemas in \`shared/models/\` as the source of truth.\n- Regenerate backend contracts with \`swallowkit scaffold shared/models/<name>.ts\` whenever a schema changes.\n- Use the generated OpenAPI-derived models in \`functions/generated/\` to keep backend contracts aligned.\n- The backend should still own \`id\`, \`createdAt\`, and \`updatedAt\`.`;
+    : `- All business logic lives in \`functions/\` and the generated handlers perform real Cosmos DB CRUD.\n- Keep Zod schemas in \`shared/models/\` as the source of truth.\n- Regenerate backend contracts with \`swallowkit scaffold shared/models/<name>.ts\` whenever a schema changes.\n- Use the native-generated schema assets in \`functions/generated/\` to keep backend contracts aligned.\n- The backend should still own \`id\`, \`createdAt\`, and \`updatedAt\`.`;
 
   // ── 1. AGENTS.md (Codex / generic agents) ──────────────────────────
 
@@ -1748,7 +1755,7 @@ Key rules:
 
 - ${backendRulesNote}
 
-${backendLanguage === 'typescript' ? 'Azure Functions handler pattern:' : `Generated ${backendLanguageLabel} handlers live under \`functions/\`. Re-run \`swallowkit scaffold shared/models/<name>.ts\` after schema changes to keep generated CRUD handlers and \`functions/generated/\` in sync.`}
+${backendLanguage === 'typescript' ? 'Azure Functions handler pattern:' : `Generated ${backendLanguageLabel} handlers live under \`functions/\`. Re-run \`swallowkit scaffold shared/models/<name>.ts\` after schema changes to keep generated CRUD handlers and the native schema assets under \`functions/generated/\` in sync.`}
 
 ${backendLanguage === 'typescript' ? `\`\`\`typescript
 // functions/src/{model}.ts
@@ -2018,7 +2025,7 @@ Files in \`functions/\` contain all business logic and data access for this appl
 
 - Keep backend contracts aligned with \`shared/models/\` by rerunning \`swallowkit scaffold\` after schema changes.
 - For TypeScript backends, use Cosmos DB **input/output bindings** (\`extraInputs\`/\`extraOutputs\`) for reads and writes.
-- For C#/Python backends, consume the generated OpenAPI-derived assets in \`functions/generated/\`.
+- For C#/Python backends, consume the native-generated assets in \`functions/generated/\`.
 - Auto-generate \`id\` (UUID), \`createdAt\`, and \`updatedAt\` on the backend. Never trust client-sent values.
 - Container names are PascalCase + 's' (e.g., \`Todos\`). Partition key defaults to \`/id\` but can be customized per model.
 

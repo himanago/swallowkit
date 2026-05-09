@@ -27,6 +27,15 @@ type ParsedDevActionOptions = DevOptions & {
   functions?: boolean;
 };
 
+interface FunctionsCoreToolsCommand {
+  command: string;
+  argsPrefix: string[];
+  label: string;
+}
+
+const MINIMUM_CSHARP_CORE_TOOLS_VERSION = '4.6.0';
+const NPM_CORE_TOOLS_PACKAGE = 'azure-functions-core-tools@4';
+
 function normalizeParsedDevOptions(options: ParsedDevActionOptions): DevOptions {
   return {
     ...options,
@@ -36,6 +45,54 @@ function normalizeParsedDevOptions(options: ParsedDevActionOptions): DevOptions 
 
 export function buildFunctionsStartArgs(functionsPort: string): string[] {
   return ['start', '--port', functionsPort];
+}
+
+export function parseCoreToolsVersion(output: string): string | null {
+  const match = output.match(/\d+\.\d+\.\d+/);
+  return match ? match[0] : null;
+}
+
+export function compareVersionNumbers(left: string, right: string): number {
+  const leftParts = left.split('.').map((value) => Number.parseInt(value, 10));
+  const rightParts = right.split('.').map((value) => Number.parseInt(value, 10));
+  const length = Math.max(leftParts.length, rightParts.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = leftParts[index] ?? 0;
+    const rightPart = rightParts[index] ?? 0;
+
+    if (leftPart !== rightPart) {
+      return leftPart - rightPart;
+    }
+  }
+
+  return 0;
+}
+
+export function buildFunctionsCoreToolsCommand(
+  backendLanguage: BackendLanguage,
+  installedVersion: string | null
+): FunctionsCoreToolsCommand {
+  if (
+    backendLanguage === 'csharp' &&
+    (!installedVersion || compareVersionNumbers(installedVersion, MINIMUM_CSHARP_CORE_TOOLS_VERSION) < 0)
+  ) {
+    const reason = installedVersion
+      ? `installed func ${installedVersion} is too old for C# isolated`
+      : 'func is not installed';
+
+    return {
+      command: 'npm',
+      argsPrefix: ['exec', '--yes', NPM_CORE_TOOLS_PACKAGE, '--'],
+      label: `npm exec ${NPM_CORE_TOOLS_PACKAGE} (${reason})`,
+    };
+  }
+
+  return {
+    command: 'func',
+    argsPrefix: [],
+    label: installedVersion ? `func ${installedVersion}` : 'func',
+  };
 }
 
 export function buildNextDevArgs(pm: string, port: string): string[] {
@@ -57,6 +114,13 @@ export function getPythonVirtualEnvPaths(functionsDir: string): {
     : path.join(binDir, 'python');
 
   return { venvDir, binDir, pythonExecutable };
+}
+
+export function getCSharpFunctionsBuildArtifactPaths(functionsDir: string): string[] {
+  return [
+    path.join(functionsDir, 'bin'),
+    path.join(functionsDir, 'obj'),
+  ];
 }
 
 export function buildPythonFunctionsEnv(baseEnv: NodeJS.ProcessEnv, functionsDir: string): NodeJS.ProcessEnv {
@@ -141,6 +205,18 @@ async function getCommandPath(command: string): Promise<string | null> {
     .find(Boolean);
 
   return firstLine || null;
+}
+
+async function resolveInstalledCoreToolsVersion(): Promise<string | null> {
+  if (!(await checkCoreTools())) {
+    return null;
+  }
+
+  try {
+    return parseCoreToolsVersion(await captureCommandOutput('func', ['--version']));
+  } catch {
+    return null;
+  }
 }
 
 async function captureCommandOutput(
@@ -338,7 +414,7 @@ export function buildDevCommand(
     .option('--host <host>', 'Host name', 'localhost')
     .option('--open', 'Open browser automatically', false)
     .option('--verbose', 'Show verbose logs', false)
-    .option('--no-functions', 'Skip Azure Functions startup', false)
+    .option('--no-functions', 'Skip Azure Functions startup')
     .option('--seed-env <environment>', 'Replace Cosmos DB Emulator data from dev-seeds/<environment> before startup')
     .option('--mock-connectors', 'Start mock server for connector models (serves Zod-generated data)', false)
     .action(async (options: ParsedDevActionOptions) => {
@@ -532,11 +608,14 @@ async function startDevEnvironment(options: DevOptions) {
     const functionsDir = path.join(process.cwd(), 'functions');
     const hasFunctions = fs.existsSync(functionsDir) && hasFunctionsProject(functionsDir, backendLanguage);
 
+    let functionsCoreToolsCommand: FunctionsCoreToolsCommand | null = null;
+    let installedCoreToolsVersion: string | null = null;
+
     if (hasFunctions && !options.noFunctions) {
-      // Check if Azure Functions Core Tools is installed
-      const coreToolsInstalled = await checkCoreTools();
-      
-      if (!coreToolsInstalled) {
+      installedCoreToolsVersion = await resolveInstalledCoreToolsVersion();
+      functionsCoreToolsCommand = buildFunctionsCoreToolsCommand(backendLanguage, installedCoreToolsVersion);
+
+      if (functionsCoreToolsCommand.command === 'func' && !installedCoreToolsVersion) {
         console.log('');
         console.log('⚠️  Azure Functions Core Tools not found.');
         console.log('');
@@ -585,6 +664,8 @@ async function startDevEnvironment(options: DevOptions) {
           // Skip Azure Functions startup
           options.noFunctions = true;
         }
+      } else if (functionsCoreToolsCommand.command !== 'func') {
+        console.log(`ℹ️  Using ${functionsCoreToolsCommand.label}.`);
       }
       
       if (!options.noFunctions) {
@@ -631,8 +712,19 @@ async function startDevEnvironment(options: DevOptions) {
             await runCommand(pm, ['install'], functionsDir, `${pm} install`);
           }
         } else if (backendLanguage === 'csharp') {
-          console.log('📦 Building C# Azure Functions project...');
-          await runCommand('dotnet', ['build'], functionsDir, 'dotnet build');
+          let cleanedArtifacts = false;
+          for (const artifactPath of getCSharpFunctionsBuildArtifactPaths(functionsDir)) {
+            if (!fs.existsSync(artifactPath)) {
+              continue;
+            }
+
+            fs.rmSync(artifactPath, { recursive: true, force: true });
+            cleanedArtifacts = true;
+          }
+
+          if (cleanedArtifacts) {
+            console.log('🧹 Cleaned previous C# Functions build artifacts before func start.');
+          }
         } else {
           functionsEnv = await preparePythonFunctionsEnvironment(functionsDir);
         }
@@ -685,7 +777,8 @@ async function startDevEnvironment(options: DevOptions) {
       }
 
       // Azure Functions を起動
-      const funcProcess = spawn('func', buildFunctionsStartArgs(functionsPort), {
+      const functionsCommand = functionsCoreToolsCommand ?? buildFunctionsCoreToolsCommand(backendLanguage, installedCoreToolsVersion);
+      const funcProcess = spawn(functionsCommand.command, [...functionsCommand.argsPrefix, ...buildFunctionsStartArgs(functionsPort)], {
         cwd: functionsDir,
         shell: true,
         stdio: 'pipe', // Always pipe to capture output

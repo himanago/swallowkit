@@ -2,7 +2,7 @@
 
 ## Overview
 
-SwallowKit Scaffold is a powerful code generation tool that automatically creates complete CRUD (Create, Read, Update, Delete) operations from your Zod schema definitions. It generates Azure Functions, Next.js API routes, and type-safe UI components with minimal configuration. When your project uses a C# or Python Functions backend, it also exports OpenAPI and generates backend schema assets from the shared Zod models.
+SwallowKit Scaffold is a powerful code generation tool that automatically creates complete CRUD (Create, Read, Update, Delete) operations from your Zod schema definitions. It generates Azure Functions, Next.js API routes, and type-safe UI components with minimal configuration. When your project uses a C# or Python Functions backend, it also exports OpenAPI and generates native backend schema assets from the shared Zod models.
 
 💡 **Reference**: For more information about schema sharing concepts and benefits, please see the **[Zod Schema Sharing Guide](./zod-schema-sharing-guide.md)**.
 
@@ -113,14 +113,14 @@ The scaffold command generates the following files:
 **Infrastructure (Cosmos DB):**
 - `infra/containers/product-container.bicep` - Cosmos DB container definition generated from the model schema
 
-**OpenAPI bridge for C#/Python backends:**
+**OpenAPI export for C#/Python backends:**
 - `functions/openapi/product.openapi.json` - OpenAPI exported from the Zod model graph
-- `functions/generated/csharp-models/` or `functions/generated/python-models/` - generated backend schema assets
+- `functions/generated/csharp-models/` or `functions/generated/python-models/` - native-generated backend schema assets
 
 ### Backend Language Behavior
 
 - `typescript`: the generated Functions handlers import the shared Zod schema package directly.
-- `csharp` / `python`: the frontend and BFF still use Zod in `shared/models/`, and the backend consumes generated assets derived from the OpenAPI export.
+- `csharp` / `python`: the frontend and BFF still use Zod in `shared/models/`, and the backend consumes native-generated assets derived from the OpenAPI export.
 - Re-run `swallowkit scaffold shared/models/<name>.ts` whenever the schema changes so `functions/openapi/` and `functions/generated/` stay in sync.
 
 ### 4. Access Your Application

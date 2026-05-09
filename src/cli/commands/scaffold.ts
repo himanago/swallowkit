@@ -5,7 +5,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { spawn, spawnSync } from "child_process";
+import { spawnSync } from "child_process";
 import { getBackendLanguage, getConnectorDefinition, getAuthConfig, ensureSwallowKitProject } from "../../core/config";
 import { ModelInfo, parseModelFile, toKebabCase, toPascalCase, toCamelCase } from "../../core/scaffold/model-parser";
 import {
@@ -22,7 +22,6 @@ import {
   generateApiConnectorFunctionPython,
 } from "../../core/scaffold/connector-functions-generator";
 import { generateCompactBFFRoutes, generateBFFCallFunction, generateConnectorBFFRoutes } from "../../core/scaffold/nextjs-generator";
-import { generateOpenApiDocument } from "../../core/scaffold/openapi-generator";
 import {
   generateListPage,
   generateDetailPage,
@@ -31,6 +30,7 @@ import {
   generateEditPage,
   UIAuthOptions,
 } from "../../core/scaffold/ui-generator";
+import { generateLanguageSchemaArtifacts } from "../../core/scaffold/native-schema-generator";
 import { detectFromProject, getCommands } from "../../utils/package-manager";
 import {
   BackendLanguage,
@@ -171,7 +171,7 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
       console.log("  3. Navigate to the model from the homepage menu");
     }
     if (backendLanguage !== "typescript") {
-      console.log(`  ${options.apiOnly ? "2" : "4"}. Review generated OpenAPI assets in ${functionsDir}/openapi/ and ${functionsDir}/generated/`);
+      console.log(`  ${options.apiOnly ? "2" : "4"}. Review generated OpenAPI export and native schema assets in ${functionsDir}/openapi/ and ${functionsDir}/generated/`);
     }
     console.log(
       `  ${options.apiOnly ? (backendLanguage === "typescript" ? "2" : "3") : (backendLanguage === "typescript" ? "4" : "5")}. Ensure BACKEND_FUNCTIONS_BASE_URL is set in your .env.local file`
@@ -634,216 +634,6 @@ function describeFunctionsOutputPath(functionsDir: string, backendLanguage: Back
     return `${functionsDir}/Crud/`;
   }
   return `${functionsDir}/blueprints/`;
-}
-
-async function generateLanguageSchemaArtifacts(
-  models: ModelInfo[],
-  rootModel: ModelInfo,
-  functionsDir: string,
-  backendLanguage: Exclude<BackendLanguage, "typescript">
-): Promise<void> {
-  console.log("\n🧬 Generating OpenAPI-backed schema artifacts...");
-
-  const openApiDir = path.join(process.cwd(), functionsDir, "openapi");
-  fs.mkdirSync(openApiDir, { recursive: true });
-
-  const specPath = path.join(openApiDir, `${toKebabCase(rootModel.name)}.openapi.json`);
-  fs.writeFileSync(specPath, generateOpenApiDocument(models, rootModel), "utf-8");
-  console.log(`✅ Created: ${specPath}`);
-
-  const outputDir = path.join(
-    process.cwd(),
-    functionsDir,
-    "generated",
-    backendLanguage === "csharp" ? "csharp-models" : "python-models"
-  );
-
-  fs.mkdirSync(outputDir, { recursive: true });
-  await runOpenApiGenerator(specPath, outputDir, backendLanguage);
-  if (backendLanguage === "csharp") {
-    pruneGeneratedCSharpArtifacts(outputDir);
-  }
-  console.log(`✅ Generated ${backendLanguage} schema assets: ${outputDir}`);
-}
-
-/**
- * OpenAPI Generator の実行前に Java バージョンを確認する。
- * Java 11 未満の場合は明確なエラーメッセージを表示して処理を中断する。
- */
-function checkJavaVersion(): void {
-  try {
-    const result = spawnSync("java", ["-version"], { encoding: "utf8" });
-    // java -version は stderr に出力する
-    const versionOutput = (result.stderr || "") + (result.stdout || "");
-    const versionMatch = versionOutput.match(/version "(\d+)(?:\.(\d+))?/);
-    if (!versionMatch) return;
-
-    const major = parseInt(versionMatch[1]);
-    // Java 8 以前は "1.8" 形式、Java 9 以降は "17" 形式
-    const effectiveMajor = major === 1 ? parseInt(versionMatch[2] ?? "0") : major;
-
-    if (effectiveMajor < 11) {
-      const versionStr = versionOutput.match(/version "([^"]+)"/)?.[1] ?? "unknown";
-      console.error(`\n❌ OpenAPI Generator requires Java 11 or later.`);
-      console.error(`   Detected: Java ${versionStr}`);
-      if (process.env.JAVA_HOME) {
-        console.error(`   Current JAVA_HOME: ${process.env.JAVA_HOME}`);
-      }
-      console.error(`   Please set JAVA_HOME to a Java 11+ installation and retry.`);
-      console.error(`   Example (Windows): $env:JAVA_HOME = "C:\\path\\to\\jdk-17"`);
-      process.exit(1);
-    }
-  } catch {
-    // java コマンドが見つからない場合は OpenAPI Generator 自身がエラーを出す
-  }
-}
-
-async function runOpenApiGenerator(
-  specPath: string,
-  outputDir: string,
-  backendLanguage: Exclude<BackendLanguage, "typescript">
-): Promise<void> {
-  checkJavaVersion();
-  const pm = detectFromProject();
-  const command = pm === "pnpm" ? "pnpm" : "npx";
-  const args = pm === "pnpm"
-    ? ["exec", "openapi-generator-cli", ...getOpenApiGeneratorArgs(specPath, outputDir, backendLanguage)]
-    : ["openapi-generator-cli", ...getOpenApiGeneratorArgs(specPath, outputDir, backendLanguage)];
-
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: process.cwd(),
-      shell: true,
-      stdio: getMachineAwareStdio(),
-    });
-
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-
-      reject(new Error(`OpenAPI generator exited with code ${code}`));
-    });
-
-    child.on("error", reject);
-  });
-}
-
-export function getOpenApiGeneratorArgs(
-  specPath: string,
-  outputDir: string,
-  backendLanguage: Exclude<BackendLanguage, "typescript">
-): string[] {
-  const globalProperty = backendLanguage === "csharp"
-    ? "models,apis=false,modelDocs=false,modelTests=false"
-    : "models,apis=false,supportingFiles=false,modelDocs=false,modelTests=false";
-
-  const baseArgs = [
-    "generate",
-    "-i",
-    specPath,
-    "-o",
-    outputDir,
-    "--global-property",
-    globalProperty,
-  ];
-
-  if (backendLanguage === "csharp") {
-    return [
-      ...baseArgs,
-      "-g",
-      "csharp",
-      "--additional-properties",
-      "packageName=SwallowKitBackendModels,targetFramework=net8.0,nullableReferenceTypes=true",
-    ];
-  }
-
-  return [
-    ...baseArgs,
-    "-g",
-    "python",
-    "--additional-properties",
-    "packageName=backend_models,projectName=backend-models",
-  ];
-}
-
-export function getCSharpSchemaArtifactPruneTargets(outputDir: string): string[] {
-  return [
-    path.join(outputDir, "src", "SwallowKitBackendModels.Test"),
-    path.join(outputDir, "src", "SwallowKitBackendModels", "Api"),
-    path.join(outputDir, "src", "SwallowKitBackendModels", "Extensions"),
-  ];
-}
-
-function pruneGeneratedCSharpArtifacts(outputDir: string): void {
-  for (const target of getCSharpSchemaArtifactPruneTargets(outputDir)) {
-    if (fs.existsSync(target)) {
-      fs.rmSync(target, { recursive: true, force: true });
-    }
-  }
-
-  const clientDir = path.join(outputDir, "src", "SwallowKitBackendModels", "Client");
-  if (!fs.existsSync(clientDir)) {
-    // --global-property models ではClient/が生成されないため、
-    // モデルが依存する最小限の Option<T> を自前で作成する
-    fs.mkdirSync(clientDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(clientDir, "Option.cs"),
-      generateMinimalOptionCs(),
-      "utf-8"
-    );
-    return;
-  }
-
-  for (const entry of fs.readdirSync(clientDir, { withFileTypes: true })) {
-    if (!entry.isFile() || entry.name === "Option.cs") {
-      continue;
-    }
-
-    fs.rmSync(path.join(clientDir, entry.name), { force: true });
-  }
-}
-
-/**
- * OpenAPI Generator の csharp テンプレートが生成するモデルは Option<T> に依存するが、
- * supportingFiles を除外しているため Client/Option.cs が生成されない。
- * Polly 等の不要な依存を避けつつモデルをコンパイル可能にするため、最小限の Option<T> を提供する。
- */
-function generateMinimalOptionCs(): string {
-  return `// <auto-generated>
-// Minimal Option<T> for OpenAPI Generator model compatibility.
-// Full client supporting files are excluded to avoid Polly version conflicts.
-// </auto-generated>
-
-#nullable enable
-
-namespace SwallowKitBackendModels.Client
-{
-    /// <summary>
-    /// A wrapper for nullable/optional properties generated by OpenAPI Generator.
-    /// Tracks whether a value has been explicitly set (distinguishing null from absent).
-    /// </summary>
-    public readonly struct Option<TValue>
-    {
-        /// <summary>Whether this option has been explicitly set.</summary>
-        public bool IsSet { get; }
-
-        /// <summary>The contained value (may be default if not set).</summary>
-        public TValue Value { get; }
-
-        /// <summary>Create an Option with an explicit value.</summary>
-        public Option(TValue value)
-        {
-            IsSet = true;
-            Value = value;
-        }
-
-        /// <summary>Implicit conversion from Option to its inner value.</summary>
-        public static implicit operator TValue(Option<TValue> option) => option.Value;
-    }
-}
-`;
 }
 
 function updatePythonFunctionRegistrations(functionAppPath: string, registration: string): void {

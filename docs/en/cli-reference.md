@@ -136,7 +136,7 @@ When flags are not specified, the following prompts are shown:
 ### Backend Language Notes
 
 - `typescript`: Functions consume the shared Zod package directly.
-- `csharp` / `python`: `swallowkit scaffold` exports OpenAPI into `functions/openapi/` and generates backend schema assets into `functions/generated/`.
+- `csharp` / `python`: `swallowkit scaffold` exports OpenAPI into `functions/openapi/` and generates native backend schema assets into `functions/generated/`.
 
 ### Generated Files
 
@@ -158,7 +158,7 @@ my-app/
 │   ├── src/                  # TypeScript handlers
 │   ├── Crud/                 # C# handlers
 │   ├── blueprints/           # Python handlers
-│   ├── generated/            # OpenAPI-derived schema assets for C#/Python
+│   ├── generated/            # Native-generated schema assets for C#/Python
 │   ├── openapi/              # Exported OpenAPI specs for C#/Python
 │   ├── host.json
 │   └── local.settings.json

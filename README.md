@@ -24,8 +24,8 @@ Featuring Scaffold functionality to automatically generate CRUD operations from 
 - **🔄 Zod Schema Sharing** - Keep Zod as the source of truth across frontend, BFF, Azure Functions, and Cosmos DB
 - **⚡ CRUD Code Generation** - Auto-generate Azure Functions + Next.js code with `swallowkit scaffold`
 - **🌐 Multi-language Functions Backends** - Choose TypeScript, C#, or Python for Azure Functions during `init`
-- **🧬 OpenAPI Schema Bridge** - For C#/Python backends, `scaffold` exports OpenAPI from Zod and generates backend schema assets
-- **🛡️ Contract Safety** - Keep frontend/BFF contracts aligned with backend implementations through shared Zod or generated OpenAPI-derived models
+- **🧬 OpenAPI Export + Native Codegen** - For C#/Python backends, `scaffold` exports OpenAPI from Zod and generates backend schema assets with native language tooling
+- **🛡️ Contract Safety** - Keep frontend/BFF contracts aligned with backend implementations through shared Zod or native-generated backend models
 - **🎯 BFF Pattern** - Next.js API Routes as BFF layer with auto-validation and resource inference
 - **☁️ Azure Optimized** - Minimal-cost architecture with Static Web Apps + Functions + Cosmos DB
 - **🚀 Easy Deployment** - Auto-generated Bicep IaC + CI/CD workflows
@@ -133,7 +133,7 @@ This auto-generates:
 - ✅ Next.js BFF API Routes (auto-validation + resource inference)
 - ✅ React Components (type-safe forms)
 
-If you selected `csharp` or `python` at `init` time, `swallowkit scaffold` also writes an OpenAPI document under `functions/openapi/` and generates backend schema assets under `functions/generated/`.
+If you selected `csharp` or `python` at `init` time, `swallowkit scaffold` also writes an OpenAPI document under `functions/openapi/` and generates native backend schema assets under `functions/generated/`.
 
 ### 4. Start Development Server
 
@@ -312,7 +312,7 @@ The MCP server is intentionally a thin adapter with explicit tools only. It dele
 **Key Patterns:**
 - **BFF (Backend For Frontend)**: Next.js API Routes proxy to Azure Functions
 - **Shared Schemas**: Zod schemas stay in `shared/models/` as the source of truth
-- **OpenAPI Bridge for C#/Python**: Non-TypeScript Functions consume generated assets under `functions/generated/`
+- **OpenAPI Export for C#/Python**: Non-TypeScript Functions consume native-generated assets under `functions/generated/`
 - **External Connectors**: MySQL, PostgreSQL, REST APIs — scaffold-generated Functions with the same BFF pattern
 - **Contract Safety**: BFF and backend stay aligned through shared Zod or generated backend models
 - **Managed Identity**: Secure service connections (no connection strings)

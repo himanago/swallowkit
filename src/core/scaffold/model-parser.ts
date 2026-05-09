@@ -3,11 +3,10 @@
  */
 
 import * as fs from "fs";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import * as path from "path";
 
 import { ModelConnectorConfig, ModelAuthPolicy } from "../../types";
-import { detectFromProject, getCommands } from "../../utils/package-manager";
 
 export interface ModelInfo {
   name: string; // モデル名（例: "Todo"）
@@ -377,6 +376,10 @@ function inlineLocalDeps(
   return [...transitiveParts, content.trim()].filter(Boolean).join('\n\n');
 }
 
+function resolveBundledTsxCliPath(): string {
+  return require.resolve("tsx/cli");
+}
+
 /**
  * Zodスキーマから動的にフィールド情報を抽出
  */
@@ -543,11 +546,8 @@ if (isObject) {
     fs.writeFileSync(tempScript, scriptCode, 'utf8');
     
     try {
-      // プロジェクトルートでtsxを実行 (npm/pnpm 両対応)
-      // Detect package manager from project lockfile
-      const pm = detectFromProject(projectRoot);
-      const pmCmd = getCommands(pm);
-      const result = execSync(`${pmCmd.exec} tsx "${tempScript}"`, {
+      const tsxCliPath = resolveBundledTsxCliPath();
+      const result = execFileSync(process.execPath, [tsxCliPath, tempScript], {
         encoding: 'utf8',
         cwd: projectRoot,
       });

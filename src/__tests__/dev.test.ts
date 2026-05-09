@@ -2,11 +2,15 @@ import { readFileSync } from "fs";
 import * as path from "path";
 import {
   buildFunctionsStartArgs,
+  buildFunctionsCoreToolsCommand,
   buildNextDevArgs,
   buildDevCommand,
   buildPythonFunctionsEnv,
+  compareVersionNumbers,
   DevOptions,
+  getCSharpFunctionsBuildArtifactPaths,
   getPythonVirtualEnvPaths,
+  parseCoreToolsVersion,
 } from "../cli/commands/dev";
 import { CLI_VERSION, createProgram, normalizeDevCommandArgv } from "../cli/index";
 
@@ -21,6 +25,32 @@ describe("dev command helpers", () => {
 
   it("passes the requested port to Azure Functions Core Tools", () => {
     expect(buildFunctionsStartArgs("7076")).toEqual(["start", "--port", "7076"]);
+  });
+
+  it("parses the Core Tools version from CLI output", () => {
+    expect(parseCoreToolsVersion("4.6.0+ab90faafcab539d63cd3d0ce5faf1bca4395fccc")).toBe("4.6.0");
+  });
+
+  it("compares Core Tools versions numerically", () => {
+    expect(compareVersionNumbers("4.0.5198", "4.6.0")).toBeLessThan(0);
+    expect(compareVersionNumbers("4.6.0", "4.6.0")).toBe(0);
+    expect(compareVersionNumbers("4.10.0", "4.6.0")).toBeGreaterThan(0);
+  });
+
+  it("falls back to npm Core Tools for older C# isolated hosts", () => {
+    expect(buildFunctionsCoreToolsCommand("csharp", "4.0.5198")).toEqual({
+      command: "npm",
+      argsPrefix: ["exec", "--yes", "azure-functions-core-tools@4", "--"],
+      label: "npm exec azure-functions-core-tools@4 (installed func 4.0.5198 is too old for C# isolated)",
+    });
+  });
+
+  it("keeps the installed func command for supported Core Tools versions", () => {
+    expect(buildFunctionsCoreToolsCommand("csharp", "4.6.0")).toEqual({
+      command: "func",
+      argsPrefix: [],
+      label: "func 4.6.0",
+    });
   });
 
   it("uses webpack mode for npm-based Next.js dev", () => {
@@ -38,6 +68,15 @@ describe("dev command helpers", () => {
     expect(paths.venvDir).toBe(path.join(functionsDir, ".venv"));
     expect(paths.binDir.endsWith(process.platform === "win32" ? path.join(".venv", "Scripts") : path.join(".venv", "bin"))).toBe(true);
     expect(paths.pythonExecutable.endsWith(process.platform === "win32" ? path.join("Scripts", "python.exe") : path.join("bin", "python"))).toBe(true);
+  });
+
+  it("targets C# bin and obj directories for build cleanup", () => {
+    const functionsDir = path.join("C:\\repo", "functions");
+
+    expect(getCSharpFunctionsBuildArtifactPaths(functionsDir)).toEqual([
+      path.join(functionsDir, "bin"),
+      path.join(functionsDir, "obj"),
+    ]);
   });
 
   it("injects Python virtual environment settings for Functions", () => {
@@ -153,5 +192,15 @@ describe("dev CLI parser", () => {
     expect(optionsAfterCommand).toMatchObject(expected);
     expect(optionsBeforeCommand).toMatchObject(expected);
     expect(optionsBeforeCommand).toMatchObject(optionsAfterCommand);
+  });
+
+  it("keeps Azure Functions enabled by default", async () => {
+    const options = await parseDevOptions([
+      "node",
+      "swallowkit",
+      "dev",
+    ]);
+
+    expect(options.noFunctions).toBe(false);
   });
 });
