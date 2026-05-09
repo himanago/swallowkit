@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { execSync } from "child_process";
+import { readFileSync } from "fs";
+import * as path from "path";
 import { Command } from "commander";
 import { initCommand, devCommand, devSeedsCommand, scaffoldCommand, createModelCommand } from "./commands";
 import { provisionCommand } from "./commands/provision";
@@ -8,7 +10,8 @@ import { addConnectorCommand } from "./commands/add-connector";
 import { addAuthCommand } from "./commands/add-auth";
 import { isMachineCommand, runMachineCli } from "../machine";
 
-export const CLI_VERSION = require("../../package.json").version as string;
+const packageJsonPath = path.resolve(__dirname, "../../package.json");
+export const CLI_VERSION = JSON.parse(readFileSync(packageJsonPath, "utf8")).version as string;
 
 const DEV_OPTION_ARITY = new Map<string, 0 | 1>([
   ["-p", 1],

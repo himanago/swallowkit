@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import * as path from "path";
 import {
   buildFunctionsStartArgs,
@@ -9,7 +10,9 @@ import {
 } from "../cli/commands/dev";
 import { CLI_VERSION, createProgram, normalizeDevCommandArgv } from "../cli/index";
 
-const { version: packageVersion } = require("../../package.json");
+const packageVersion = JSON.parse(
+  readFileSync(path.resolve(__dirname, "../../package.json"), "utf8")
+).version as string;
 
 describe("dev command helpers", () => {
   it("keeps the CLI version in sync with package.json", () => {
