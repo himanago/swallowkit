@@ -23,6 +23,7 @@ import {
   generateAuthContext,
   generateBFFCallFunctionWithAuth,
 } from "../../core/scaffold/auth-generator";
+import { syncProjectManifest } from "../../core/project/manifest";
 
 interface AddAuthOptions {
   provider?: string;
@@ -132,6 +133,7 @@ export async function addAuthCommand(options: AddAuthOptions) {
   // 10. Install dependencies
   console.log("\n Installing auth dependencies...");
   await installAuthDependencies(cwd, backendLanguage, rdbProvider);
+  await syncProjectManifest();
 
   console.log("\n Authentication setup complete!");
   console.log("\n Next steps:");

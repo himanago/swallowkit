@@ -53,6 +53,7 @@ export default defineConfig({
       themeConfig: {
         nav: [
           { text: 'Guide', link: '/en/scaffold-guide' },
+          { text: 'AI / MCP', link: '/en/ai-mcp-guide' },
           { text: 'CLI Reference', link: '/en/cli-reference' },
           { text: 'Deployment', link: '/en/deployment-guide' },
           {
@@ -83,6 +84,10 @@ export default defineConfig({
                   text: 'Authentication Guide',
                   link: '/en/auth-guide',
                 },
+                {
+                  text: 'AI / MCP Guide',
+                  link: '/en/ai-mcp-guide',
+                },
               ],
             },
             {
@@ -105,6 +110,7 @@ export default defineConfig({
       themeConfig: {
         nav: [
           { text: 'ガイド', link: '/ja/scaffold-guide' },
+          { text: 'AI / MCP', link: '/ja/ai-mcp-guide' },
           { text: 'CLI リファレンス', link: '/ja/cli-reference' },
           { text: 'デプロイ', link: '/ja/deployment-guide' },
           {
@@ -134,6 +140,10 @@ export default defineConfig({
                 {
                   text: '認証ガイド',
                   link: '/ja/auth-guide',
+                },
+                {
+                  text: 'AI / MCP ガイド',
+                  link: '/ja/ai-mcp-guide',
                 },
               ],
             },

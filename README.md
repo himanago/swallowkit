@@ -30,6 +30,7 @@ Featuring Scaffold functionality to automatically generate CRUD operations from 
 - **☁️ Azure Optimized** - Minimal-cost architecture with Static Web Apps + Functions + Cosmos DB
 - **🚀 Easy Deployment** - Auto-generated Bicep IaC + CI/CD workflows
 - **🤖 AI-Friendly** - Auto-generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) and layer-specific rules help GitHub Copilot, Claude Code, and OpenAI Codex follow project conventions
+- **🧠 MCP + Machine Interface** - `swallowkit machine ...` exposes deterministic JSON inspection / validation / generation commands, and `swallowkit-mcp` exposes the same capabilities over MCP stdio
 - **🔌 External Data Connectors** - Integrate MySQL, PostgreSQL, REST APIs, and other external data sources alongside Cosmos DB — same Zod-driven scaffold workflow with full type safety
 - **🔐 Authentication & Authorization** - Built-in support for custom JWT auth (with external RDB user stores) and role-based access control per model — with planned Static Web Apps auth integration
 - **🧩 [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)** - GUI wizard for init/scaffold/dev, right-click model scaffolding, dev server status bar, and TypeScript snippets
@@ -243,6 +244,37 @@ npx swallowkit dev --mock-connectors
 ```
 
 The frontend and BFF layer are completely transparent to data source differences — `callFunction()` works identically for Cosmos DB and connector models. See the **[Connector Guide](https://himanago.github.io/swallowkit/en/connector-guide)** for details.
+
+## 🤖 AI / MCP Integration
+
+SwallowKit provides a machine-readable CLI surface for coding agents and MCP adapters. Instead of letting AI guess raw filesystem changes, it can go through SwallowKit's official generators, inspectors, and validators.
+
+```bash
+# Inspect framework-owned project metadata
+npx swallowkit machine inspect project
+
+# Validate SwallowKit conventions and generated artifacts
+npx swallowkit machine validate project
+
+# Generate through the official machine interface
+npx swallowkit machine generate model todo --overwrite never
+npx swallowkit machine generate scaffold todo --api-only
+```
+
+`swallowkit machine` is:
+
+- non-interactive
+- deterministic
+- JSON-only on stdout
+- structured on success and failure
+
+For MCP clients, use the bundled stdio server:
+
+```bash
+npx swallowkit-mcp
+```
+
+The MCP server is intentionally a thin adapter with explicit tools only. It delegates real work to the machine CLI.
 
 ## 🏗️ Architecture
 

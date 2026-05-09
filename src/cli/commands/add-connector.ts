@@ -7,6 +7,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { ensureSwallowKitProject } from "../../core/config";
 import { ApiConnectorConfig, ConnectorDefinition } from "../../types";
+import { syncProjectManifest } from "../../core/project/manifest";
 
 interface AddConnectorOptions {
   name: string;
@@ -33,6 +34,7 @@ export async function addConnectorCommand(options: AddConnectorOptions) {
 
   // Update config file
   updateConfigWithConnector(configPath, options.name, connectorDef);
+  await syncProjectManifest();
 
   console.log(`\n✅ Connector '${options.name}' added successfully!`);
   console.log("\n📝 Next steps:");

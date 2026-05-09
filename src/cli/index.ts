@@ -6,6 +6,7 @@ import { initCommand, devCommand, devSeedsCommand, scaffoldCommand, createModelC
 import { provisionCommand } from "./commands/provision";
 import { addConnectorCommand } from "./commands/add-connector";
 import { addAuthCommand } from "./commands/add-auth";
+import { isMachineCommand, runMachineCli } from "../machine";
 
 const DEV_OPTION_ARITY = new Map<string, 0 | 1>([
   ["-p", 1],
@@ -174,6 +175,11 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
 
 export async function runCli(argv: string[] = process.argv): Promise<void> {
   ensureUtf8ConsoleOnWindows();
+  if (isMachineCommand(argv)) {
+    await runMachineCli(argv);
+    return;
+  }
+
   await createProgram().parseAsync(normalizeDevCommandArgv(argv));
 }
 

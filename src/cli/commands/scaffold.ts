@@ -41,12 +41,33 @@ import {
   ModelAuthPolicy,
   AuthConfig,
 } from "../../types";
+import { syncProjectManifest } from "../../core/project/manifest";
 
 interface ScaffoldOptions {
   model: string; // モデルファイルのパス（例: "lib/models/todo.ts" or "todo"）
   functionsDir?: string; // Azure Functions のディレクトリ（デフォルト: "functions"）
   apiDir?: string; // Next.js API routes のディレクトリ（デフォルト: "app/api"）
   apiOnly?: boolean; // true の場合、UI を生成しない（デフォルト: false）
+}
+
+function getMachineAwareStdio(): "inherit" | "pipe" {
+  return process.env.SWALLOWKIT_MACHINE_OUTPUT === "1" ? "pipe" : "inherit";
+}
+
+function runSpawnSyncCommand(command: string, args: string[], cwd: string): void {
+  const result = spawnSync(command, args, {
+    cwd,
+    stdio: getMachineAwareStdio(),
+    shell: true,
+  });
+
+  if (typeof result.status === "number" && result.status !== 0) {
+    throw new Error(`${command} ${args.join(" ")} exited with code ${result.status}`);
+  }
+
+  if (result.error) {
+    throw result.error;
+  }
 }
 
 export async function scaffoldCommand(options: ScaffoldOptions) {
@@ -139,6 +160,8 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
       await generateUIComponents(modelInfo, sharedPackageName, uiAuthOptions);
       await updateNavigationMenu(modelInfo);
     }
+
+    await syncProjectManifest();
 
     console.log("\n✅ Scaffold completed successfully!");
     console.log("\n📝 Next steps:");
@@ -508,14 +531,10 @@ async function installConnectorDriverDependencies(
     const cmds = getCommands(pm);
 
     if (entry.deps.length > 0) {
-      spawnSync(cmds.name, [pm === "pnpm" ? "add" : "install", ...entry.deps], {
-        cwd: functionsPath, stdio: "inherit", shell: true,
-      });
+      runSpawnSyncCommand(cmds.name, [pm === "pnpm" ? "add" : "install", ...entry.deps], functionsPath);
     }
     if (entry.devDeps.length > 0) {
-      spawnSync(cmds.name, [pm === "pnpm" ? "add" : "install", "-D", ...entry.devDeps], {
-        cwd: functionsPath, stdio: "inherit", shell: true,
-      });
+      runSpawnSyncCommand(cmds.name, [pm === "pnpm" ? "add" : "install", "-D", ...entry.devDeps], functionsPath);
     }
     console.log(`✅ ${rdbDef.provider} driver installed`);
     return;
@@ -530,9 +549,7 @@ async function installConnectorDriverDependencies(
     const pkg = nugetMap[rdbDef.provider];
     if (!pkg) return;
     console.log(`\n📦 Installing ${rdbDef.provider} NuGet package...`);
-    spawnSync("dotnet", ["add", path.join(functionsPath, "functions.csproj"), "package", pkg], {
-      cwd: functionsPath, stdio: "inherit", shell: true,
-    });
+    runSpawnSyncCommand("dotnet", ["add", path.join(functionsPath, "functions.csproj"), "package", pkg], functionsPath);
     console.log(`✅ ${pkg} installed`);
     return;
   }
@@ -697,7 +714,7 @@ async function runOpenApiGenerator(
     const child = spawn(command, args, {
       cwd: process.cwd(),
       shell: true,
-      stdio: "inherit",
+      stdio: getMachineAwareStdio(),
     });
 
     child.on("close", (code) => {

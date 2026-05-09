@@ -1,94 +1,11 @@
-/**
- * SwallowKit Create-Model コマンド
- * Zod モデルの雛形を生成
- */
-
-import * as fs from "fs";
-import * as path from "path";
 import * as readline from "readline";
-import { toPascalCase } from "../../core/scaffold/model-parser";
-import { ensureSwallowKitProject, loadConfig } from "../../core/config";
+import { createModelOperation } from "../../core/operations/create-model";
 import { detectFromProject, getCommands } from "../../utils/package-manager";
 
 interface CreateModelOptions {
   names: string[]; // モデル名のリスト（例: ["todo", "user", "post"]）
   modelsDir?: string; // モデルディレクトリ（デフォルト: "shared/models"）
   connector?: string; // コネクタ名（例: "mysql", "backlog"）
-}
-
-/**
- * モデルテンプレートを生成
- */
-function generateModelTemplate(modelName: string): string {
-  const pascalName = toPascalCase(modelName);
-  
-  return `import { z } from 'zod/v4';
-
-// ${pascalName} model (Zod official pattern: same name for value and type)
-export const ${pascalName} = z.object({
-  id: z.string(),
-  name: z.string().min(1),
-  createdAt: z.string().optional(),
-  updatedAt: z.string().optional(),
-});
-
-export type ${pascalName} = z.infer<typeof ${pascalName}>;
-
-// Display name for UI
-export const displayName = '${pascalName}';
-`;
-}
-
-/**
- * コネクタ付きモデルテンプレートを生成
- */
-function generateConnectorModelTemplate(modelName: string, connectorName: string, connectorType: 'rdb' | 'api'): string {
-  const pascalName = toPascalCase(modelName);
-  const kebabName = modelName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  const pluralName = kebabName.endsWith('s') ? kebabName : kebabName + 's';
-
-  const schema = `import { z } from 'zod/v4';
-
-// ${pascalName} model (Zod official pattern: same name for value and type)
-export const ${pascalName} = z.object({
-  id: z.string(),
-  name: z.string().min(1),
-  createdAt: z.string().optional(),
-  updatedAt: z.string().optional(),
-});
-
-export type ${pascalName} = z.infer<typeof ${pascalName}>;
-
-// Display name for UI
-export const displayName = '${pascalName}';
-`;
-
-  if (connectorType === 'rdb') {
-    return schema + `
-// SwallowKit Connector Metadata
-export const connectorConfig = {
-  connector: '${connectorName}',
-  operations: ['getAll', 'getById'] as const,
-  table: '${pluralName}',
-  idColumn: 'id',
-};
-`;
-  }
-
-  // API connector
-  return schema + `
-// SwallowKit Connector Metadata
-export const connectorConfig = {
-  connector: '${connectorName}',
-  operations: ['getAll', 'getById', 'create', 'update'] as const,
-  endpoints: {
-    getAll: 'GET /${pluralName}',
-    getById: 'GET /${pluralName}/{id}',
-    create: 'POST /${pluralName}',
-    update: 'PATCH /${pluralName}/{id}',
-  },
-};
-`;
 }
 
 /**
@@ -112,100 +29,34 @@ function askConfirmation(question: string): Promise<boolean> {
  * create-model コマンド
  */
 export async function createModelCommand(options: CreateModelOptions) {
-  // SwallowKit プロジェクトディレクトリかどうかを検証
-  ensureSwallowKitProject("create-model");
-
   console.log("🏗️  SwallowKit Create-Model: Generating model templates...\n");
 
-  // コネクタ指定時はコネクタの存在を検証
-  let connectorType: 'rdb' | 'api' | undefined;
-  if (options.connector) {
-    const config = loadConfig();
-    const connectorDef = config.connectors?.[options.connector];
-    if (!connectorDef) {
-      console.error(`❌ Connector '${options.connector}' not found in swallowkit.config.js.`);
-      console.error(`   Available connectors: ${Object.keys(config.connectors || {}).join(', ') || '(none)'}`);
-      console.error(`   Run 'swallowkit add-connector ${options.connector} --type=<rdb|api>' first.`);
-      process.exit(1);
-    }
-    connectorType = connectorDef.type;
-    console.log(`🔌 Using connector: ${options.connector} (${connectorType})\n`);
-  }
-
-  const modelsDir = options.modelsDir || "shared/models";
-  
-  // shared/models ディレクトリが存在しなければ作成
-  if (!fs.existsSync(modelsDir)) {
-    console.log(`📁 Creating directory: ${modelsDir}`);
-    fs.mkdirSync(modelsDir, { recursive: true });
-  }
-
-  const created: string[] = [];
-  const skipped: string[] = [];
-
-  for (const name of options.names) {
-    const kebabName = name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const filePath = path.join(modelsDir, `${kebabName}.ts`);
-    const pascalName = toPascalCase(name);
-
-    // 既存ファイルチェック
-    if (fs.existsSync(filePath)) {
-      const shouldOverwrite = await askConfirmation(
-        `⚠️  File ${filePath} already exists. Overwrite? (y/N): `
-      );
-      
-      if (!shouldOverwrite) {
-        console.log(`⏭️  Skipped: ${kebabName}.ts`);
-        skipped.push(kebabName);
-        continue;
-      }
-    }
-
-    // モデルファイルを生成
-    const content = options.connector && connectorType
-      ? generateConnectorModelTemplate(name, options.connector, connectorType)
-      : generateModelTemplate(name);
-    fs.writeFileSync(filePath, content);
-    console.log(`✅ Created: ${filePath}`);
-    created.push(kebabName);
-
-    // shared/index.ts に re-export を追加
-    updateSharedIndex(kebabName, pascalName);
-  }
+  const result = await createModelOperation({
+    names: options.names,
+    modelsDir: options.modelsDir,
+    connector: options.connector,
+    overwriteMode: "prompt",
+    confirmOverwrite: async (filePath) => askConfirmation(`⚠️  File ${filePath} already exists. Overwrite? (y/N): `),
+  });
 
   // サマリー表示
   console.log("\n📋 Summary:");
-  if (created.length > 0) {
-    console.log(`  ✅ Created ${created.length} model(s): ${created.join(', ')}.ts`);
+  if (result.connectorType && options.connector) {
+    console.log(`  🔌 Connector: ${options.connector} (${result.connectorType})`);
   }
-  if (skipped.length > 0) {
-    console.log(`  ⏭️  Skipped ${skipped.length} model(s): ${skipped.join(', ')}.ts`);
+  if (result.createdFiles.length > 0) {
+    console.log(`  ✅ Created ${result.createdFiles.length} model(s): ${result.createdFiles.join(", ")}`);
+  }
+  if (result.skippedFiles.length > 0) {
+    console.log(`  ⏭️  Skipped ${result.skippedFiles.length} model(s): ${result.skippedFiles.join(", ")}`);
+  }
+  if (result.updatedIndex) {
+    console.log("  📦 Updated shared/index.ts");
   }
 
-  if (created.length > 0) {
+  if (result.createdFiles.length > 0) {
     console.log("\n📝 Next steps:");
     console.log("  1. Customize the generated model fields in shared/models/");
     console.log(`  2. Run '${getCommands(detectFromProject()).dlx} swallowkit scaffold <model>' to generate CRUD code`);
   }
-}
-
-/**
- * shared/index.ts に re-export エントリを追加
- */
-function updateSharedIndex(kebabName: string, pascalName: string): void {
-  const indexPath = path.join("shared", "index.ts");
-  
-  if (!fs.existsSync(indexPath)) {
-    return;
-  }
-  
-  const content = fs.readFileSync(indexPath, "utf-8");
-  const exportLine = `export { ${pascalName} } from './models/${kebabName}';`;
-  
-  // 既に存在する場合はスキップ
-  if (content.includes(exportLine)) {
-    return;
-  }
-  
-  fs.appendFileSync(indexPath, exportLine + "\n");
 }

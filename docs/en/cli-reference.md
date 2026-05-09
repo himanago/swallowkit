@@ -5,6 +5,8 @@ Comprehensive reference for all SwallowKit CLI commands and options.
 ## Table of Contents
 
 - [swallowkit init](#swallowkit-init)
+- [swallowkit machine](#swallowkit-machine)
+- [swallowkit-mcp](#swallowkit-mcp)
 - [swallowkit create-model](#swallowkit-create-model)
 - [swallowkit add-connector](#swallowkit-add-connector)
 - [swallowkit add-auth](#swallowkit-add-auth)
@@ -12,6 +14,66 @@ Comprehensive reference for all SwallowKit CLI commands and options.
 - [swallowkit scaffold](#swallowkit-scaffold)
 - [swallowkit create-dev-seeds](#swallowkit-create-dev-seeds)
 - [swallowkit provision](#swallowkit-provision)
+
+## swallowkit machine
+
+Machine-readable command group for AI / MCP integrations.
+
+### Usage
+
+```bash
+npx swallowkit machine <command> <subcommand> [options]
+```
+
+### Available commands
+
+| Command | Purpose |
+|---------|---------|
+| `inspect project` | Return framework-owned project metadata |
+| `inspect entities` | Return entity and schema metadata |
+| `inspect routes` | Return BFF / Functions route metadata |
+| `validate project` | Return structured validation violations |
+| `generate model` | Run `create-model` in non-interactive JSON mode |
+| `generate scaffold` | Run `scaffold` in non-interactive JSON mode |
+
+### Examples
+
+```bash
+npx swallowkit machine inspect project
+npx swallowkit machine validate project
+npx swallowkit machine generate model todo --overwrite never
+npx swallowkit machine generate scaffold todo --api-only
+```
+
+### Output contract
+
+- stdout is always a single JSON document
+- commands are non-interactive
+- success and failure are both structured
+- `generate model` requires an explicit overwrite policy (`always` or `never`)
+
+See the [AI / MCP Guide](./ai-mcp-guide.md) for architecture details and response examples.
+
+## swallowkit-mcp
+
+Bundled MCP stdio server for AI coding agents.
+
+### Usage
+
+```bash
+npx swallowkit-mcp
+```
+
+### Exposed MCP tools
+
+- `swallowkit_inspect_project`
+- `swallowkit_inspect_entities`
+- `swallowkit_inspect_routes`
+- `swallowkit_validate_project`
+- `swallowkit_generate_model`
+- `swallowkit_scaffold_model`
+
+The MCP server is a thin adapter over `swallowkit machine ...` and does not introduce framework logic of its own.
 
 ## swallowkit init
 

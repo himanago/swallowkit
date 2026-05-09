@@ -14,6 +14,7 @@ import {
   getFunctionsPrestart,
   getFunctionsStartScript,
 } from "../../utils/package-manager";
+import { syncProjectManifest } from "../../core/project/manifest";
 
 interface InitOptions {
   name: string;
@@ -196,6 +197,8 @@ export async function initCommand(options: InitOptions) {
     } else if (cicdProvider === 'azure') {
       await createAzurePipelines(projectDir, pm, backendLanguage);
     }
+
+    await syncProjectManifest(projectDir);
 
     // Initialize Git repository and create initial commit
     try {

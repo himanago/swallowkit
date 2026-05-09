@@ -43,7 +43,7 @@ features:
     details: Provision Azure resources with Bicep IaC and get auto-generated GitHub Actions or Azure Pipelines CI/CD workflows in one command.
   - icon: 🤖
     title: AI-Friendly
-    details: Auto-generated instruction files (<code>AGENTS.md</code>, <code>CLAUDE.md</code>, <code>.github/copilot-instructions.md</code>) and layer-specific rules help GitHub Copilot, Claude Code, and OpenAI Codex follow project conventions.
+    details: Auto-generated instruction files plus the machine-readable <code>swallowkit machine</code> interface and bundled <code>swallowkit-mcp</code> server help coding agents follow project conventions through official generators, inspectors, and validators.
   - icon: 🔌
     title: External Data Connectors
     details: Connect to MySQL, PostgreSQL, REST APIs, and other external data sources alongside Cosmos DB — with the same Zod-driven scaffold workflow and full type safety.

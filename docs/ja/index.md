@@ -43,7 +43,7 @@ features:
     details: Bicep IaC で Azure リソースをプロビジョニングし、GitHub Actions または Azure Pipelines の CI/CD ワークフローを自動生成。
   - icon: 🤖
     title: AI フレンドリー
-    details: 自動生成される指示ファイル（<code>AGENTS.md</code>、<code>CLAUDE.md</code>、<code>.github/copilot-instructions.md</code>）とレイヤー別ルールにより、GitHub Copilot・Claude Code・OpenAI Codex がプロジェクトのアーキテクチャと規約に従ってコードを生成・修正。
+    details: 自動生成される指示ファイルに加え、machine-readable な <code>swallowkit machine</code> と同梱の <code>swallowkit-mcp</code> により、コーディングエージェントが正式な generator / inspector / validator を経由して安全に操作できます。
   - icon: 🔌
     title: 外部データコネクタ
     details: MySQL・PostgreSQL・REST API などの外部データソースを Cosmos DB と並行して統合。同じ Zod 駆動の scaffold ワークフローと完全な型安全性を維持。
