@@ -118,6 +118,31 @@ The server exposes explicit tools only:
 
 The MCP layer does not implement framework logic on its own. It delegates each tool call to the machine CLI.
 
+## Generated Project Bootstrap
+
+`swallowkit init` now writes a project-scoped `.mcp.json` file at the repository root. It launches the bundled SwallowKit MCP server through `npx` and is designed for agent runtimes that support repository-level MCP discovery.
+
+Example shape:
+
+```json
+{
+  "mcpServers": {
+    "swallowkit": {
+      "command": "npx",
+      "args": ["-y", "--package", "swallowkit@<generated-version>", "swallowkit-mcp"]
+    }
+  }
+}
+```
+
+Practical behavior:
+
+- **Claude Code** can load project-scoped MCP servers from `.mcp.json`
+- **GitHub Copilot** auto-loads the generated instruction files, and Copilot CLI users can register the same launcher manually via `/mcp` when they want MCP tools in the terminal
+- **Other agents / Codex-style runtimes** can reuse the same launcher when their MCP client supports project-level config; otherwise they should use the machine CLI fallback
+
+The generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) explicitly tell agents to prefer MCP tools when available and fall back to `swallowkit machine ...` when they are not.
+
 ## Recommended Usage
 
 - Use **inspect** first to understand the SwallowKit project structure

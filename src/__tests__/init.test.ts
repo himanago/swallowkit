@@ -1,5 +1,6 @@
 import {
   buildGeneratedProjectDependencies,
+  buildSwallowKitMcpProjectConfigSource,
   buildCSharpFunctionsProgramSource,
   buildCSharpFunctionsProjectSource,
   buildSwallowKitConfigSource,
@@ -76,5 +77,25 @@ module.exports = nextConfig;
       "@sample-app/shared": "*",
     });
     expect(dependencies).not.toHaveProperty("swallowkit");
+  });
+
+  it("builds a project-scoped MCP config that launches swallowkit-mcp via npx", () => {
+    const source = buildSwallowKitMcpProjectConfigSource();
+    const parsed = JSON.parse(source) as {
+      mcpServers: {
+        swallowkit: {
+          command: string;
+          args: string[];
+        };
+      };
+    };
+
+    expect(parsed.mcpServers.swallowkit.command).toBe("npx");
+    expect(parsed.mcpServers.swallowkit.args).toEqual([
+      "-y",
+      "--package",
+      expect.stringMatching(/^swallowkit(?:@.+)?$/),
+      "swallowkit-mcp",
+    ]);
   });
 });

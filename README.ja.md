@@ -222,6 +222,10 @@ MCP client からは、同梱の stdio server を利用できます:
 npx swallowkit-mcp
 ```
 
+`swallowkit init` で生成されるプロジェクトには、project-scoped な `.mcp.json` bootstrap も含まれるようになりました。repository の MCP 自動検出に対応した agent runtime では、project root から同じ `swallowkit_*` Tool をそのまま使えます。
+
+project MCP 設定を自動読込しない runtime でも、生成される instruction files が `swallowkit machine ...` の利用に誘導し、必要なら同じ launcher を手動登録できます。
+
 MCP server は explicit な Tool だけを公開する薄い adapter で、実処理は machine CLI に委譲します。
 
 ## 🏗️ アーキテクチャ

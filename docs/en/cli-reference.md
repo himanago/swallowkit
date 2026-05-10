@@ -183,14 +183,15 @@ my-app/
 ├── next.config.js
 ├── swallowkit.config.js
 ├── staticwebapp.config.json
+├── .mcp.json                # Project-scoped MCP bootstrap for supported agents
 ├── AGENTS.md                 # Coding agent instructions (Codex)
 ├── CLAUDE.md                 # Claude Code instructions
 └── package.json
 ```
 
-### AI Agent Instruction Files
+### AI Agent Bootstrap Files
 
-The `init` command automatically generates instruction files for multiple AI coding agents. These files help AI agents (GitHub Copilot, Claude Code, OpenAI Codex, etc.) follow the project's architecture and conventions when generating or modifying code.
+The `init` command automatically generates instruction files for multiple AI coding agents, plus a project-scoped MCP bootstrap for runtimes that support repository MCP discovery. Together, these files help AI agents (GitHub Copilot, Claude Code, OpenAI Codex, etc.) follow the project's architecture and conventions when generating or modifying code.
 
 #### Generated Files
 
@@ -198,6 +199,7 @@ The `init` command automatically generates instruction files for multiple AI cod
 |------|-------------|-------------|
 | `AGENTS.md` | OpenAI Codex / generic agents | Full architecture spec, conventions, naming rules, CLI skills |
 | `CLAUDE.md` | Claude Code | Quick reference + CLI commands (references `AGENTS.md` for full spec) |
+| `.mcp.json` | Claude Code / project MCP runtimes | Project-scoped launcher for the bundled `swallowkit-mcp` server |
 | `.github/copilot-instructions.md` | GitHub Copilot | Summary of key rules (auto-loaded by Copilot) |
 | `.github/instructions/shared-models.instructions.md` | GitHub Copilot | Layer-specific rules for `shared/models/**` |
 | `.github/instructions/bff-routes.instructions.md` | GitHub Copilot | Layer-specific rules for `app/api/**` |
@@ -243,8 +245,27 @@ my-app/
 ├── infra/                 # Bicep infrastructure-as-code files
 │   ├── main.bicep
 │   └── modules/
+├── .mcp.json              # Project-scoped MCP server bootstrap for supported runtimes
 └── .github/workflows/     # CI/CD workflows (if configured)
 ```
+
+## SwallowKit MCP / Machine Workflow
+<!-- SwallowKit MCP / Machine ワークフロー -->
+
+- This repository includes a project-scoped `.mcp.json` file that starts the bundled SwallowKit MCP server on runtimes that auto-load project MCP configurations.
+- Prefer the `swallowkit_*` MCP tools for framework-owned inspection, validation, and generation when they are available.
+- If MCP is unavailable in your runtime, fall back to the machine CLI:
+  - `npx swallowkit machine inspect project`
+  - `npx swallowkit machine validate project`
+  - `npx swallowkit machine generate scaffold <name> --api-only`
+- Do not hand-edit framework-owned artifacts when the MCP or machine interface can generate or validate them for you.
+
+<!--
+- このリポジトリには、project-scoped な `.mcp.json` が含まれており、project MCP 設定を自動読込する runtime では同梱の SwallowKit MCP server を起動できます。
+- framework 管理の inspect / validate / generate では、利用可能なら `swallowkit_*` MCP Tool を優先してください。
+- runtime で MCP が使えない場合は、machine CLI にフォールバックしてください。
+- MCP または machine interface で生成・検証できる framework 管理 artifact を手編集してはいけません。
+-->
 
 ## Critical Design Principles
 
@@ -456,6 +477,12 @@ architecture, conventions, and rules.
 - **Backend rule**: All business logic and Cosmos DB access lives in
   `functions/src/`.
 
+## SwallowKit MCP
+
+- This repository includes a project-scoped `.mcp.json` that registers the SwallowKit MCP server for runtimes that support project MCP files.
+- When the `swallowkit_*` tools are available, prefer them for inspect / validate / generate tasks.
+- If MCP is unavailable, use `npx swallowkit machine ...` instead.
+
 ## SwallowKit CLI Commands
 
 | Task | Command |
@@ -475,7 +502,7 @@ architecture, conventions, and rules.
 
 #### .github/copilot-instructions.md (GitHub Copilot)
 
-This file is automatically loaded by GitHub Copilot in VS Code. It contains a summary of the architecture, key rules, naming conventions, and managed fields.
+This file is automatically loaded by GitHub Copilot in VS Code. It contains a summary of the architecture, key rules, naming conventions, managed fields, and the MCP / machine-interface fallback path for framework-owned operations.
 
 #### .github/instructions/*.instructions.md (GitHub Copilot — Layer-Specific)
 

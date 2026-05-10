@@ -183,14 +183,15 @@ my-app/
 ├── next.config.js
 ├── swallowkit.config.js
 ├── staticwebapp.config.json
+├── .mcp.json                # 対応エージェント向け project-scoped MCP bootstrap
 ├── AGENTS.md                 # コーディングエージェント向け指示書 (Codex)
 ├── CLAUDE.md                 # Claude Code 向け指示書
 └── package.json
 ```
 
-### AI エージェント指示ファイル
+### AI エージェント bootstrap / 指示ファイル
 
-`init` コマンドは、複数の AI コーディングエージェント向けの指示ファイルを自動生成します。これらのファイルにより、AI エージェント（GitHub Copilot、Claude Code、OpenAI Codex など）がコードを生成・修正する際に、プロジェクトのアーキテクチャと規約に従います。
+`init` コマンドは、複数の AI コーディングエージェント向けの指示ファイルに加え、repository MCP 自動検出に対応した runtime 向けの project-scoped MCP bootstrap も自動生成します。これらにより、AI エージェント（GitHub Copilot、Claude Code、OpenAI Codex など）がコードを生成・修正する際に、プロジェクトのアーキテクチャと規約に従います。
 
 #### 生成されるファイル一覧
 
@@ -198,6 +199,7 @@ my-app/
 |---------|----------------|------|
 | `AGENTS.md` | OpenAI Codex / 汎用エージェント | アーキテクチャ全体仕様、規約、命名規則、CLI スキル |
 | `CLAUDE.md` | Claude Code | クイックリファレンス + CLI コマンド（詳細は `AGENTS.md` を参照） |
+| `.mcp.json` | Claude Code / project MCP runtime | 同梱 `swallowkit-mcp` server の project-scoped launcher |
 | `.github/copilot-instructions.md` | GitHub Copilot | 主要ルールのサマリー（Copilot が自動読み込み） |
 | `.github/instructions/shared-models.instructions.md` | GitHub Copilot | `shared/models/**` 向けレイヤー別ルール |
 | `.github/instructions/bff-routes.instructions.md` | GitHub Copilot | `app/api/**` 向けレイヤー別ルール |
@@ -249,8 +251,19 @@ my-app/
 ├── infra/                 # Bicep infrastructure-as-code files
 │   ├── main.bicep
 │   └── modules/
+├── .mcp.json              # project-scoped MCP server bootstrap for supported runtimes
 └── .github/workflows/     # CI/CD workflows (if configured)
 ```
+
+## SwallowKit MCP / Machine Workflow
+
+- This repository includes a project-scoped `.mcp.json` file that starts the bundled SwallowKit MCP server on runtimes that auto-load project MCP configurations.
+- Prefer the `swallowkit_*` MCP tools for framework-owned inspection, validation, and generation when they are available.
+- If MCP is unavailable in your runtime, fall back to the machine CLI:
+  - `npx swallowkit machine inspect project`
+  - `npx swallowkit machine validate project`
+  - `npx swallowkit machine generate scaffold <name> --api-only`
+- Do not hand-edit framework-owned artifacts when the MCP or machine interface can generate or validate them for you.
 
 ## Critical Design Principles
 <!-- 重要な設計原則 -->
@@ -571,6 +584,12 @@ architecture, conventions, and rules.
 - **バックエンドルール**: すべてのビジネスロジックと Cosmos DB アクセスは `functions/src/` に配置。
 -->
 
+## SwallowKit MCP
+
+- This repository includes a project-scoped `.mcp.json` that registers the SwallowKit MCP server for runtimes that support project MCP files.
+- When the `swallowkit_*` tools are available, prefer them for inspect / validate / generate tasks.
+- If MCP is unavailable, use `npx swallowkit machine ...` instead.
+
 ## SwallowKit CLI Commands
 <!-- SwallowKit CLI コマンド -->
 
@@ -592,7 +611,7 @@ architecture, conventions, and rules.
 
 #### .github/copilot-instructions.md（GitHub Copilot 向け）
 
-このファイルは VS Code で GitHub Copilot が自動的に読み込みます。アーキテクチャの概要、主要ルール、命名規則、管理フィールドのサマリーを含みます。
+このファイルは VS Code で GitHub Copilot が自動的に読み込みます。アーキテクチャの概要、主要ルール、命名規則、管理フィールドのサマリーに加え、framework 管理操作で使う MCP / machine-interface fallback も含みます。
 
 #### .github/instructions/*.instructions.md（GitHub Copilot — レイヤー別）
 

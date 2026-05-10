@@ -118,6 +118,31 @@ npx swallowkit-mcp
 
 MCP 層は framework ロジックを持たず、各 Tool 呼び出しを machine CLI に委譲します。
 
+## 生成プロジェクトでの bootstrap
+
+`swallowkit init` は、repository root に project-scoped な `.mcp.json` も出力するようになりました。これは `npx` 経由で同梱の SwallowKit MCP server を起動する設定で、repository-level の MCP 自動検出に対応した agent runtime を想定しています。
+
+例:
+
+```json
+{
+  "mcpServers": {
+    "swallowkit": {
+      "command": "npx",
+      "args": ["-y", "--package", "swallowkit@<generated-version>", "swallowkit-mcp"]
+    }
+  }
+}
+```
+
+実際の挙動:
+
+- **Claude Code** は `.mcp.json` の project-scoped MCP server を読み込めます
+- **GitHub Copilot** は生成された instruction files を自動読込し、Copilot CLI で terminal から MCP Tool を使いたい場合は `/mcp` で同じ launcher を手動登録できます
+- **その他の agent / Codex 系 runtime** も、project-level config をサポートしていれば同じ launcher を再利用でき、未対応なら machine CLI fallback を使います
+
+生成される instruction files（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）は、MCP Tool が使えるときはそれを優先し、使えないときは `swallowkit machine ...` にフォールバックするよう案内します。
+
 ## 推奨フロー
 
 - まず **inspect** で SwallowKit が理解している project structure を取得する
