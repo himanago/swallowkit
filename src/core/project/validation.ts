@@ -30,6 +30,10 @@ function pushViolation(
   violations.push(violation);
 }
 
+function hasScaffoldedEntities(manifest: ProjectManifest): boolean {
+  return manifest.entities.length > 0;
+}
+
 function validateRequiredPaths(manifest: ProjectManifest, violations: ProjectViolation[]): void {
   const requiredModules = manifest.modules.filter((module) =>
     ["shared-models", "bff", "functions"].includes(module.kind)
@@ -47,7 +51,7 @@ function validateRequiredPaths(manifest: ProjectManifest, violations: ProjectVio
     }
   }
 
-  if (!manifest.artifacts.callFunctionHelperExists) {
+  if (hasScaffoldedEntities(manifest) && !manifest.artifacts.callFunctionHelperExists) {
     pushViolation(violations, {
       code: "missing-call-function-helper",
       severity: "warning",
@@ -98,7 +102,11 @@ function validateGeneratedArtifacts(manifest: ProjectManifest, violations: Proje
     }
   }
 
-  if (manifest.backendLanguage !== "typescript" && manifest.artifacts.openApiSpecs.length === 0) {
+  if (
+    hasScaffoldedEntities(manifest) &&
+    manifest.backendLanguage !== "typescript" &&
+    manifest.artifacts.openApiSpecs.length === 0
+  ) {
     pushViolation(violations, {
       code: "missing-openapi-artifacts",
       severity: "warning",

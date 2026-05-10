@@ -207,11 +207,15 @@ const VALID_CONNECTOR_TYPES = ["rdb", "api"];
 const VALID_RDB_PROVIDERS = ["mysql", "postgres", "sqlserver"];
 const VALID_API_AUTH_TYPES = ["apiKey", "bearer", "oauth2"];
 
+function hasConfiguredDatabase(config: SwallowKitConfig): boolean {
+  return Boolean(config.database && Object.keys(config.database).length > 0);
+}
+
 export function validateConfig(config: SwallowKitConfig): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
   // データベース設定の検証
-  if (config.database && !config.database.connectionString) {
+  if (hasConfiguredDatabase(config) && !config.database?.connectionString) {
     errors.push("Cosmos DB connection string is required");
   }
 

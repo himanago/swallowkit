@@ -68,6 +68,32 @@ function createProjectFixture(rootDir: string, options: { includeGeneratedArtifa
   }
 }
 
+function createFreshInitProjectFixture(rootDir: string, backendLanguage: "csharp" | "python" = "csharp"): void {
+  writeFile(path.join(rootDir, "package.json"), JSON.stringify({ name: "sample-app" }, null, 2));
+  writeFile(
+    path.join(rootDir, "swallowkit.config.js"),
+    `module.exports = {
+  backend: {
+    language: '${backendLanguage}',
+  },
+  functions: {
+    baseUrl: process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071',
+  },
+  deployment: {
+    resourceGroup: process.env.AZURE_RESOURCE_GROUP || '',
+    swaName: process.env.AZURE_SWA_NAME || '',
+  },
+};
+`
+  );
+  writeFile(path.join(rootDir, "shared", "package.json"), JSON.stringify({ name: "@sample-app/shared" }, null, 2));
+  writeFile(path.join(rootDir, "shared", "index.ts"), "export {};\n");
+  fs.mkdirSync(path.join(rootDir, "shared", "models"), { recursive: true });
+  writeFile(path.join(rootDir, "app", "api", "greet", "route.ts"), "export async function GET() { return Response.json({}); }\n");
+  writeFile(path.join(rootDir, "lib", "api", "backend.ts"), "export const api = {};\n");
+  fs.mkdirSync(path.join(rootDir, "functions"), { recursive: true });
+}
+
 async function runMachine(argv: string[]): Promise<{ response: any; exitCode: number }> {
   const writes: string[] = [];
   const originalWrite = process.stdout.write.bind(process.stdout);
@@ -145,6 +171,19 @@ describe("machine CLI", () => {
         }),
       ])
     );
+  });
+
+  it("does not report false positives for a fresh C# init project", async () => {
+    createFreshInitProjectFixture(tempDir, "csharp");
+
+    const { response, exitCode } = await runMachine(["node", "swallowkit", "machine", "validate", "project"]);
+
+    expect(exitCode).toBe(0);
+    expect(response.ok).toBe(true);
+    expect(response.command).toBe("validate-project");
+    expect(response.data.manifest.backendLanguage).toBe("csharp");
+    expect(response.data.manifest.configValidation.valid).toBe(true);
+    expect(response.data.violations).toEqual([]);
   });
 
   it("generates model templates through the machine interface", async () => {

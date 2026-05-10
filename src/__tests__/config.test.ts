@@ -13,9 +13,20 @@ describe("validateConfig", () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it("returns error when connectionString is missing", () => {
+  it("accepts an empty database object", () => {
     const config: SwallowKitConfig = {
       database: {},
+      backend: { language: "typescript" },
+      api: { endpoint: "/api/_swallowkit" },
+    };
+    const result = validateConfig(config);
+    expect(result.valid).toBe(true);
+    expect(result.errors).not.toContain("Cosmos DB connection string is required");
+  });
+
+  it("returns error when database settings are incomplete", () => {
+    const config: SwallowKitConfig = {
+      database: { databaseName: "SwallowKitDB" },
       backend: { language: "typescript" },
       api: { endpoint: "/api/_swallowkit" },
     };
@@ -37,7 +48,7 @@ describe("validateConfig", () => {
 
   it("returns multiple errors for multiple issues", () => {
     const config: SwallowKitConfig = {
-      database: {},
+      database: { databaseName: "SwallowKitDB" },
       backend: { language: "typescript" },
       api: { endpoint: "bad-endpoint" },
     };
