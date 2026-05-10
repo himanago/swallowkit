@@ -456,7 +456,7 @@ export function buildGeneratedProjectDependencies(projectName: string): Record<s
   };
 }
 
-function getSwallowKitPackageSpecifier(): string {
+function getSwallowKitPackageMetadata(): { name: string; version: string } {
   const packageJsonPath = path.resolve(__dirname, "..", "..", "..", "package.json");
 
   try {
@@ -465,23 +465,36 @@ function getSwallowKitPackageSpecifier(): string {
       version?: string;
     };
 
-    if (packageJson.name && packageJson.version) {
-      return `${packageJson.name}@${packageJson.version}`;
-    }
+    return {
+      name: packageJson.name || "swallowkit",
+      version: packageJson.version || "latest",
+    };
   } catch {
     // Fall back to the published package name when package metadata is unavailable.
   }
 
-  return "swallowkit";
+  return {
+    name: "swallowkit",
+    version: "latest",
+  };
+}
+
+export function buildGeneratedProjectDevDependencies(): Record<string, string> {
+  const { name, version } = getSwallowKitPackageMetadata();
+  return {
+    [name]: version,
+  };
 }
 
 export function buildSwallowKitMcpProjectConfigSource(): string {
+  const { name } = getSwallowKitPackageMetadata();
   return JSON.stringify(
     {
       mcpServers: {
         swallowkit: {
-          command: "npx",
-          args: ["-y", "--package", getSwallowKitPackageSpecifier(), "swallowkit-mcp"],
+          command: "node",
+          args: [`./node_modules/${name}/dist/mcp/index.js`],
+          cwd: ".",
         },
       },
     },
@@ -510,6 +523,10 @@ async function addSwallowKitFiles(
   packageJson.dependencies = {
     ...packageJson.dependencies,
     ...buildGeneratedProjectDependencies(projectName),
+  };
+  packageJson.devDependencies = {
+    ...packageJson.devDependencies,
+    ...buildGeneratedProjectDevDependencies(),
   };
 
   packageJson.scripts = {
@@ -1735,19 +1752,20 @@ ${functionsStructureLine}
 ├── infra/                 # Bicep infrastructure-as-code files
 │   ├── main.bicep
 │   └── modules/
-├── .mcp.json              # Project-scoped MCP server bootstrap for supported runtimes
+├── .mcp.json              # Project-scoped MCP bootstrap using local installed SwallowKit
 └── .github/workflows/     # CI/CD workflows (if configured)
 \`\`\`
 
 ## SwallowKit MCP / Machine Workflow
 
-- This repository includes a project-scoped \`.mcp.json\` file that starts the bundled SwallowKit MCP server on runtimes that auto-load project MCP configurations.
+- This repository includes a project-scoped \`.mcp.json\` file that starts the locally installed SwallowKit MCP server on runtimes that auto-load project MCP configurations.
 - Prefer the \`swallowkit_*\` MCP tools for framework-owned inspection, validation, and generation when they are available.
 - If MCP is unavailable in your runtime, fall back to the machine CLI:
   - \`npx swallowkit machine inspect project\`
   - \`npx swallowkit machine validate project\`
   - \`npx swallowkit machine generate scaffold <name> --api-only\`
 - Do not hand-edit framework-owned artifacts when the MCP or machine interface can generate or validate them for you.
+- The local MCP bootstrap depends on project dependencies already being installed.
 
 ## Critical Design Principles
 
@@ -1951,7 +1969,7 @@ This file is for Claude Code. Read AGENTS.md in the project root for the full ar
 
 ## SwallowKit MCP
 
-- This repository includes a project-scoped \`.mcp.json\` that registers the SwallowKit MCP server for runtimes that support project MCP files.
+- This repository includes a project-scoped \`.mcp.json\` that registers the locally installed SwallowKit MCP server for runtimes that support project MCP files.
 - When the \`swallowkit_*\` tools are available, prefer them for inspect / validate / generate tasks.
 - If MCP is unavailable, use \`npx swallowkit machine ...\` instead.
 

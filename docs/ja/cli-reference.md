@@ -183,7 +183,7 @@ my-app/
 ├── next.config.js
 ├── swallowkit.config.js
 ├── staticwebapp.config.json
-├── .mcp.json                # 対応エージェント向け project-scoped MCP bootstrap
+├── .mcp.json                # ローカル install 済み SwallowKit を使う project-scoped MCP bootstrap
 ├── AGENTS.md                 # コーディングエージェント向け指示書 (Codex)
 ├── CLAUDE.md                 # Claude Code 向け指示書
 └── package.json
@@ -199,7 +199,7 @@ my-app/
 |---------|----------------|------|
 | `AGENTS.md` | OpenAI Codex / 汎用エージェント | アーキテクチャ全体仕様、規約、命名規則、CLI スキル |
 | `CLAUDE.md` | Claude Code | クイックリファレンス + CLI コマンド（詳細は `AGENTS.md` を参照） |
-| `.mcp.json` | Claude Code / project MCP runtime | 同梱 `swallowkit-mcp` server の project-scoped launcher |
+| `.mcp.json` | Claude Code / project MCP runtime | ローカル install 済み `swallowkit-mcp` entrypoint の project-scoped launcher |
 | `.github/copilot-instructions.md` | GitHub Copilot | 主要ルールのサマリー（Copilot が自動読み込み） |
 | `.github/instructions/shared-models.instructions.md` | GitHub Copilot | `shared/models/**` 向けレイヤー別ルール |
 | `.github/instructions/bff-routes.instructions.md` | GitHub Copilot | `app/api/**` 向けレイヤー別ルール |
@@ -251,19 +251,20 @@ my-app/
 ├── infra/                 # Bicep infrastructure-as-code files
 │   ├── main.bicep
 │   └── modules/
-├── .mcp.json              # project-scoped MCP server bootstrap for supported runtimes
+├── .mcp.json              # project-scoped MCP bootstrap using local installed SwallowKit
 └── .github/workflows/     # CI/CD workflows (if configured)
 ```
 
 ## SwallowKit MCP / Machine Workflow
 
-- This repository includes a project-scoped `.mcp.json` file that starts the bundled SwallowKit MCP server on runtimes that auto-load project MCP configurations.
+- This repository includes a project-scoped `.mcp.json` file that starts the locally installed SwallowKit MCP server on runtimes that auto-load project MCP configurations.
 - Prefer the `swallowkit_*` MCP tools for framework-owned inspection, validation, and generation when they are available.
 - If MCP is unavailable in your runtime, fall back to the machine CLI:
   - `npx swallowkit machine inspect project`
   - `npx swallowkit machine validate project`
   - `npx swallowkit machine generate scaffold <name> --api-only`
 - Do not hand-edit framework-owned artifacts when the MCP or machine interface can generate or validate them for you.
+- The local MCP bootstrap expects project dependencies to already be installed.
 
 ## Critical Design Principles
 <!-- 重要な設計原則 -->
@@ -586,7 +587,7 @@ architecture, conventions, and rules.
 
 ## SwallowKit MCP
 
-- This repository includes a project-scoped `.mcp.json` that registers the SwallowKit MCP server for runtimes that support project MCP files.
+- This repository includes a project-scoped `.mcp.json` that registers the locally installed SwallowKit MCP server for runtimes that support project MCP files.
 - When the `swallowkit_*` tools are available, prefer them for inspect / validate / generate tasks.
 - If MCP is unavailable, use `npx swallowkit machine ...` instead.
 

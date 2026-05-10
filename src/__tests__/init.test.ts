@@ -1,5 +1,6 @@
 import {
   buildGeneratedProjectDependencies,
+  buildGeneratedProjectDevDependencies,
   buildSwallowKitMcpProjectConfigSource,
   buildCSharpFunctionsProgramSource,
   buildCSharpFunctionsProjectSource,
@@ -79,23 +80,30 @@ module.exports = nextConfig;
     expect(dependencies).not.toHaveProperty("swallowkit");
   });
 
-  it("builds a project-scoped MCP config that launches swallowkit-mcp via npx", () => {
+  it("adds swallowkit as a generated project devDependency", () => {
+    const devDependencies = buildGeneratedProjectDevDependencies();
+
+    expect(devDependencies).toEqual({
+      swallowkit: expect.stringMatching(/.+/),
+    });
+  });
+
+  it("builds a project-scoped MCP config that launches the local swallowkit-mcp entrypoint", () => {
     const source = buildSwallowKitMcpProjectConfigSource();
     const parsed = JSON.parse(source) as {
       mcpServers: {
         swallowkit: {
           command: string;
           args: string[];
+          cwd?: string;
         };
       };
     };
 
-    expect(parsed.mcpServers.swallowkit.command).toBe("npx");
+    expect(parsed.mcpServers.swallowkit.command).toBe("node");
     expect(parsed.mcpServers.swallowkit.args).toEqual([
-      "-y",
-      "--package",
-      expect.stringMatching(/^swallowkit(?:@.+)?$/),
-      "swallowkit-mcp",
+      expect.stringMatching(/^\.\/node_modules\/swallowkit\/dist\/mcp\/index\.js$/),
     ]);
+    expect(parsed.mcpServers.swallowkit.cwd).toBe(".");
   });
 });

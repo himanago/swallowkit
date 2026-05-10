@@ -120,7 +120,7 @@ The MCP layer does not implement framework logic on its own. It delegates each t
 
 ## Generated Project Bootstrap
 
-`swallowkit init` now writes a project-scoped `.mcp.json` file at the repository root. It launches the bundled SwallowKit MCP server through `npx` and is designed for agent runtimes that support repository-level MCP discovery.
+`swallowkit init` writes a project-scoped `.mcp.json` file at the repository root. It launches the locally installed SwallowKit MCP entrypoint and is designed for agent runtimes that support repository-level MCP discovery.
 
 Example shape:
 
@@ -128,8 +128,9 @@ Example shape:
 {
   "mcpServers": {
     "swallowkit": {
-      "command": "npx",
-      "args": ["-y", "--package", "swallowkit@<generated-version>", "swallowkit-mcp"]
+      "command": "node",
+      "args": ["./node_modules/swallowkit/dist/mcp/index.js"],
+      "cwd": "."
     }
   }
 }
@@ -138,10 +139,10 @@ Example shape:
 Practical behavior:
 
 - **Claude Code** can load project-scoped MCP servers from `.mcp.json`
-- **GitHub Copilot** auto-loads the generated instruction files, and Copilot CLI users can register the same launcher manually via `/mcp` when they want MCP tools in the terminal
+- **GitHub Copilot CLI** can also discover workspace `.mcp.json` servers; using a local installed entrypoint avoids the first-run `npx --package ...` timeout risk
 - **Other agents / Codex-style runtimes** can reuse the same launcher when their MCP client supports project-level config; otherwise they should use the machine CLI fallback
 
-The generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) explicitly tell agents to prefer MCP tools when available and fall back to `swallowkit machine ...` when they are not.
+The generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) explicitly tell agents to prefer MCP tools when available and fall back to `swallowkit machine ...` when they are not. The local MCP bootstrap expects project dependencies to already be installed.
 
 ## Recommended Usage
 

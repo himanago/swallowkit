@@ -222,7 +222,7 @@ MCP client からは、同梱の stdio server を利用できます:
 npx swallowkit-mcp
 ```
 
-`swallowkit init` で生成されるプロジェクトには、project-scoped な `.mcp.json` bootstrap も含まれるようになりました。repository の MCP 自動検出に対応した agent runtime では、project root から同じ `swallowkit_*` Tool をそのまま使えます。
+`swallowkit init` で生成されるプロジェクトには、ローカルに install された SwallowKit MCP entrypoint を起動する project-scoped な `.mcp.json` bootstrap が含まれます。repository の MCP 自動検出に対応した agent runtime では、依存関係の install 後に project root から同じ `swallowkit_*` Tool をそのまま使えます。
 
 project MCP 設定を自動読込しない runtime でも、生成される instruction files が `swallowkit machine ...` の利用に誘導し、必要なら同じ launcher を手動登録できます。
 
