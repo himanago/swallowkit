@@ -29,13 +29,13 @@ describe("python uv helpers", () => {
     expect(env.UV_PYTHON_INSTALL_DIR).toBe(path.join("C:\\repo", ".uv", "python"));
     expect(env.UV_TOOL_DIR).toBe(path.join("C:\\repo", ".uv", "tools"));
     expect(env.UV_TOOL_BIN_DIR).toBe(path.join("C:\\repo", ".uv", "tools", "bin"));
-    expect(env.UV_MANAGED_PYTHON).toBe("true");
-    expect(env.UV_PYTHON_PREFERENCE).toBe("managed");
+    expect(env.UV_MANAGED_PYTHON).toBeUndefined();
+    expect(env.UV_PYTHON_PREFERENCE).toBe("only-managed");
     expect(env.UV_PYTHON_NO_REGISTRY).toBe(process.platform === "win32" ? "true" : undefined);
   });
 
   it("builds uv commands for venv creation and requirements installation", () => {
-    expect(buildUvVenvArgs(".venv")).toEqual(["venv", ".venv", "--python", "3.11", "--managed-python"]);
+    expect(buildUvVenvArgs(".venv")).toEqual(["venv", ".venv", "--python", "3.11"]);
     expect(buildUvPipInstallArgs(path.join("C:\\repo", "functions", ".venv", "Scripts", "python.exe"), "requirements.txt")).toEqual([
       "pip",
       "install",

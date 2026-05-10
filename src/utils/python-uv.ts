@@ -44,8 +44,7 @@ export function buildProjectLocalUvEnv(
     UV_PYTHON_INSTALL_DIR: uvPaths.pythonInstallDir,
     UV_TOOL_DIR: uvPaths.toolDir,
     UV_TOOL_BIN_DIR: uvPaths.toolBinDir,
-    UV_PYTHON_PREFERENCE: "managed",
-    UV_MANAGED_PYTHON: "true",
+    UV_PYTHON_PREFERENCE: "only-managed",
   };
 
   if (process.platform === "win32") {
@@ -89,7 +88,7 @@ export function getProjectLocalUvInstallerCommand(): { command: string; args: st
 }
 
 export function buildUvVenvArgs(venvDir: string, pythonVersion = SWALLOWKIT_PYTHON_VERSION): string[] {
-  return ["venv", venvDir, "--python", pythonVersion, "--managed-python"];
+  return ["venv", venvDir, "--python", pythonVersion];
 }
 
 export function buildUvPipInstallArgs(pythonExecutable: string, requirementsPath: string): string[] {
