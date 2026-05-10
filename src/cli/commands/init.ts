@@ -19,6 +19,7 @@ import {
   buildCSharpCodegenToolManifestSource,
   buildPythonCodegenRequirementsSource,
 } from "../../core/scaffold/native-schema-generator";
+import { getProjectLocalUvPaths } from "../../utils/python-uv";
 
 interface InitOptions {
   name: string;
@@ -1128,6 +1129,7 @@ public sealed class GreetFunction
 
 function createPythonFunctionsProject(projectDir: string, functionsDir: string): void {
   fs.writeFileSync(path.join(projectDir, '.python-version'), '3.11\n');
+  ensureProjectGitignoreEntry(projectDir, '.uv');
 
   fs.writeFileSync(path.join(functionsDir, 'requirements.txt'), `azure-functions>=1.20.0
 azure-cosmos>=4.9.0
@@ -1173,6 +1175,22 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 app.register_blueprint(greet_bp)
 # SwallowKit scaffold registrations
 `);
+}
+
+function ensureProjectGitignoreEntry(projectDir: string, entry: string): void {
+  const gitignorePath = path.join(projectDir, '.gitignore');
+  if (!fs.existsSync(gitignorePath)) {
+    return;
+  }
+
+  const current = fs.readFileSync(gitignorePath, 'utf8');
+  const lines = current.split(/\r?\n/);
+  if (lines.includes(entry)) {
+    return;
+  }
+
+  const normalized = current.endsWith('\n') ? current : `${current}\n`;
+  fs.writeFileSync(gitignorePath, `${normalized}${entry}\n`);
 }
 
 async function createBffApiRoute(projectDir: string) {
@@ -1414,8 +1432,9 @@ function createReadme(
   const backendScaffoldNote = backendLanguage === 'typescript'
     ? '- Azure Functions CRUD endpoints'
     : `- Azure Functions ${backendLanguageLabel} CRUD handlers\n- OpenAPI export + native-generated ${backendLanguageLabel} schema assets`;
+  const pythonUvPaths = getProjectLocalUvPaths(projectDir);
   const pythonLocalDevNote = backendLanguage === 'python'
-    ? `\n**Python local dev note**: SwallowKit uses \`functions/.venv\` for local Azure Functions development. If \`uv\` is installed, \`swallowkit dev\` uses it to create/manage that virtual environment; otherwise it falls back to the standard \`venv\` + \`pip\` workflow. Keep \`functions/requirements.txt\` as the dependency source of truth for Azure Functions compatibility. Scaffold uses a separate \`functions/.codegen-venv\` for Python schema generation.\n`
+    ? `\n**Python local dev note**: SwallowKit uses \`uv\` for Python backends and keeps the managed Python runtime under \`${path.relative(projectDir, pythonUvPaths.pythonInstallDir)}\`. Local Azure Functions runs from \`functions/.venv\`, schema generation uses \`functions/.codegen-venv\`, and \`swallowkit dev\` bootstraps a project-local \`uv\` binary automatically when needed. Keep \`functions/requirements.txt\` and \`functions/requirements.codegen.txt\` as the dependency sources of truth.\n`
     : '';
 
   const readme = `# ${projectName}

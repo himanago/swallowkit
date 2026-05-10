@@ -10,6 +10,15 @@ import { ModelInfo } from '../../core/scaffold/model-parser';
 import { applyDevSeedEnvironment, getContainerNameForModel, loadProjectModels } from './dev-seeds';
 import { BackendLanguage } from '../../types';
 import { detectFromProject, getCommands } from '../../utils/package-manager';
+import {
+  buildProjectLocalUvEnv,
+  buildProjectLocalUvInstallerEnv,
+  buildUvPipInstallArgs,
+  buildUvVenvArgs,
+  getProjectLocalUvInstallerCommand,
+  getProjectLocalUvPaths,
+  getPythonProjectRoot,
+} from '../../utils/python-uv';
 import { ConnectorMockServer } from '../../core/mock/connector-mock-server';
 
 export interface DevOptions {
@@ -157,10 +166,20 @@ async function checkCoreTools(): Promise<boolean> {
   return checkCommand('func', ['--version']);
 }
 
-async function checkCommand(command: string, args: string[] = ['--version']): Promise<boolean> {
+async function checkCommand(
+  command: string,
+  args: string[] = ['--version'],
+  options?: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    shell?: boolean;
+  }
+): Promise<boolean> {
   return new Promise((resolve) => {
     const checkProcess = spawn(command, args, {
-      shell: true,
+      cwd: options?.cwd,
+      env: options?.env ?? process.env,
+      shell: options?.shell ?? true,
       stdio: 'pipe',
     });
 
@@ -174,26 +193,34 @@ async function checkCommand(command: string, args: string[] = ['--version']): Pr
   });
 }
 
-async function resolvePythonBootstrapCommand(): Promise<{ command: string; argsPrefix: string[]; label: string }> {
-  const candidates = process.platform === 'win32'
-    ? [
-        { command: 'py', argsPrefix: ['-3.11'], label: 'py -3.11' },
-        { command: 'python', argsPrefix: [], label: 'python' },
-      ]
-    : [
-        { command: 'python3', argsPrefix: [], label: 'python3' },
-        { command: 'python', argsPrefix: [], label: 'python' },
-      ];
+async function resolveProjectLocalUvCommand(projectRoot: string): Promise<{ command: string; env: NodeJS.ProcessEnv }> {
+  const uvEnv = buildProjectLocalUvEnv(process.env, projectRoot);
+  const { localUvExecutable } = getProjectLocalUvPaths(projectRoot);
 
-  for (const candidate of candidates) {
-    if (await checkCommand(candidate.command, [...candidate.argsPrefix, '--version'])) {
-      return candidate;
-    }
+  if (await checkCommand('uv', ['--version'], { shell: false })) {
+    return { command: 'uv', env: uvEnv };
   }
 
-  throw new Error(
-    'Python 3.11 was not found. Install Python 3.11 and make sure `python`, `python3`, or `py -3.11` is available.'
+  if (fs.existsSync(localUvExecutable) && await checkCommand(localUvExecutable, ['--version'], { shell: false })) {
+    return { command: localUvExecutable, env: uvEnv };
+  }
+
+  console.log('📦 Installing project-local uv...');
+  const installer = getProjectLocalUvInstallerCommand();
+  await runCommand(
+    installer.command,
+    installer.args,
+    projectRoot,
+    'uv installation',
+    buildProjectLocalUvInstallerEnv(process.env, projectRoot),
+    false
   );
+
+  if (!(fs.existsSync(localUvExecutable) && await checkCommand(localUvExecutable, ['--version'], { shell: false }))) {
+    throw new Error('Failed to install project-local uv.');
+  }
+
+  return { command: localUvExecutable, env: uvEnv };
 }
 
 async function getCommandPath(command: string): Promise<string | null> {
@@ -331,47 +358,36 @@ async function bridgePythonCoreToolsForWindowsArm64(
 }
 
 async function preparePythonFunctionsEnvironment(functionsDir: string): Promise<NodeJS.ProcessEnv> {
-  const { pythonExecutable } = getPythonVirtualEnvPaths(functionsDir);
-  const hasUv = await checkCommand('uv', ['--version']);
+  const projectRoot = getPythonProjectRoot(functionsDir);
+  const { command: uvCommand, env: uvEnv } = await resolveProjectLocalUvCommand(projectRoot);
+  const { venvDir, pythonExecutable } = getPythonVirtualEnvPaths(functionsDir);
+  const hasUsableVirtualEnv = fs.existsSync(pythonExecutable) && await checkCommand(pythonExecutable, ['--version'], {
+    cwd: functionsDir,
+    env: uvEnv,
+    shell: false,
+  });
 
-  if (!fs.existsSync(pythonExecutable)) {
-    if (hasUv) {
-      console.log('📦 Creating Python virtual environment with uv...');
-      await runCommand('uv', ['venv', '.venv', '--python', '3.11'], functionsDir, 'python virtual environment setup');
-    } else {
-      const bootstrap = await resolvePythonBootstrapCommand();
-      console.log(`📦 Creating Python virtual environment with ${bootstrap.label}...`);
-      await runCommand(
-        bootstrap.command,
-        [...bootstrap.argsPrefix, '-m', 'venv', '.venv'],
-        functionsDir,
-        'python virtual environment setup'
-      );
+  if (!hasUsableVirtualEnv) {
+    const venvArgs = buildUvVenvArgs('.venv');
+    if (fs.existsSync(venvDir)) {
+      venvArgs.push('--clear');
     }
+
+    console.log('📦 Creating Python virtual environment with uv...');
+    await runCommand(uvCommand, venvArgs, functionsDir, 'python virtual environment setup', uvEnv, false);
   }
 
-  const pythonEnv = buildPythonFunctionsEnv(process.env, functionsDir);
-  console.log(`📦 Installing Python Azure Functions dependencies${hasUv ? ' with uv' : ''}...`);
+  console.log('📦 Installing Python Azure Functions dependencies with uv...');
+  await runCommand(
+    uvCommand,
+    buildUvPipInstallArgs(pythonExecutable, 'requirements.txt'),
+    functionsDir,
+    'python dependency installation',
+    uvEnv,
+    false
+  );
 
-  if (hasUv) {
-    await runCommand(
-      'uv',
-      ['pip', 'install', '--python', pythonExecutable, '-r', 'requirements.txt'],
-      functionsDir,
-      'python dependency installation',
-      pythonEnv
-    );
-  } else {
-    await runCommand('python', ['-m', 'pip', 'install', '--upgrade', 'pip'], functionsDir, 'python pip upgrade', pythonEnv);
-    await runCommand(
-      'python',
-      ['-m', 'pip', 'install', '-r', 'requirements.txt'],
-      functionsDir,
-      'python dependency installation',
-      pythonEnv
-    );
-  }
-
+  const pythonEnv = buildPythonFunctionsEnv(uvEnv, functionsDir);
   return bridgePythonCoreToolsForWindowsArm64(functionsDir, pythonEnv);
 }
 
@@ -1024,12 +1040,13 @@ async function runCommand(
   args: string[],
   cwd: string,
   label: string,
-  env?: NodeJS.ProcessEnv
+  env?: NodeJS.ProcessEnv,
+  shell = true
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
-      shell: true,
+      shell,
       stdio: 'inherit',
       env,
     });

@@ -4,33 +4,45 @@ import { spawn, spawnSync } from "child_process";
 import { BackendLanguage } from "../../types";
 import { ModelInfo, toKebabCase } from "./model-parser";
 import { generateOpenApiDocument } from "./openapi-generator";
+import {
+  buildProjectLocalUvEnv,
+  buildProjectLocalUvInstallerEnv,
+  buildUvPipInstallArgs,
+  buildUvVenvArgs,
+  getProjectLocalUvInstallerCommand,
+  getProjectLocalUvPaths,
+  getPythonProjectRoot,
+} from "../../utils/python-uv";
 
 export const NSWAG_CONSOLECORE_VERSION = "14.7.1";
 export const PYTHON_SCHEMA_CODEGEN_REQUIREMENT = "datamodel-code-generator>=0.44.0,<1.0.0";
 const PYTHON_OUTPUT_MODEL_TYPE = "pydantic_v2.BaseModel";
 
-type PythonLauncher = {
-  command: string;
-  argsPrefix: string[];
-};
-
 function getMachineAwareStdio(): "inherit" | "pipe" {
   return process.env.SWALLOWKIT_MACHINE_OUTPUT === "1" ? "pipe" : "inherit";
 }
 
-function canRun(command: string, args: string[], cwd: string): boolean {
+function canRun(command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): boolean {
   const result = spawnSync(command, args, {
     cwd,
+    env,
     stdio: "ignore",
   });
 
   return !result.error && result.status === 0;
 }
 
-async function runCommand(command: string, args: string[], cwd: string, errorMessage: string): Promise<void> {
+async function runCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  errorMessage: string,
+  env?: NodeJS.ProcessEnv
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
+      env,
       stdio: getMachineAwareStdio(),
     });
 
@@ -611,46 +623,63 @@ function getVirtualEnvPythonPath(venvDir: string): string {
     : path.join(venvDir, "bin", "python");
 }
 
-function detectSystemPythonLauncher(functionsRoot: string): PythonLauncher {
-  const candidates: PythonLauncher[] = [
-    { command: "python", argsPrefix: [] },
-    { command: "py", argsPrefix: ["-3"] },
-    { command: "python3", argsPrefix: [] },
-  ];
+async function ensureProjectLocalUvCommand(projectRoot: string): Promise<{ command: string; env: NodeJS.ProcessEnv }> {
+  const uvEnv = buildProjectLocalUvEnv(process.env, projectRoot);
+  const { localUvExecutable } = getProjectLocalUvPaths(projectRoot);
 
-  for (const candidate of candidates) {
-    if (canRun(candidate.command, [...candidate.argsPrefix, "--version"], functionsRoot)) {
-      return candidate;
-    }
+  if (canRun("uv", ["--version"], projectRoot)) {
+    return { command: "uv", env: uvEnv };
   }
 
-  throw new Error(
-    "Python 3.11+ is required to generate backend schema assets.\n" +
-      "Install Python and retry, or create functions/.codegen-venv manually."
+  if (fs.existsSync(localUvExecutable) && canRun(localUvExecutable, ["--version"], projectRoot)) {
+    return { command: localUvExecutable, env: uvEnv };
+  }
+
+  const installer = getProjectLocalUvInstallerCommand();
+  await runCommand(
+    installer.command,
+    installer.args,
+    projectRoot,
+    "Failed to install project-local uv.",
+    buildProjectLocalUvInstallerEnv(process.env, projectRoot)
   );
+
+  if (!(fs.existsSync(localUvExecutable) && canRun(localUvExecutable, ["--version"], projectRoot))) {
+    throw new Error("Failed to install project-local uv.");
+  }
+
+  return { command: localUvExecutable, env: uvEnv };
 }
 
 async function ensurePythonCodegenEnvironment(functionsRoot: string): Promise<string> {
   const requirementsPath = ensurePythonCodegenProjectFiles(functionsRoot);
+  const projectRoot = getPythonProjectRoot(functionsRoot);
+  const { command: uvCommand, env: uvEnv } = await ensureProjectLocalUvCommand(projectRoot);
   const venvDir = path.join(functionsRoot, ".codegen-venv");
   const venvPython = getVirtualEnvPythonPath(venvDir);
 
-  if (!fs.existsSync(venvPython)) {
-    const launcher = detectSystemPythonLauncher(functionsRoot);
+  if (!canRun(venvPython, ["--version"], functionsRoot, uvEnv)) {
+    const venvArgs = buildUvVenvArgs(venvDir);
+    if (fs.existsSync(venvDir)) {
+      venvArgs.push("--clear");
+    }
+
     await runCommand(
-      launcher.command,
-      [...launcher.argsPrefix, "-m", "venv", venvDir],
+      uvCommand,
+      venvArgs,
       functionsRoot,
-      "Failed to create the Python schema code generation virtual environment."
+      "Failed to create the Python schema code generation virtual environment.",
+      uvEnv
     );
   }
 
-  if (!canRun(venvPython, ["-c", "import datamodel_code_generator"], functionsRoot)) {
+  if (!canRun(venvPython, ["-c", "import datamodel_code_generator"], functionsRoot, uvEnv)) {
     await runCommand(
-      venvPython,
-      ["-m", "pip", "install", "--disable-pip-version-check", "-r", requirementsPath],
+      uvCommand,
+      buildUvPipInstallArgs(venvPython, requirementsPath),
       functionsRoot,
-      "Failed to install Python schema generation dependencies."
+      "Failed to install Python schema generation dependencies.",
+      uvEnv
     );
   }
 
