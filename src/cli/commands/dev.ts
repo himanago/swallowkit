@@ -1,5 +1,7 @@
 import { Command } from 'commander';
 import { spawn, ChildProcess } from 'child_process';
+import * as http from 'http';
+import * as https from 'https';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -107,6 +109,36 @@ export function buildFunctionsCoreToolsCommand(
 export function buildNextDevArgs(pm: string, port: string): string[] {
   const baseArgs = ['next', 'dev', '--port', port, '--webpack'];
   return pm === 'pnpm' ? ['exec', ...baseArgs] : baseArgs;
+}
+
+export function buildFunctionsBaseUrl(host: string | undefined, functionsPort: string): string {
+  return `http://${host || 'localhost'}:${functionsPort}`;
+}
+
+export function getFunctionsReadinessTimeoutMs(backendLanguage: BackendLanguage): number {
+  return backendLanguage === 'csharp' ? 90_000 : 30_000;
+}
+
+export async function waitForHttpServerReady(
+  url: string,
+  timeoutMs = 30_000,
+  intervalMs = 500
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() <= deadline) {
+    if (await probeHttpServer(url)) {
+      return true;
+    }
+
+    if (Date.now() + intervalMs > deadline) {
+      break;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return probeHttpServer(url);
 }
 
 export function getPythonVirtualEnvPaths(functionsDir: string): {
@@ -280,6 +312,41 @@ async function captureCommandOutput(
     });
 
     child.on('error', reject);
+  });
+}
+
+async function probeHttpServer(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const target = new URL(url);
+    const requestFactory = target.protocol === 'https:' ? https.request : http.request;
+    let settled = false;
+    const finish = (value: boolean) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+
+    const request = requestFactory(
+      {
+        hostname: target.hostname,
+        port: target.port,
+        path: target.pathname || '/',
+        method: 'GET',
+        timeout: 1000,
+      },
+      (response) => {
+        response.resume();
+        finish(true);
+      }
+    );
+
+    request.on('timeout', () => {
+      request.destroy();
+      finish(false);
+    });
+    request.on('error', () => finish(false));
+    request.end();
   });
 }
 
@@ -572,6 +639,9 @@ async function startDevEnvironment(options: DevOptions) {
   let mockServer: ConnectorMockServer | null = null;
   let envLocalPath = '';
   let envLocalDefaultUrl = ''; // default Functions URL to restore on shutdown
+  const functionsBaseUrl = buildFunctionsBaseUrl(options.host, functionsPort);
+  let functionsReadinessPromise: Promise<boolean> | null = null;
+  let functionsReady = !!options.noFunctions;
 
   // Cleanup processes on Ctrl+C
   process.on('SIGINT', async () => {
@@ -728,19 +798,7 @@ async function startDevEnvironment(options: DevOptions) {
             await runCommand(pm, ['install'], functionsDir, `${pm} install`);
           }
         } else if (backendLanguage === 'csharp') {
-          let cleanedArtifacts = false;
-          for (const artifactPath of getCSharpFunctionsBuildArtifactPaths(functionsDir)) {
-            if (!fs.existsSync(artifactPath)) {
-              continue;
-            }
-
-            fs.rmSync(artifactPath, { recursive: true, force: true });
-            cleanedArtifacts = true;
-          }
-
-          if (cleanedArtifacts) {
-            console.log('🧹 Cleaned previous C# Functions build artifacts before func start.');
-          }
+          console.log('ℹ️  C# Azure Functions can take longer on cold start while the worker builds.');
         } else {
           functionsEnv = await preparePythonFunctionsEnvironment(functionsDir);
         }
@@ -855,7 +913,11 @@ async function startDevEnvironment(options: DevOptions) {
         }
       });
 
-      console.log(`✅ Azure Functions started (port: ${functionsPort})`);
+      console.log(`⏳ Waiting for Azure Functions to accept requests at ${functionsBaseUrl}...`);
+      functionsReadinessPromise = waitForHttpServerReady(
+        functionsBaseUrl,
+        getFunctionsReadinessTimeoutMs(backendLanguage)
+      );
     } else if (!hasFunctions) {
       console.log('');
       console.log('ℹ️  functions/ directory not found. Starting Next.js only.');
@@ -951,8 +1013,8 @@ async function startDevEnvironment(options: DevOptions) {
     // When --mock-connectors is active, bffTargetPort = mock port (7072); otherwise = Functions port (7071).
     // Next.js may load .env.local values that override spawn env vars, so we must keep them in sync.
     envLocalPath = path.join(process.cwd(), '.env.local');
-    envLocalDefaultUrl = `http://${options.host || 'localhost'}:${functionsPort}`;
-    const bffTargetUrl = `http://${options.host || 'localhost'}:${bffTargetPort}`;
+    envLocalDefaultUrl = functionsBaseUrl;
+    const bffTargetUrl = buildFunctionsBaseUrl(options.host, bffTargetPort);
     try {
       if (fs.existsSync(envLocalPath)) {
         const envContent = fs.readFileSync(envLocalPath, 'utf-8');
@@ -969,8 +1031,8 @@ async function startDevEnvironment(options: DevOptions) {
 
     const nextEnv: NodeJS.ProcessEnv = {
       ...process.env,
-      BACKEND_FUNCTIONS_BASE_URL: `http://${options.host || 'localhost'}:${bffTargetPort}`,
-      FUNCTIONS_BASE_URL: `http://${options.host || 'localhost'}:${bffTargetPort}`,
+      BACKEND_FUNCTIONS_BASE_URL: bffTargetUrl,
+      FUNCTIONS_BASE_URL: bffTargetUrl,
     };
 
     const nextProcess = spawn(pm === 'pnpm' ? 'pnpm' : 'npx', nextArgs, {
@@ -1003,19 +1065,31 @@ async function startDevEnvironment(options: DevOptions) {
       process.exit(code || 0);
     });
 
+    if (functionsReadinessPromise) {
+      functionsReady = await functionsReadinessPromise;
+      console.log('');
+      if (functionsReady) {
+        console.log(`✅ Azure Functions ready (port: ${functionsPort})`);
+      } else {
+        console.log(`⚠️  Azure Functions is still starting: ${functionsBaseUrl}`);
+      }
+    }
+
     console.log('');
     console.log('✅ SwallowKit development environment is running!');
     console.log('');
     console.log(`📱 Next.js: http://${options.host || 'localhost'}:${port}`);
     if (hasFunctions && !options.noFunctions) {
-      console.log(`⚡ Azure Functions: http://${options.host || 'localhost'}:${functionsPort}`);
+      console.log(`${functionsReady ? '⚡ Azure Functions' : '⏳ Azure Functions (starting)'}: ${functionsBaseUrl}`);
     }
     if (mockServer) {
-      console.log(`🔌 Mock Proxy: http://${options.host || 'localhost'}:${bffTargetPort} (BFF → here)`);
+      console.log(`🔌 Mock Proxy: ${bffTargetUrl} (BFF → here)`);
     }
     console.log('');
-    if (hasFunctions && !options.noFunctions) {
+    if (hasFunctions && !options.noFunctions && functionsReady) {
       console.log('💡 Azure Functions and Next.js BFF are connected');
+    } else if (hasFunctions && !options.noFunctions) {
+      console.log('💡 Azure Functions is still warming up; BFF routes can fail until the backend responds.');
     }
     if (mockServer) {
       console.log('💡 Connector models served from mock server (Zod-generated data)');

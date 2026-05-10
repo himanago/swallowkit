@@ -101,4 +101,6 @@ npx swallowkit dev
 # Azure Functions → http://localhost:7071
 ```
 
+For Python backends, local runtime setup is handled with **uv** in project-local directories. For C# backends, the Functions URL is shown as ready only after the host starts responding.
+
 </div>

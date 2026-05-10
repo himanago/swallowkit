@@ -145,6 +145,11 @@ pnpm dlx swallowkit dev
 - Next.js: http://localhost:3000
 - Azure Functions: http://localhost:7071
 
+バックエンド言語ごとの補足:
+
+- **Python バックエンド**: `swallowkit dev` はローカルの Python 実行環境管理に **uv** を使います。プロジェクト内の `.uv/bin` に `uv` 本体を導入または再利用し、`.uv/python` に uv 管理の Python を保持し、Functions 本体用に `functions/.venv`、Python スキーマ生成用に `functions/.codegen-venv` を作成します。
+- **C# バックエンド**: Azure Functions isolated worker はコールドスタート時にワーカービルドが入るため、応答開始まで少し時間がかかることがあります。`swallowkit dev` は Functions ホストが HTTP 応答できる状態になるまで待ってから、バックエンド URL を ready として表示します。
+
 ### 5. フロントエンドから使用
 
 ```typescript

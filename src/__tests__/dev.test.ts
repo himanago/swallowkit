@@ -1,6 +1,8 @@
+import * as http from "http";
 import { readFileSync } from "fs";
 import * as path from "path";
 import {
+  buildFunctionsBaseUrl,
   buildFunctionsStartArgs,
   buildFunctionsCoreToolsCommand,
   buildNextDevArgs,
@@ -8,9 +10,11 @@ import {
   buildPythonFunctionsEnv,
   compareVersionNumbers,
   DevOptions,
+  getFunctionsReadinessTimeoutMs,
   getCSharpFunctionsBuildArtifactPaths,
   getPythonVirtualEnvPaths,
   parseCoreToolsVersion,
+  waitForHttpServerReady,
 } from "../cli/commands/dev";
 import { CLI_VERSION, createProgram, normalizeDevCommandArgv } from "../cli/index";
 
@@ -59,6 +63,48 @@ describe("dev command helpers", () => {
 
   it("uses pnpm exec for pnpm-based Next.js dev", () => {
     expect(buildNextDevArgs("pnpm", "3012")).toEqual(["exec", "next", "dev", "--port", "3012", "--webpack"]);
+  });
+
+  it("builds the Azure Functions base URL from host and port", () => {
+    expect(buildFunctionsBaseUrl(undefined, "7071")).toBe("http://localhost:7071");
+    expect(buildFunctionsBaseUrl("127.0.0.1", "7072")).toBe("http://127.0.0.1:7072");
+  });
+
+  it("gives C# more startup time before reporting readiness timeout", () => {
+    expect(getFunctionsReadinessTimeoutMs("csharp")).toBeGreaterThan(getFunctionsReadinessTimeoutMs("typescript"));
+    expect(getFunctionsReadinessTimeoutMs("csharp")).toBeGreaterThan(getFunctionsReadinessTimeoutMs("python"));
+  });
+
+  it("waits until an HTTP server responds before reporting ready", async () => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(404);
+      response.end("not found");
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Failed to determine ephemeral port.");
+    }
+
+    try {
+      await expect(
+        waitForHttpServerReady(`http://127.0.0.1:${address.port}`, 2_000, 50)
+      ).resolves.toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
   });
 
   it("builds Python virtual environment paths under functions/.venv", () => {

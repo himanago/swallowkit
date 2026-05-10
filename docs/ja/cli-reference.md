@@ -871,9 +871,11 @@ pnpm dlx swallowkit dev [options]
    - dev-seeds JSON が利用可能な場合は初期データとして読み込み
    - BFF は設定変更なしで自動的にモックプロキシを経由
 4. **Azure Functions 起動**:
-   - Azure Functions Core Tools の確認
-   - 依存関係の自動インストール
-   - `functions/` ディレクトリで Functions を起動
+    - Azure Functions Core Tools の確認
+    - 依存関係の自動インストール
+    - `functions/` ディレクトリで Functions を起動
+    - **Python バックエンド**: ローカル実行環境の管理に **uv** を使い、`.uv/` 配下にプロジェクトローカルな状態を保持しつつ、アプリ用の `functions/.venv` と Python スキーマ生成用の `functions/.codegen-venv` を作成
+    - **C# バックエンド**: isolated worker のビルドが完了するまでコールドスタートが長めになるため、Functions URL は HTTP 応答できる状態になってから ready として表示
 5. **Next.js 起動**: 開発サーバーを起動
 
 ### Dev Seed ワークフロー

@@ -101,4 +101,6 @@ npx swallowkit dev
 # Azure Functions → http://localhost:7071
 ```
 
+Python バックエンドでは、ローカル実行環境のセットアップに **uv** を使い、プロジェクト内に状態を保持します。C# バックエンドでは、Functions ホストが応答可能になってから URL を ready として表示します。
+
 </div>

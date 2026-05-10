@@ -754,9 +754,11 @@ pnpm dlx swallowkit dev [options]
    - Loads dev-seeds JSON as initial data if available
    - BFF automatically routes through the mock proxy (no config change needed)
 4. **Azure Functions Start**:
-   - Check Azure Functions Core Tools
-   - Auto-install dependencies
-   - Start Functions in `functions/` directory
+    - Check Azure Functions Core Tools
+    - Auto-install dependencies
+    - Start Functions in `functions/` directory
+    - **Python backend**: use **uv** for local runtime management, keeping project-local state under `.uv/`, creating `functions/.venv` for the app, and `functions/.codegen-venv` for Python schema generation
+    - **C# backend**: allow extra cold-start time for the isolated worker build, and only report the Functions URL as ready after the host answers HTTP requests
 5. **Next.js Start**: Launch development server
 
 ### Dev Seed Workflow

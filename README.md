@@ -146,6 +146,11 @@ pnpm dlx swallowkit dev
 - Next.js: http://localhost:3000
 - Azure Functions: http://localhost:7071
 
+Backend-specific notes:
+
+- **Python backends**: `swallowkit dev` uses **uv** for local runtime management. It installs or reuses a project-local `uv` binary under `.uv/bin`, keeps uv-managed Python under `.uv/python`, creates `functions/.venv` for the Functions app, and creates `functions/.codegen-venv` for Python schema generation.
+- **C# backends**: Azure Functions isolated worker can take longer to answer on cold start while the worker build completes. `swallowkit dev` waits for the Functions host to start responding before it prints the backend URL as ready.
+
 If you want to replace Cosmos DB Emulator data before startup, generate an environment template and then launch `dev` with that environment:
 
 ```bash
