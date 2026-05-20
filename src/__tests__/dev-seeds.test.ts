@@ -3,11 +3,15 @@ import * as os from "os";
 import * as path from "path";
 import { createBasicModelInfo } from "./fixtures";
 import {
+  buildDefaultCosmosDatabaseName,
   buildSeedTemplateDocument,
   getContainerNameForModel,
   loadDevSeedFiles,
   normalizeSeedIdentifier,
+  parseCosmosConnectionString,
   parseSeedDocuments,
+  prepareSeedDocumentsForExport,
+  resolveLocalCosmosConnectionInfo,
 } from "../cli/commands/dev-seeds";
 
 describe("dev seed helpers", () => {
@@ -40,6 +44,17 @@ describe("dev seed helpers", () => {
     ]);
   });
 
+  it("builds default Cosmos database names from package names", () => {
+    expect(buildDefaultCosmosDatabaseName("swallowkit")).toBe("SwallowkitDatabase");
+  });
+
+  it("parses Cosmos DB connection strings", () => {
+    expect(parseCosmosConnectionString("AccountEndpoint=https://localhost:8081/;AccountKey=test-key==;")).toEqual({
+      endpoint: "https://localhost:8081/",
+      key: "test-key==",
+    });
+  });
+
   it("loads matching seed files for an environment", async () => {
     const seedsDir = path.join(tempDir, "dev-seeds", "local");
     fs.mkdirSync(seedsDir, { recursive: true });
@@ -69,6 +84,52 @@ describe("dev seed helpers", () => {
     fs.writeFileSync(path.join(seedsDir, "todo.json"), JSON.stringify([{ title: "Missing id" }], null, 2), "utf-8");
 
     await expect(loadDevSeedFiles("local", [createBasicModelInfo()])).rejects.toThrow(/non-empty string id/);
+  });
+
+  it("reads local Cosmos DB settings from local.settings.json", () => {
+    const functionsDir = path.join(tempDir, "functions");
+    fs.mkdirSync(functionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(functionsDir, "local.settings.json"),
+      JSON.stringify(
+        {
+          Values: {
+            CosmosDBConnection: "AccountEndpoint=https://localhost:8081/;AccountKey=test-key==;",
+            COSMOS_DB_DATABASE_NAME: "CustomDatabase",
+          },
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const result = resolveLocalCosmosConnectionInfo("FallbackDatabase", functionsDir);
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        endpoint: "https://localhost:8081/",
+        key: "test-key==",
+        databaseName: "CustomDatabase",
+        localSettingsPath: path.join(functionsDir, "local.settings.json"),
+      },
+    });
+  });
+
+  it("prepares exported seed documents by removing Cosmos metadata and sorting ids", () => {
+    expect(
+      prepareSeedDocumentsForExport(
+        [
+          { id: "todo-002", title: "Second", _etag: "etag-2", _ts: 2 },
+          { id: "todo-001", title: "First", _rid: "rid-1", _self: "self-1" },
+        ],
+        "todo.json"
+      )
+    ).toEqual([
+      { id: "todo-001", title: "First" },
+      { id: "todo-002", title: "Second" },
+    ]);
   });
 
   it("builds nested template documents from related schemas", () => {

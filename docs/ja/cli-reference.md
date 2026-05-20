@@ -1134,7 +1134,7 @@ await api.delete('/api/todos/123');
 
 ## swallowkit create-dev-seeds
 
-`shared/models/` の現在のスキーマから、指定したローカル環境向けの JSON seed テンプレートを生成します。
+`shared/models/` の現在のスキーマから JSON seed テンプレートを生成するか、ローカル Cosmos DB Emulator の現データを seed として書き出します。
 
 ### 使用法
 
@@ -1155,10 +1155,11 @@ pnpm dlx swallowkit create-dev-seeds <environment> [options]
 | `--models-dir <dir>` | スキーマを読むモデルディレクトリ | `shared/models` |
 | `--seeds-dir <dir>` | seed 環境を生成するベースディレクトリ | `dev-seeds` |
 | `--force` | 既存の JSON seed ファイルを上書き | `false` |
+| `--from-emulator` | ローカル Cosmos DB Emulator の現データを `dev-seeds/<environment>/` へ書き出す | `false` |
 
 ### 生成内容
 
-`shared/models/` 配下の各スキーマについて、`dev-seeds/<environment>/` に JSON ファイルを生成します：
+通常モードでは、`shared/models/` 配下の各スキーマについて、`dev-seeds/<environment>/` に JSON ファイルを生成します：
 
 ```text
 dev-seeds/
@@ -1176,6 +1177,8 @@ dev-seeds/
 - `...At` / date フィールド -> ISO 形式の時刻サンプル
 - ネストスキーマ -> ネストした JSON オブジェクト
 
+`--from-emulator` を付けた場合は、`functions/local.settings.json` の `CosmosDBConnection` と `COSMOS_DB_DATABASE_NAME` を使ってローカル Cosmos DB Emulator に接続し、対応するコンテナの現データを同じファイル配置で保存します。このとき `_etag` などの Cosmos システムプロパティは自動で除去されます。
+
 ### 典型的な流れ
 
 ```bash
@@ -1183,6 +1186,10 @@ npx swallowkit create-model todo
 npx swallowkit scaffold shared/models/todo.ts
 npx swallowkit create-dev-seeds local
 # dev-seeds/local/todo.json を編集
+npx swallowkit dev --seed-env local
+
+# あるいは、現在 Emulator に入っているデータをそのまま seed 化
+npx swallowkit create-dev-seeds local --from-emulator --force
 npx swallowkit dev --seed-env local
 ```
 

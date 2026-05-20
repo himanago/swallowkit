@@ -151,21 +151,27 @@ Backend-specific notes:
 - **Python backends**: `swallowkit dev` uses **uv** for local runtime management. It installs or reuses a project-local `uv` binary under `.uv/bin`, keeps uv-managed Python under `.uv/python`, creates `functions/.venv` for the Functions app, and creates `functions/.codegen-venv` for Python schema generation.
 - **C# backends**: Azure Functions isolated worker can take longer to answer on cold start while the worker build completes. `swallowkit dev` waits for the Functions host to start responding before it prints the backend URL as ready.
 
-If you want to replace Cosmos DB Emulator data before startup, generate an environment template and then launch `dev` with that environment:
+If you want to replace Cosmos DB Emulator data before startup, you can either generate an environment template or export the data currently stored in the local emulator:
 
 ```bash
 npx swallowkit create-dev-seeds local
 # edit dev-seeds/local/*.json
+npx swallowkit dev --seed-env local
+
+# or capture current emulator data as reusable seeds
+npx swallowkit create-dev-seeds local --from-emulator --force
 npx swallowkit dev --seed-env local
 ```
 
 This workflow is designed for local debugging against the Cosmos DB Emulator:
 
 - `create-dev-seeds <environment>` generates one JSON template per schema under `dev-seeds/<environment>/`
+- `create-dev-seeds <environment> --from-emulator` exports the current data from the matching local Cosmos DB Emulator containers into the same file layout
 - each file name maps to a schema/container, for example `shared/models/todo.ts` -> `dev-seeds/local/todo.json` -> `Todos`
 - when you start `dev --seed-env <environment>`, SwallowKit replaces the existing data for each matching container with the JSON documents from that environment
 - containers without a matching JSON file are left untouched
 - if `--seed-env` is omitted, or `dev-seeds/<environment>/` does not exist, current emulator data is preserved
+- exported files strip Cosmos system properties such as `_etag` before saving so they can be replayed safely
 
 Example file layout:
 
@@ -204,6 +210,10 @@ npx swallowkit create-model todo
 npx swallowkit scaffold shared/models/todo.ts
 npx swallowkit create-dev-seeds local
 # edit dev-seeds/local/todo.json
+npx swallowkit dev --seed-env local
+
+# or export your current local Cosmos Emulator data
+npx swallowkit create-dev-seeds local --from-emulator --force
 npx swallowkit dev --seed-env local
 ```
 

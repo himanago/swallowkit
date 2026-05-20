@@ -12,6 +12,7 @@ interface GenerateDevSeedTemplatesOptions {
   modelsDir?: string;
   seedsDir?: string;
   force?: boolean;
+  fromEmulator?: boolean;
 }
 
 interface ApplyDevSeedEnvironmentOptions {
@@ -28,6 +29,28 @@ interface LoadedSeedFile {
   documents: SeedDocument[];
   filePath: string;
 }
+
+export interface LocalCosmosConnectionInfo {
+  endpoint: string;
+  key: string;
+  databaseName: string;
+  localSettingsPath: string;
+}
+
+export type ResolveLocalCosmosConnectionResult =
+  | { ok: true; value: LocalCosmosConnectionInfo }
+  | {
+      ok: false;
+      reason: "missing-local-settings" | "missing-connection-string" | "invalid-connection-string";
+      localSettingsPath: string;
+    };
+
+interface ExportedContainerDocuments {
+  documents: SeedDocument[];
+  containerExists: boolean;
+}
+
+const COSMOS_SYSTEM_PROPERTIES = new Set(["_rid", "_self", "_etag", "_attachments", "_ts"]);
 
 export function getContainerNameForModel(model: Pick<ModelInfo, "name">): string {
   return model.name.endsWith('s') ? model.name : `${model.name}s`;
@@ -63,6 +86,70 @@ export function parseSeedDocuments(content: string, filePath: string): SeedDocum
 
 export async function loadProjectModels(modelsDir: string = "shared/models"): Promise<ModelInfo[]> {
   return getAllModels(modelsDir);
+}
+
+export function buildDefaultCosmosDatabaseName(packageName: string): string {
+  const normalizedName = packageName.trim();
+  const baseName = normalizedName.length > 0 ? normalizedName : "App";
+  return `${baseName.charAt(0).toUpperCase()}${baseName.slice(1)}Database`;
+}
+
+export function getDefaultCosmosDatabaseName(projectDir: string = process.cwd()): string {
+  const packageJsonPath = path.join(projectDir, "package.json");
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as { name?: string };
+  return buildDefaultCosmosDatabaseName(packageJson.name || "App");
+}
+
+export function parseCosmosConnectionString(
+  connectionString: string
+): Pick<LocalCosmosConnectionInfo, "endpoint" | "key"> | null {
+  const endpointMatch = connectionString.match(/AccountEndpoint=([^;]+)/);
+  const keyMatch = connectionString.match(/AccountKey=([^;]+)/);
+
+  if (!endpointMatch || !keyMatch) {
+    return null;
+  }
+
+  return {
+    endpoint: endpointMatch[1],
+    key: keyMatch[1],
+  };
+}
+
+export function resolveLocalCosmosConnectionInfo(
+  defaultDatabaseName: string,
+  functionsDir: string = path.join(process.cwd(), "functions")
+): ResolveLocalCosmosConnectionResult {
+  const localSettingsPath = path.join(functionsDir, "local.settings.json");
+  if (!fs.existsSync(localSettingsPath)) {
+    return { ok: false, reason: "missing-local-settings", localSettingsPath };
+  }
+
+  const localSettings = JSON.parse(fs.readFileSync(localSettingsPath, "utf-8")) as {
+    Values?: {
+      CosmosDBConnection?: string;
+      COSMOS_DB_DATABASE_NAME?: string;
+    };
+  };
+  const connectionString = localSettings.Values?.CosmosDBConnection;
+
+  if (!connectionString) {
+    return { ok: false, reason: "missing-connection-string", localSettingsPath };
+  }
+
+  const parsedConnection = parseCosmosConnectionString(connectionString);
+  if (!parsedConnection) {
+    return { ok: false, reason: "invalid-connection-string", localSettingsPath };
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...parsedConnection,
+      databaseName: localSettings.Values?.COSMOS_DB_DATABASE_NAME || defaultDatabaseName,
+      localSettingsPath,
+    },
+  };
 }
 
 export function buildSeedTemplateDocument(
@@ -197,14 +284,121 @@ export async function generateDevSeedTemplates({
   console.log(`  2. Run 'swallowkit dev --seed-env ${environment}' to replace emulator data before startup`);
 }
 
+export function stripCosmosSystemProperties(document: SeedDocument): SeedDocument {
+  const sanitized: SeedDocument = {};
+
+  for (const [key, value] of Object.entries(document)) {
+    if (!COSMOS_SYSTEM_PROPERTIES.has(key)) {
+      sanitized[key] = value;
+    }
+  }
+
+  return sanitized;
+}
+
+export function prepareSeedDocumentsForExport(documents: SeedDocument[], filePath: string): SeedDocument[] {
+  const preparedDocuments = documents
+    .map((document) => stripCosmosSystemProperties(document))
+    .sort(compareSeedDocumentsForExport);
+
+  validateSeedDocuments(preparedDocuments, filePath);
+  return preparedDocuments;
+}
+
+export async function exportDevSeedsFromEmulator({
+  environment,
+  modelsDir = "shared/models",
+  seedsDir = "dev-seeds",
+  force = false,
+}: GenerateDevSeedTemplatesOptions): Promise<void> {
+  ensureSwallowKitProject("create-dev-seeds");
+
+  console.log(`🧪 Exporting dev seeds from local Cosmos DB Emulator for environment "${environment}"...\n`);
+  const models = await loadProjectModels(modelsDir);
+
+  if (models.length === 0) {
+    console.log("⚠️  No schemas found under shared/models. Nothing was exported.");
+    return;
+  }
+
+  const connectionInfoResult = resolveLocalCosmosConnectionInfo(getDefaultCosmosDatabaseName());
+  if (!connectionInfoResult.ok) {
+    throw new Error(buildLocalCosmosConnectionError(connectionInfoResult));
+  }
+
+  const { endpoint, key, databaseName, localSettingsPath } = connectionInfoResult.value;
+  console.log(`🗄️  Using local Cosmos DB settings from ${localSettingsPath}`);
+  console.log(`📦 Export source database: "${databaseName}"\n`);
+
+  const client = new CosmosClient({ endpoint, key });
+  const database = client.database(databaseName);
+
+  try {
+    await database.read();
+  } catch (error: unknown) {
+    if (isCosmosNotFoundError(error)) {
+      throw new Error(`Cosmos DB database "${databaseName}" was not found in the local emulator.`);
+    }
+
+    throw error;
+  }
+
+  const environmentDir = getSeedEnvironmentDir(environment, seedsDir);
+  fs.mkdirSync(environmentDir, { recursive: true });
+
+  let writtenFiles = 0;
+  let skippedFiles = 0;
+  let totalDocuments = 0;
+
+  for (const model of models) {
+    const containerName = getContainerNameForModel(model);
+    const filePath = path.join(environmentDir, `${toKebabCase(model.name)}.json`);
+
+    if (!force && fs.existsSync(filePath)) {
+      skippedFiles += 1;
+      continue;
+    }
+
+    const exported = await readContainerSeedDocuments(database, containerName, filePath);
+    fs.writeFileSync(filePath, JSON.stringify(exported.documents, null, 2) + "\n", "utf-8");
+    writtenFiles += 1;
+    totalDocuments += exported.documents.length;
+
+    const detail = exported.containerExists
+      ? `${exported.documents.length} item(s)`
+      : "container not found; wrote empty seed";
+    console.log(`✅ Exported "${containerName}" to ${filePath} (${detail})`);
+  }
+
+  if (skippedFiles > 0) {
+    console.log("");
+    console.log(`⏭️  Skipped ${skippedFiles} existing file(s). Use --force to overwrite them.`);
+  }
+
+  console.log("");
+  console.log(`🧾 Export complete: ${writtenFiles} file(s), ${totalDocuments} item(s).`);
+  console.log(`📝 Next step: Run 'swallowkit dev --seed-env ${environment}' to replay the exported data.`);
+}
+
 export const devSeedsCommand = new Command()
   .name("create-dev-seeds")
-  .description("Generate dev seed JSON templates under dev-seeds/<environment> from shared/models schemas")
+  .description("Generate dev seed JSON files from shared/models schemas or export current local Cosmos DB Emulator data")
   .argument("<environment>", "Seed environment name")
   .option("--models-dir <dir>", "Models directory", "shared/models")
   .option("--seeds-dir <dir>", "Dev seeds directory", "dev-seeds")
   .option("--force", "Overwrite existing seed JSON files", false)
-  .action(async (environment: string, options: { modelsDir?: string; seedsDir?: string; force?: boolean }) => {
+  .option("--from-emulator", "Export current data from the local Cosmos DB Emulator instead of generating templates", false)
+  .action(async (environment: string, options: { modelsDir?: string; seedsDir?: string; force?: boolean; fromEmulator?: boolean }) => {
+    if (options.fromEmulator) {
+      await exportDevSeedsFromEmulator({
+        environment,
+        modelsDir: options.modelsDir,
+        seedsDir: options.seedsDir,
+        force: options.force,
+      });
+      return;
+    }
+
     await generateDevSeedTemplates({
       environment,
       modelsDir: options.modelsDir,
@@ -324,6 +518,68 @@ function validateSeedDocuments(documents: SeedDocument[], filePath: string): voi
 
     ids.add(document.id);
   });
+}
+
+function compareSeedDocumentsForExport(left: SeedDocument, right: SeedDocument): number {
+  const leftId = typeof left.id === "string" ? left.id : "";
+  const rightId = typeof right.id === "string" ? right.id : "";
+
+  if (leftId.length === 0 && rightId.length === 0) {
+    return 0;
+  }
+
+  if (leftId.length === 0) {
+    return 1;
+  }
+
+  if (rightId.length === 0) {
+    return -1;
+  }
+
+  return leftId.localeCompare(rightId);
+}
+
+function buildLocalCosmosConnectionError(
+  result: Exclude<ResolveLocalCosmosConnectionResult, { ok: true; value: LocalCosmosConnectionInfo }>
+): string {
+  switch (result.reason) {
+    case "missing-local-settings":
+      return `local.settings.json not found at ${result.localSettingsPath}. Start from a SwallowKit app with Azure Functions configured.`;
+    case "missing-connection-string":
+      return `CosmosDBConnection not found in ${result.localSettingsPath}.`;
+    case "invalid-connection-string":
+      return `Invalid CosmosDBConnection format in ${result.localSettingsPath}.`;
+  }
+
+  throw new Error(`Unhandled local Cosmos connection error: ${JSON.stringify(result)}`);
+}
+
+async function readContainerSeedDocuments(
+  database: Database,
+  containerName: string,
+  filePath: string
+): Promise<ExportedContainerDocuments> {
+  const container = database.container(containerName);
+
+  try {
+    await container.read();
+  } catch (error: unknown) {
+    if (isCosmosNotFoundError(error)) {
+      return { documents: [], containerExists: false };
+    }
+
+    throw error;
+  }
+
+  const { resources } = await container.items.query<SeedDocument>("SELECT * FROM c").fetchAll();
+  return {
+    documents: prepareSeedDocumentsForExport(resources, filePath),
+    containerExists: true,
+  };
+}
+
+function isCosmosNotFoundError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === 404;
 }
 
 async function recreateContainer(database: Database, containerName: string, partitionKeyPath: string = '/id'): Promise<void> {

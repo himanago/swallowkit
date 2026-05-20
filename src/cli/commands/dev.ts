@@ -9,7 +9,13 @@ import * as net from 'net';
 import { CosmosClient, PartitionKeyKind } from '@azure/cosmos';
 import { ensureSwallowKitProject, getBackendLanguage, getAuthConfig } from '../../core/config';
 import { ModelInfo } from '../../core/scaffold/model-parser';
-import { applyDevSeedEnvironment, getContainerNameForModel, loadProjectModels } from './dev-seeds';
+import {
+  applyDevSeedEnvironment,
+  getContainerNameForModel,
+  getDefaultCosmosDatabaseName,
+  loadProjectModels,
+  resolveLocalCosmosConnectionInfo,
+} from './dev-seeds';
 import { BackendLanguage } from '../../types';
 import { detectFromProject, getCommands } from '../../utils/package-manager';
 import {
@@ -526,40 +532,25 @@ interface CosmosInitializationResult {
 
 async function initializeCosmosDB(databaseName: string): Promise<CosmosInitializationResult | null> {
   try {
-    // Read local.settings.json from functions directory
-    const functionsDir = path.join(process.cwd(), 'functions');
-    const localSettingsPath = path.join(functionsDir, 'local.settings.json');
-    
-    if (!fs.existsSync(localSettingsPath)) {
-      console.log('⚠️  local.settings.json not found. Skipping Cosmos DB initialization.');
-      return null;
-    }
+    const connectionInfoResult = resolveLocalCosmosConnectionInfo(databaseName);
+    if (!connectionInfoResult.ok) {
+      if (connectionInfoResult.reason === 'missing-local-settings') {
+        console.log('⚠️  local.settings.json not found. Skipping Cosmos DB initialization.');
+      } else if (connectionInfoResult.reason === 'missing-connection-string') {
+        console.log('⚠️  CosmosDBConnection not found in local.settings.json. Skipping Cosmos DB initialization.');
+      } else {
+        console.log('⚠️  Invalid CosmosDB connection string format.');
+      }
 
-    const localSettings = JSON.parse(fs.readFileSync(localSettingsPath, 'utf-8'));
-    const connectionString = localSettings.Values?.CosmosDBConnection;
-    const dbName = localSettings.Values?.COSMOS_DB_DATABASE_NAME || databaseName;
-    
-    if (!connectionString) {
-      console.log('⚠️  CosmosDBConnection not found in local.settings.json. Skipping Cosmos DB initialization.');
       return null;
     }
 
     console.log('🗄️  Initializing Cosmos DB...');
-
-    // Parse connection string
-    const endpointMatch = connectionString.match(/AccountEndpoint=([^;]+)/);
-    const keyMatch = connectionString.match(/AccountKey=([^;]+)/);
-    
-    if (!endpointMatch || !keyMatch) {
-      console.log('⚠️  Invalid CosmosDB connection string format.');
-      return null;
-    }
-
-    const endpoint = endpointMatch[1];
+    const { endpoint, key, databaseName: dbName } = connectionInfoResult.value;
 
     const client = new CosmosClient({
       endpoint: endpoint,
-      key: keyMatch[1]
+      key,
     });
 
     // Create database if not exists
@@ -613,7 +604,7 @@ async function initializeCosmosDB(databaseName: string): Promise<CosmosInitializ
     }
 
     console.log('✅ Cosmos DB initialization complete\n');
-    return { endpoint, key: keyMatch[1], databaseName: dbName, models };
+    return { endpoint, key, databaseName: dbName, models };
   } catch (error: any) {
     console.error('⚠️  Cosmos DB initialization failed:', error.message);
     if (error.stack) {
@@ -771,10 +762,7 @@ async function startDevEnvironment(options: DevOptions) {
         }
         
         // Initialize Cosmos DB before starting Functions
-        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-        const appName = packageJson.name || 'App';
-        const databaseName = `${appName.charAt(0).toUpperCase() + appName.slice(1)}Database`;
-        
+        const databaseName = getDefaultCosmosDatabaseName();
         const cosmosInitialization = await initializeCosmosDB(databaseName);
         if (options.seedEnv && cosmosInitialization) {
           await applyDevSeedEnvironment({
