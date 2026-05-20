@@ -31,6 +31,7 @@ Zod スキーマから自動的に CRUD 操作を生成する Scaffold 機能を
 - **🧠 MCP + Machine Interface** - `swallowkit machine ...` で inspection / validation / generation を決定的な JSON として公開し、`swallowkit-mcp` で同じ機能を MCP stdio として提供
 - **🔌 外部データコネクタ** - MySQL・PostgreSQL・REST API などの外部データソースを Cosmos DB と並行して統合。同じ Zod 駆動の scaffold ワークフローで完全な型安全性を維持
 - **🔐 認証・認可** - カスタム JWT 認証（外部 RDB ユーザーストア）とモデル単位のロールベースアクセス制御を組み込みサポート。将来の Static Web Apps 認証統合も計画中
+- **🧪 再利用可能な Dev Seed** - Cosmos DB Emulator の実データをそのまま seed 化し、デモ・再現確認・オンボーディング・ローカル検証に再利用可能
 - **🧩 [VS Code 拡張機能](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)** - init/scaffold/dev の GUI ウィザード、モデルファイル右クリックでスキャフォールド、開発サーバーステータスバー、TypeScript スニペット
 
 
@@ -149,6 +150,27 @@ pnpm dlx swallowkit dev
 
 - **Python バックエンド**: `swallowkit dev` はローカルの Python 実行環境管理に **uv** を使います。プロジェクト内の `.uv/bin` に `uv` 本体を導入または再利用し、`.uv/python` に uv 管理の Python を保持し、Functions 本体用に `functions/.venv`、Python スキーマ生成用に `functions/.codegen-venv` を作成します。
 - **C# バックエンド**: Azure Functions isolated worker はコールドスタート時にワーカービルドが入るため、応答開始まで少し時間がかかることがあります。`swallowkit dev` は Functions ホストが HTTP 応答できる状態になるまで待ってから、バックエンド URL を ready として表示します。
+
+手元の Cosmos DB Emulator データをそのまま seed として再利用したい場合は、テンプレート生成に加えて、現在の Emulator データを `dev-seeds/<environment>/` へ書き出せます：
+
+```bash
+npx swallowkit create-dev-seeds local
+# dev-seeds/local/*.json を手で編集して利用
+npx swallowkit dev --seed-env local
+
+# または、現在 Emulator に入っているデータをそのまま seed 化
+npx swallowkit create-dev-seeds local --from-emulator --force
+npx swallowkit dev --seed-env local
+```
+
+この機能のメリット:
+
+- アプリを触りながら登録した現実的なデータを、そのまま検証用 seed として保存できる
+- デモ、障害再現、レビュー、オンボーディングで同じ状態をすぐ再現できる
+- Cosmos DB Emulator からの手作業コピーを避けつつ、スキーマ対応したファイル構成で管理できる
+- `swallowkit dev --seed-env <environment>` で既知の状態に素早く戻せる
+
+書き出された JSON では `_etag` などの Cosmos システムプロパティは自動除去され、再投入しやすい形になります。
 
 ### 5. フロントエンドから使用
 

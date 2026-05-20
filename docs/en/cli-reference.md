@@ -797,7 +797,18 @@ Use environment-specific seed data when you want reproducible emulator state for
 npx swallowkit create-dev-seeds local
 # edit dev-seeds/local/*.json
 npx swallowkit dev --seed-env local
+
+# or capture the current emulator data as reusable seeds
+npx swallowkit create-dev-seeds local --from-emulator --force
+npx swallowkit dev --seed-env local
 ```
+
+Useful scenarios:
+
+- preserve realistic data you entered manually while exercising the app
+- replay the same state for demos, onboarding, or acceptance checks
+- share a broken or edge-case dataset when reproducing bugs across the team
+- reset the emulator back to a known-good state before verification
 
 Rules:
 
@@ -1013,7 +1024,7 @@ See [Scaffold Guide](./scaffold-guide.md) for more information.
 
 ## swallowkit create-dev-seeds
 
-Generate JSON seed templates for a named local environment from the current schemas in `shared/models/`.
+Generate JSON seed templates for a named local environment from the current schemas in `shared/models/`, or export the current local Cosmos DB Emulator data into the same layout.
 
 ### Usage
 
@@ -1034,6 +1045,7 @@ pnpm dlx swallowkit create-dev-seeds <environment> [options]
 | `--models-dir <dir>` | Models directory to read schemas from | `shared/models` |
 | `--seeds-dir <dir>` | Base directory for generated seed environments | `dev-seeds` |
 | `--force` | Overwrite existing JSON seed files | `false` |
+| `--from-emulator` | Export current local Cosmos DB Emulator data instead of generating templates | `false` |
 
 ### What It Generates
 
@@ -1055,6 +1067,15 @@ Template values are inferred from schema field types:
 - `...At`/date fields -> ISO timestamp sample
 - nested schemas -> nested JSON objects
 
+With `--from-emulator`, SwallowKit reads `CosmosDBConnection` and `COSMOS_DB_DATABASE_NAME` from `functions/local.settings.json`, exports documents from the matching local Cosmos DB Emulator containers, and strips Cosmos system properties such as `_etag` so the files can be replayed safely.
+
+Why this helps:
+
+- convert real local test data into reusable assets without manual copying
+- keep demo and verification datasets close to actual app behavior
+- make regression and bug-reproduction data easy to share
+- plug directly into the existing `swallowkit dev --seed-env <environment>` workflow
+
 ### Typical Workflow
 
 ```bash
@@ -1062,6 +1083,10 @@ npx swallowkit create-model todo
 npx swallowkit scaffold shared/models/todo.ts
 npx swallowkit create-dev-seeds local
 # edit dev-seeds/local/todo.json
+npx swallowkit dev --seed-env local
+
+# or export your current local Cosmos Emulator data
+npx swallowkit create-dev-seeds local --from-emulator --force
 npx swallowkit dev --seed-env local
 ```
 

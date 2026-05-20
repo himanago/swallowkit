@@ -33,6 +33,7 @@ Featuring Scaffold functionality to automatically generate CRUD operations from 
 - **🧠 MCP + Machine Interface** - `swallowkit machine ...` exposes deterministic JSON inspection / validation / generation commands, and `swallowkit-mcp` exposes the same capabilities over MCP stdio
 - **🔌 External Data Connectors** - Integrate MySQL, PostgreSQL, REST APIs, and other external data sources alongside Cosmos DB — same Zod-driven scaffold workflow with full type safety
 - **🔐 Authentication & Authorization** - Built-in support for custom JWT auth (with external RDB user stores) and role-based access control per model — with planned Static Web Apps auth integration
+- **🧪 Reusable Dev Seeds** - Turn real Cosmos DB Emulator data into reusable seed files for demos, regression checks, onboarding, and local verification
 - **🧩 [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)** - GUI wizard for init/scaffold/dev, right-click model scaffolding, dev server status bar, and TypeScript snippets
 
 ## 📚 Documentation
@@ -172,6 +173,13 @@ This workflow is designed for local debugging against the Cosmos DB Emulator:
 - containers without a matching JSON file are left untouched
 - if `--seed-env` is omitted, or `dev-seeds/<environment>/` does not exist, current emulator data is preserved
 - exported files strip Cosmos system properties such as `_etag` before saving so they can be replayed safely
+
+Why this is useful:
+
+- preserve realistic local data that you registered manually while testing the app
+- replay the same state for demos, onboarding sessions, and bug reproduction
+- keep a schema-aligned seed snapshot without hand-copying documents out of the emulator
+- quickly reset your emulator to a known-good state before validating behavior
 
 Example file layout:
 
