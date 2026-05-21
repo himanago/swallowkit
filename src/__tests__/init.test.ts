@@ -48,14 +48,20 @@ module.exports = nextConfig;
     expect(source).toContain("new HostBuilder()");
     expect(source).toContain(".ConfigureFunctionsWorkerDefaults()");
     expect(source).toContain("services.AddApplicationInsightsTelemetryWorkerService()");
+    expect(source).toContain("services.ConfigureFunctionsApplicationInsights()");
+    expect(source).toContain("Microsoft.Azure.Functions.Worker.ApplicationInsights");
     expect(source).not.toContain("Microsoft.Azure.Functions.Worker.Builder");
     expect(source).not.toContain("FunctionsApplication.CreateBuilder");
-    expect(source).not.toContain("ConfigureFunctionsApplicationInsights");
   });
 
   it("excludes nested generated bin and obj files from the C# Functions project", () => {
     const source = buildCSharpFunctionsProjectSource();
 
+    expect(source).toContain("<TargetFramework>net10.0</TargetFramework>");
+    expect(source).toContain('Version="2.52.0"');
+    expect(source).toContain('Version="3.3.0"');
+    expect(source).toContain('Version="2.0.7"');
+    expect(source).toContain('Version="2.50.0"');
     expect(source).toContain('<Compile Remove="generated\\**\\bin\\**\\*.cs;generated\\**\\obj\\**\\*.cs" />');
     expect(source).toContain('<EmbeddedResource Remove="generated\\**\\bin\\**;generated\\**\\obj\\**" />');
     expect(source).toContain('<None Remove="generated\\**\\bin\\**;generated\\**\\obj\\**" />');

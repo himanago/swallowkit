@@ -349,10 +349,20 @@ The MCP server is intentionally a thin adapter with explicit tools only. It dele
 - Node.js 22.x
 - **pnpm** (recommended): `corepack enable` or `npm install -g pnpm`
   - npm also works — SwallowKit auto-detects the package manager (if pnpm is installed, it is always preferred)
+- Azure CLI (`az`) for provisioning and deployment
+- Azure Functions Core Tools 4.x for local Azure Functions development
 - Azure Cosmos DB Emulator (local development)
   - [Official documentation (vNext recommended)](https://learn.microsoft.com/en-us/azure/cosmos-db/emulator-linux)
     - Windows: [Download](https://aka.ms/cosmosdb-emulator)
     - Docker: `docker run -p 8081:8081 mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator`
+
+### Backend-specific requirements
+
+- TypeScript/Node.js backend: no extra runtime requirement
+- Python backend: uv is used for local environment management
+- C# backend: .NET 10 SDK and Azure Functions Core Tools 4.6.0 or later
+
+> Note: C# project generation now targets .NET 10 only. The .NET 8 generation path is no longer kept.
 
 ## 🚀 Deploy to Azure
 

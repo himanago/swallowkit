@@ -66,7 +66,7 @@ function getFunctionsWorkerRuntime(backendLanguage: BackendLanguage): string {
 
 function getFunctionsRuntimeConfig(backendLanguage: BackendLanguage): { name: string; version: string } {
   if (backendLanguage === "csharp") {
-    return { name: "dotnet-isolated", version: "8.0" };
+    return { name: "dotnet-isolated", version: "10.0" };
   }
   if (backendLanguage === "python") {
     return { name: "python", version: "3.11" };
@@ -389,14 +389,17 @@ export function injectSwallowKitNextConfig(nextConfigContent: string, projectNam
 }
 
 export function buildCSharpFunctionsProgramSource(): string {
-  return `using Microsoft.Extensions.DependencyInjection;
+  return `using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Azure.Functions.Worker.ApplicationInsights;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
     .ConfigureServices(services =>
     {
         services.AddApplicationInsightsTelemetryWorkerService();
+        services.ConfigureFunctionsApplicationInsights();
     })
     .Build();
 
@@ -407,7 +410,7 @@ host.Run();
 export function buildCSharpFunctionsProjectSource(): string {
   return `<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AzureFunctionsVersion>v4</AzureFunctionsVersion>
     <OutputType>Exe</OutputType>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -421,12 +424,12 @@ export function buildCSharpFunctionsProjectSource(): string {
   <ItemGroup>
     <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.47.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="Azure.Identity" Version="1.13.2" />
-    <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="1.23.0" />
-    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.2.0" />
-    <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="1.18.0" OutputItemType="Analyzer" />
+    <PackageReference Include="Azure.Identity" Version="1.17.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.7" OutputItemType="Analyzer" />
     <PackageReference Include="Microsoft.ApplicationInsights.WorkerService" Version="2.22.0" />
-    <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="1.2.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.50.0" />
   </ItemGroup>
 </Project>
 `;
@@ -3067,7 +3070,7 @@ jobs:
 ${commonSetup}      - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Publish Functions
         run: |
@@ -3243,7 +3246,7 @@ variables:
 steps:
 ${commonSetup}  - task: UseDotNet@2
     inputs:
-      version: '8.0.x'
+      version: '10.0.x'
     displayName: 'Install .NET SDK'
 
   - script: |

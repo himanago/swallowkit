@@ -124,7 +124,7 @@ git push origin main
 ### Azure Functions
 
 - **プラン**: Flex Consumption
-- **ランタイム**: 初期化時に選択（TypeScript/Node.js 22、C#/.NET Isolated 8.0、Python 3.11）
+- **ランタイム**: 初期化時に選択（TypeScript/Node.js 22、C#/.NET Isolated 10.0、Python 3.11）
 - **機能**:
   - HTTP トリガー
   - Cosmos DB バインディング
