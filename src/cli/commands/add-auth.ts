@@ -24,6 +24,7 @@ import {
   generateBFFCallFunctionWithAuth,
 } from "../../core/scaffold/auth-generator";
 import { syncProjectManifest } from "../../core/project/manifest";
+import { buildSharedTsConfig } from "./init";
 
 interface AddAuthOptions {
   provider?: string;
@@ -190,26 +191,7 @@ function ensureSharedBuildInfrastructure(cwd: string): void {
   // Ensure tsconfig.json exists
   const tsconfigPath = path.join(sharedDir, "tsconfig.json");
   if (!fs.existsSync(tsconfigPath)) {
-    const tsconfig = {
-      compilerOptions: {
-        target: "ES2020",
-        module: "commonjs",
-        moduleResolution: "node",
-        lib: ["ES2020"],
-        outDir: "dist",
-        rootDir: ".",
-        declaration: true,
-        declarationMap: true,
-        sourceMap: true,
-        strict: true,
-        esModuleInterop: true,
-        skipLibCheck: true,
-        forceConsistentCasingInFileNames: true,
-      },
-      include: ["index.ts", "models/**/*"],
-      exclude: ["node_modules", "dist"],
-    };
-    fs.writeFileSync(tsconfigPath, JSON.stringify(tsconfig, null, 2), "utf-8");
+    fs.writeFileSync(tsconfigPath, JSON.stringify(buildSharedTsConfig(), null, 2), "utf-8");
     console.log(` Created: shared/tsconfig.json`);
   }
 }

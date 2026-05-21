@@ -1,6 +1,7 @@
 import {
   buildGeneratedProjectDependencies,
   buildGeneratedProjectDevDependencies,
+  buildSharedTsConfig,
   buildSwallowKitMcpProjectConfigSource,
   buildCSharpFunctionsProgramSource,
   buildCSharpFunctionsProjectSource,
@@ -73,6 +74,13 @@ module.exports = nextConfig;
     expect(source).toContain("language: 'typescript'");
     expect(source).toContain("baseUrl: process.env.BACKEND_FUNCTIONS_BASE_URL");
     expect(source).not.toContain("import('swallowkit').SwallowKitConfig");
+  });
+
+  it("builds shared tsconfig with non-deprecated module resolution settings", () => {
+    const tsconfig = buildSharedTsConfig();
+
+    expect(tsconfig.compilerOptions.module).toBe("Node16");
+    expect(tsconfig.compilerOptions.moduleResolution).toBe("node16");
   });
 
   it("does not add swallowkit as a generated project dependency", () => {

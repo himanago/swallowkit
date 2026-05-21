@@ -74,6 +74,28 @@ function getFunctionsRuntimeConfig(backendLanguage: BackendLanguage): { name: st
   return { name: "node", version: "22" };
 }
 
+export function buildSharedTsConfig() {
+  return {
+    compilerOptions: {
+      target: "ES2020",
+      module: "Node16",
+      moduleResolution: "node16",
+      lib: ["ES2020"],
+      outDir: "dist",
+      rootDir: ".",
+      declaration: true,
+      declarationMap: true,
+      sourceMap: true,
+      strict: true,
+      esModuleInterop: true,
+      skipLibCheck: true,
+      forceConsistentCasingInFileNames: true,
+    },
+    include: ["index.ts", "models/**/*"],
+    exclude: ["node_modules", "dist"],
+  };
+}
+
 async function promptBackendLanguage(): Promise<BackendLanguage> {
   const response = await prompts({
     type: "select",
@@ -892,28 +914,9 @@ async function createSharedPackage(projectDir: string, projectName: string) {
   );
 
   // shared/tsconfig.json
-  const sharedTsConfig = {
-    compilerOptions: {
-      target: 'ES2020',
-      module: 'commonjs',
-      moduleResolution: 'node',
-      lib: ['ES2020'],
-      outDir: 'dist',
-      rootDir: '.',
-      declaration: true,
-      declarationMap: true,
-      sourceMap: true,
-      strict: true,
-      esModuleInterop: true,
-      skipLibCheck: true,
-      forceConsistentCasingInFileNames: true,
-    },
-    include: ['index.ts', 'models/**/*'],
-    exclude: ['node_modules', 'dist'],
-  };
   fs.writeFileSync(
     path.join(sharedDir, 'tsconfig.json'),
-    JSON.stringify(sharedTsConfig, null, 2)
+    JSON.stringify(buildSharedTsConfig(), null, 2)
   );
 
   // shared/index.ts (empty re-export file, scaffold will add entries)
@@ -3476,5 +3479,4 @@ ${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
 
   console.log('✅ Azure Pipelines created\n');
 }
-
 

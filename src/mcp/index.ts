@@ -20,13 +20,19 @@ type ToolDefinition = {
   inputSchema: z.ZodTypeAny;
   handler: (input: any) => Promise<ToolContentResult>;
 };
+type ExecaModule = typeof import("execa");
+
+// Keep this as a runtime dynamic import so CommonJS builds do not rewrite it to require().
+const importModule = new Function("specifier", "return import(specifier);") as (
+  specifier: string
+) => Promise<ExecaModule>;
 
 function resolveMachineCliEntrypoint(): string {
   return path.resolve(__dirname, "..", "cli", "index.js");
 }
 
 async function defaultMachineCliRunner(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const { execa } = await import("execa");
+  const { execa } = await importModule("execa");
   const result = await execa(process.execPath, [resolveMachineCliEntrypoint(), "machine", ...args], {
     reject: false,
   });

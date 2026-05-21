@@ -114,4 +114,13 @@ describe("SwallowKit MCP tool definitions", () => {
       });
     });
   });
+
+  it("preserves a runtime dynamic execa import in the built MCP entrypoint", () => {
+    const entrypoint = path.resolve(__dirname, "..", "..", "dist", "mcp", "index.js");
+    expect(fs.existsSync(entrypoint)).toBe(true);
+
+    const source = fs.readFileSync(entrypoint, "utf8");
+    expect(source).toContain('new Function("specifier", "return import(specifier);")');
+    expect(source).not.toContain('require("execa")');
+  });
 });
