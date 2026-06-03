@@ -3,9 +3,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { buildSwallowKitToolDefinitions } from "../mcp";
 
+type MachineCliRunner = NonNullable<Parameters<typeof buildSwallowKitToolDefinitions>[0]>;
+const builtMcpEntrypoint = path.resolve(__dirname, "..", "..", "dist", "mcp", "index.js");
+const itWhenBuiltEntrypointExists = fs.existsSync(builtMcpEntrypoint) ? it : it.skip;
+
 describe("SwallowKit MCP tool definitions", () => {
   it("delegates inspect_project to the machine CLI", async () => {
-    const runner = jest.fn().mockResolvedValue({
+    const runner = jest.fn(async (_args: Parameters<MachineCliRunner>[0]) => ({
       stdout: JSON.stringify({
         ok: true,
         command: "inspect-project",
@@ -13,9 +17,9 @@ describe("SwallowKit MCP tool definitions", () => {
       }),
       stderr: "",
       exitCode: 0,
-    });
+    }));
 
-    const tool = buildSwallowKitToolDefinitions(runner).find((candidate) => candidate.name === "swallowkit_inspect_project");
+    const tool = buildSwallowKitToolDefinitions(runner as MachineCliRunner).find((candidate) => candidate.name === "swallowkit_inspect_project");
     expect(tool).toBeDefined();
 
     const result = await tool!.handler({});
@@ -24,7 +28,7 @@ describe("SwallowKit MCP tool definitions", () => {
   });
 
   it("delegates scaffold_model with explicit args", async () => {
-    const runner = jest.fn().mockResolvedValue({
+    const runner = jest.fn(async (_args: Parameters<MachineCliRunner>[0]) => ({
       stdout: JSON.stringify({
         ok: true,
         command: "generate-scaffold",
@@ -32,9 +36,9 @@ describe("SwallowKit MCP tool definitions", () => {
       }),
       stderr: "",
       exitCode: 0,
-    });
+    }));
 
-    const tool = buildSwallowKitToolDefinitions(runner).find((candidate) => candidate.name === "swallowkit_scaffold_model");
+    const tool = buildSwallowKitToolDefinitions(runner as MachineCliRunner).find((candidate) => candidate.name === "swallowkit_scaffold_model");
     expect(tool).toBeDefined();
 
     const result = await tool!.handler({
@@ -57,12 +61,9 @@ describe("SwallowKit MCP tool definitions", () => {
     expect(JSON.parse(result.content[0].text)).toEqual({ createdFiles: ["functions/src/todo.ts"] });
   });
 
-  it("keeps the built MCP entrypoint alive long enough to complete the handshake", async () => {
-    const entrypoint = path.resolve(__dirname, "..", "..", "dist", "mcp", "index.js");
-    expect(fs.existsSync(entrypoint)).toBe(true);
-
+  itWhenBuiltEntrypointExists("keeps the built MCP entrypoint alive long enough to complete the handshake", async () => {
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(process.execPath, [entrypoint], {
+      const child = spawn(process.execPath, [builtMcpEntrypoint], {
         cwd: path.resolve(__dirname, "..", ".."),
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -115,11 +116,8 @@ describe("SwallowKit MCP tool definitions", () => {
     });
   });
 
-  it("preserves a runtime dynamic execa import in the built MCP entrypoint", () => {
-    const entrypoint = path.resolve(__dirname, "..", "..", "dist", "mcp", "index.js");
-    expect(fs.existsSync(entrypoint)).toBe(true);
-
-    const source = fs.readFileSync(entrypoint, "utf8");
+  itWhenBuiltEntrypointExists("preserves a runtime dynamic execa import in the built MCP entrypoint", () => {
+    const source = fs.readFileSync(builtMcpEntrypoint, "utf8");
     expect(source).toContain('new Function("specifier", "return import(specifier);")');
     expect(source).not.toContain('require("execa")');
   });

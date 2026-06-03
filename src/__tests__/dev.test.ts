@@ -237,7 +237,7 @@ describe("dev CLI parser", () => {
 
     expect(optionsAfterCommand).toMatchObject(expected);
     expect(optionsBeforeCommand).toMatchObject(expected);
-    expect(optionsBeforeCommand).toMatchObject(optionsAfterCommand);
+    expect({ ...optionsBeforeCommand }).toMatchObject({ ...optionsAfterCommand });
   });
 
   it("keeps Azure Functions enabled by default", async () => {
