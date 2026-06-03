@@ -89,7 +89,7 @@ module.exports = nextConfig;
     expect(dependencies).toEqual({
       "@azure/cosmos": "^4.0.0",
       applicationinsights: "^3.3.0",
-      "@sample-app/shared": "*",
+      "@sample-app/shared": "workspace:*",
     });
     expect(dependencies).not.toHaveProperty("swallowkit");
   });

@@ -477,7 +477,7 @@ export function buildGeneratedProjectDependencies(projectName: string): Record<s
   return {
     '@azure/cosmos': '^4.0.0',
     'applicationinsights': '^3.3.0',
-    [`@${projectName}/shared`]: '*',
+    [`@${projectName}/shared`]: 'workspace:*',
   };
 }
 
@@ -561,10 +561,6 @@ async function addSwallowKitFiles(
     'functions:start': getFunctionsStartScript(pm, backendLanguage),
   };
 
-  if (pm === 'pnpm') {
-    packageJson.packageManager = 'pnpm@latest';
-  }
-  
   packageJson.engines = {
     node: '20.x',
   };
@@ -892,6 +888,7 @@ async function createSharedPackage(projectDir: string, projectName: string) {
 
   // shared/package.json
   const sharedPackageJson = {
+    private: true,
     name: `@${projectName}/shared`,
     version: '1.0.0',
     description: 'Shared Zod models — Single Source of Truth for validation schemas',
@@ -1048,7 +1045,7 @@ function createTypeScriptFunctionsProject(projectDir: string, functionsDir: stri
       '@azure/cosmos': '^4.0.0',
       '@azure/identity': '^4.0.0',
       zod: '>=3.25.0',
-      [`@${path.basename(projectDir)}/shared`]: '*',
+      [`@${path.basename(projectDir)}/shared`]: 'workspace:*',
     },
     devDependencies: {
       '@types/node': '^20.0.0',

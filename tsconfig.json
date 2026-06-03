@@ -12,7 +12,8 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "moduleResolution": "node",
+    "types": ["node"],
+    "ignoreDeprecations": "5.0",
     "allowSyntheticDefaultImports": true,
     "jsx": "react-jsx"
   },
