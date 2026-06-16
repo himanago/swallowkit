@@ -134,7 +134,7 @@ function createMachineProgram(): Command {
     .argument("<model>", "Model file or model name")
     .option("--functions-dir <dir>", "Functions directory", "functions")
     .option("--api-dir <dir>", "API routes directory", "app/api")
-    .option("--api-only", "Generate only API artifacts", false)
+    .option("--api-only", "Skip UI components; still update Functions, BFF routes, OpenAPI, and native schema assets", false)
     .action(async (model: string, options: { functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
       await handleMachineAction("generate-scaffold", async () => runMachineScaffoldOperation({
         model,

@@ -13,12 +13,12 @@ using Microsoft.Extensions.Logging;
 
 namespace SwallowKit.Functions;
 
-public sealed class TodoFunctions
+public sealed class TodoCrudFunctions
 {
-    private readonly ILogger<TodoFunctions> _logger;
+    private readonly ILogger<TodoCrudFunctions> _logger;
     private static readonly string ContainerName = "Todos";
 
-    public TodoFunctions(ILogger<TodoFunctions> logger)
+    public TodoCrudFunctions(ILogger<TodoCrudFunctions> logger)
     {
         _logger = logger;
     }

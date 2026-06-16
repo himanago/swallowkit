@@ -1869,7 +1869,7 @@ app.http('{model}-get-all', {
 |------|-----------|---------|
 | Model schema file | \`shared/models/{kebab-case}.ts\` | \`shared/models/todo.ts\` |
 | Schema/type name | PascalCase (same name for both) | \`export const Todo = z.object({...}); export type Todo = z.infer<typeof Todo>;\` |
-| Functions handler file | backend-language specific under \`functions/\` | \`${backendLanguage === 'typescript' ? 'functions/src/todo.ts' : backendLanguage === 'csharp' ? 'functions/Crud/TodoFunctions.cs' : 'functions/blueprints/todo.py'}\` |
+| Functions handler file | backend-language specific under \`functions/\` | \`${backendLanguage === 'typescript' ? 'functions/src/todo.ts' : backendLanguage === 'csharp' ? 'functions/Crud/TodoCrudFunctions.cs' : 'functions/blueprints/todo.py'}\` |
 | Functions handler name | \`{camelCase}-{operation}\` | \`todo-get-all\`, \`todo-create\` |
 | API route path | \`/api/{camelCase}\` | \`/api/todo\`, \`/api/todo/{id}\` |
 | BFF route file | \`app/api/{kebab-case}/route.ts\` | \`app/api/todo/route.ts\` |

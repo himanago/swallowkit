@@ -93,7 +93,7 @@ The scaffold command generates the following files:
 
 **Azure Functions (Backend):**
 - TypeScript backend: `functions/src/product.ts` - CRUD Azure Functions
-- C# backend: `functions/Crud/ProductFunctions.cs` - starter CRUD handlers
+- C# backend: `functions/Crud/ProductCrudFunctions.cs` - starter CRUD handlers
 - Python backend: `functions/blueprints/product.py` - starter CRUD blueprint
 
 **Next.js BFF API Routes:**

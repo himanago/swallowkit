@@ -198,7 +198,7 @@ function buildEntityRoutes(
     : backendLanguage === "csharp"
       ? isConnectorEntity
         ? `functions/Connectors/${entity.name}ConnectorFunctions.cs`
-        : `functions/Crud/${entity.name}Functions.cs`
+        : `functions/Crud/${entity.name}CrudFunctions.cs`
       : `functions/blueprints/${modelKebab.replace(/-/g, "_")}.py`;
 
   const operations = entity.connectorConfig?.operations ?? ["getAll", "getById", "create", "update", "delete"];

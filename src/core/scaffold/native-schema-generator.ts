@@ -601,6 +601,31 @@ function buildGeneratedPythonModelsInitSource(models: ModelInfo[]): string {
   return models.map((model) => `from .${toSnakeCase(model.name)} import ${model.name}`).join("\n") + "\n";
 }
 
+function mergePythonInitSource(existingSource: string | undefined, generatedSource: string): string {
+  if (!existingSource) {
+    return generatedSource;
+  }
+
+  const existingLines = existingSource.split(/\r?\n/);
+  const lineSet = new Set(existingLines);
+  const missingLines = generatedSource
+    .trim()
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0 && !lineSet.has(line));
+
+  if (missingLines.length === 0) {
+    return existingSource.endsWith("\n") ? existingSource : `${existingSource}\n`;
+  }
+
+  const normalizedExisting = existingSource.endsWith("\n") ? existingSource : `${existingSource}\n`;
+  return `${normalizedExisting}${missingLines.join("\n")}\n`;
+}
+
+function writeMergedPythonInitFile(filePath: string, generatedSource: string): void {
+  const existingSource = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : undefined;
+  fs.writeFileSync(filePath, mergePythonInitSource(existingSource, generatedSource), "utf-8");
+}
+
 function ensureCSharpCodegenProjectFiles(functionsRoot: string): void {
   const toolManifestPath = path.join(functionsRoot, ".config", "dotnet-tools.json");
   fs.mkdirSync(path.dirname(toolManifestPath), { recursive: true });
@@ -752,8 +777,8 @@ async function generatePythonSchemaArtifacts(
   const packageRoot = path.join(outputDir, "backend_models");
   const modelsRoot = path.join(packageRoot, "models");
   fs.mkdirSync(modelsRoot, { recursive: true });
-  fs.writeFileSync(path.join(packageRoot, "__init__.py"), buildGeneratedPythonPackageInitSource(models), "utf-8");
-  fs.writeFileSync(path.join(modelsRoot, "__init__.py"), buildGeneratedPythonModelsInitSource(models), "utf-8");
+  writeMergedPythonInitFile(path.join(packageRoot, "__init__.py"), buildGeneratedPythonPackageInitSource(models));
+  writeMergedPythonInitFile(path.join(modelsRoot, "__init__.py"), buildGeneratedPythonModelsInitSource(models));
 
   for (const model of models) {
     const modelPath = getPythonSchemaModelPath(outputDir, model.name);
@@ -785,7 +810,6 @@ export async function generateLanguageSchemaArtifacts(
     backendLanguage === "csharp" ? "csharp-models" : "python-models"
   );
 
-  fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
 
   if (backendLanguage === "csharp") {

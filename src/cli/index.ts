@@ -142,7 +142,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
     .description("Generate CRUD code for Azure Functions and Next.js BFF from Zod models")
     .option("--functions-dir <dir>", "Azure Functions directory", "functions")
     .option("--api-dir <dir>", "Next.js API routes directory", "app/api")
-    .option("--api-only", "Generate API only, skip UI components", false)
+    .option("--api-only", "Skip UI components; still update Functions, BFF routes, OpenAPI, and native schema assets", false)
     .action((model, options) => {
       scaffoldCommand({
         model,

@@ -1,7 +1,18 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { EventEmitter } from "events";
+import * as childProcess from "child_process";
 import { runMachineCli } from "../machine";
+
+jest.mock("child_process", () => {
+  const actual = jest.requireActual("child_process");
+  return {
+    ...actual,
+    spawn: jest.fn(),
+    spawnSync: jest.fn(),
+  };
+});
 
 const repoRoot = process.cwd();
 
@@ -66,6 +77,59 @@ function createProjectFixture(rootDir: string, options: { includeGeneratedArtifa
       "import { CosmosClient } from '@azure/cosmos';\nexport async function GET() { return Response.json({ ok: Boolean(CosmosClient) }); }\n"
     );
   }
+}
+
+function createCSharpScaffoldFixture(rootDir: string): void {
+  writeFile(path.join(rootDir, "package.json"), JSON.stringify({ name: "sample-app" }, null, 2));
+  writeFile(
+    path.join(rootDir, "swallowkit.config.js"),
+    `module.exports = {
+  backend: {
+    language: 'csharp',
+  },
+  api: {
+    endpoint: '/api/_swallowkit',
+  },
+};
+`
+  );
+  writeFile(path.join(rootDir, "shared", "package.json"), JSON.stringify({ name: "@sample-app/shared" }, null, 2));
+  writeFile(path.join(rootDir, "shared", "index.ts"), "export {};\n");
+  writeFile(path.join(rootDir, "shared", "models", "estimate.ts"), createModelSource("Estimate"));
+  writeFile(path.join(rootDir, "shared", "models", "member.ts"), createModelSource("Member"));
+  writeFile(path.join(rootDir, "shared", "models", "team.ts"), createModelSource("Team"));
+  fs.mkdirSync(path.join(rootDir, "node_modules"), { recursive: true });
+  fs.symlinkSync(
+    path.join(repoRoot, "node_modules", "zod"),
+    path.join(rootDir, "node_modules", "zod"),
+    "junction"
+  );
+
+  writeFile(
+    path.join(rootDir, "functions", "Crud", "EstimateFunctions.cs"),
+    "namespace SwallowKit.Functions;\npublic sealed class EstimateFunctions { public void Approve() {} public void Submit() {} public void Remand() {} }\n"
+  );
+  writeFile(path.join(rootDir, "functions", "generated", "csharp-models", "README.md"), "keep generated readme\n");
+  writeFile(path.join(rootDir, "functions", "generated", "csharp-models", "SwallowKitBackendModels.csproj"), "<Project />\n");
+  writeFile(path.join(rootDir, "functions", "generated", "csharp-models", "SwallowKitBackendModels.sln"), "solution\n");
+  writeFile(
+    path.join(rootDir, "functions", "generated", "csharp-models", "src", "SwallowKitBackendModels", "Model", "Member.cs"),
+    "// existing member\n"
+  );
+  writeFile(
+    path.join(rootDir, "functions", "generated", "csharp-models", "src", "SwallowKitBackendModels", "Model", "Team.cs"),
+    "// existing team\n"
+  );
+}
+
+function mockSuccessfulSpawn() {
+  const spawnMock = childProcess.spawn as unknown as any;
+  spawnMock.mockImplementation(() => {
+    const child = new EventEmitter() as childProcess.ChildProcess;
+    process.nextTick(() => child.emit("close", 0));
+    return child;
+  });
+  return spawnMock;
 }
 
 function createFreshInitProjectFixture(rootDir: string, backendLanguage: "csharp" | "python" = "csharp"): void {
@@ -247,5 +311,46 @@ describe("machine CLI", () => {
       ])
     );
     expect(fs.existsSync(path.join(tempDir, ".swallowkit", "project.json"))).toBe(true);
+  });
+
+  it("preserves C# custom Functions and shared generated assets when api-only scaffolding one model", async () => {
+    createCSharpScaffoldFixture(tempDir);
+    const spawnSyncMock = childProcess.spawnSync as unknown as any;
+    spawnSyncMock.mockReturnValue({ status: 0 });
+    const spawnMock = mockSuccessfulSpawn();
+
+    try {
+      const { response, exitCode } = await runMachine([
+        "node",
+        "swallowkit",
+        "machine",
+        "generate",
+        "scaffold",
+        "estimate",
+        "--api-only",
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(response.ok).toBe(true);
+      expect(response.command).toBe("generate-scaffold");
+      expect(response.data.createdFiles).toEqual(
+        expect.arrayContaining([
+          "functions/Crud/EstimateCrudFunctions.cs",
+          "app/api/estimate/route.ts",
+          "app/api/estimate/[id]/route.ts",
+        ])
+      );
+      expect(response.data.deletedFiles).toEqual([]);
+      expect(fs.readFileSync(path.join(tempDir, "functions", "Crud", "EstimateFunctions.cs"), "utf-8")).toContain("Approve");
+      expect(fs.existsSync(path.join(tempDir, "functions", "generated", "csharp-models", "README.md"))).toBe(true);
+      expect(fs.existsSync(path.join(tempDir, "functions", "generated", "csharp-models", "SwallowKitBackendModels.csproj"))).toBe(true);
+      expect(fs.existsSync(path.join(tempDir, "functions", "generated", "csharp-models", "SwallowKitBackendModels.sln"))).toBe(true);
+      expect(fs.readFileSync(path.join(tempDir, "functions", "generated", "csharp-models", "src", "SwallowKitBackendModels", "Model", "Member.cs"), "utf-8")).toBe("// existing member\n");
+      expect(fs.readFileSync(path.join(tempDir, "functions", "generated", "csharp-models", "src", "SwallowKitBackendModels", "Model", "Team.cs"), "utf-8")).toBe("// existing team\n");
+      expect(fs.existsSync(path.join(tempDir, "functions", "generated", "csharp-models", "src", "SwallowKitBackendModels", "Model", "Estimate.cs"))).toBe(true);
+    } finally {
+      spawnMock.mockReset();
+      spawnSyncMock.mockReset();
+    }
   });
 });

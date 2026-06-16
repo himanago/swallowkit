@@ -910,7 +910,11 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 
 ### Options
 
-Currently no options.
+| Option | Description | Default |
+| --- | --- | --- |
+| `--functions-dir <dir>` | Azure Functions directory | `functions` |
+| `--api-dir <dir>` | Next.js API routes directory | `app/api` |
+| `--api-only` | Skip UI components only. Functions, BFF routes, OpenAPI, and native schema assets are still updated. | `false` |
 
 ### Connector model behavior
 

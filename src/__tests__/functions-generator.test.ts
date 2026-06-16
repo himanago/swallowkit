@@ -70,7 +70,7 @@ describe("generateCompactAzureFunctionsCRUD", () => {
   it("generates C# Cosmos-backed CRUD handlers", () => {
     const model = createBasicModelInfo();
     const code = generateCSharpAzureFunctionsCRUD(model);
-    expect(code).toContain("public sealed class TodoFunctions");
+    expect(code).toContain("public sealed class TodoCrudFunctions");
     expect(code).toContain('[Function("todoGetAll")]');
     expect(code).toContain('Route = "todo/{id}"');
     expect(code).toContain("CreateCosmosClient()");

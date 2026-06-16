@@ -418,7 +418,7 @@ ${authCatchBlock}      context.error(\`Error deleting item from \${containerName
 export function generateCSharpAzureFunctionsCRUD(model: ModelInfo, authPolicy?: ModelAuthPolicy): string {
   const modelName = model.name;
   const modelCamel = toCamelCase(modelName);
-  const className = `${modelName}Functions`;
+  const className = `${modelName}CrudFunctions`;
   const containerName = modelName.endsWith('s') ? modelName : `${modelName}s`;
 
   const partitionKeyPath = model.partitionKey;

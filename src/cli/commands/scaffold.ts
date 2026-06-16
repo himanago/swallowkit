@@ -120,6 +120,10 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
       ? [modelInfo]
       : await collectModelGraph(modelPath);
 
+    if (options.apiOnly) {
+      console.log("ℹ️  --api-only skips UI generation only; Functions, BFF routes, OpenAPI, and native schema assets are still updated.");
+    }
+
     // 5. Generate BFF callFunction helper
     await generateCallFunctionHelper();
 
@@ -351,7 +355,7 @@ async function generateFunctionsCode(
 
   if (backendLanguage === "csharp") {
     const crudDir = path.join(process.cwd(), functionsDir, "Crud");
-    const functionFilePath = path.join(crudDir, `${modelInfo.name}Functions.cs`);
+    const functionFilePath = path.join(crudDir, `${modelInfo.name}CrudFunctions.cs`);
     fs.mkdirSync(crudDir, { recursive: true });
 
     // Remove init-generated template (singular) to avoid route conflicts

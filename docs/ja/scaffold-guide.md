@@ -93,7 +93,7 @@ scaffold コマンドは以下のファイルを生成します：
 
 **Azure Functions（バックエンド）:**
 - TypeScript バックエンド: `functions/src/product.ts` - CRUD Azure Functions
-- C# バックエンド: `functions/Crud/ProductFunctions.cs` - CRUD スターターハンドラー
+- C# バックエンド: `functions/Crud/ProductCrudFunctions.cs` - CRUD スターターハンドラー
 - Python バックエンド: `functions/blueprints/product.py` - CRUD スターターブループリント
 
 **Next.js BFF API Routes:**
