@@ -17,7 +17,7 @@ import {
 import { createBasicModelInfo } from "./fixtures";
 
 jest.mock("child_process", () => {
-  const actual = jest.requireActual("child_process");
+  const actual = jest.requireActual<typeof import("child_process")>("child_process");
   return {
     ...actual,
     spawn: jest.fn(),
