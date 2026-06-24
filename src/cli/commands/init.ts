@@ -341,109 +341,100 @@ async function createNextJsProject(projectName: string, pm: PackageManager): Pro
 }
 
 async function upgradeNextJs(projectDir: string, version: string, pm: PackageManager): Promise<void> {
-  return new Promise((resolve, reject) => {
-    console.log(`\n📦 Installing Next.js ${version} (to ensure latest security patches)...\n`);
-    
-    // pnpm: pnpm add next@... ; npm: npm install next@...
-    const args = pm === 'pnpm'
-      ? ['add', `next@${version}`, `react@latest`, `react-dom@latest`, '--save-exact']
-      : ['install', `next@${version}`, `react@latest`, `react-dom@latest`, '--save-exact'];
+  console.log(`\n📦 Installing Next.js ${version} (to ensure latest security patches)...\n`);
 
-    const child = spawn(
-      pm,
-      args,
-      {
-        cwd: projectDir,
-        stdio: 'inherit',
-        shell: true,
-      }
-    );
+  // pnpm: pnpm add next@... ; npm: npm install next@...
+  const args = pm === 'pnpm'
+    ? ['add', `next@${version}`, `react@latest`, `react-dom@latest`, '--save-exact']
+    : ['install', `next@${version}`, `react@latest`, `react-dom@latest`, '--save-exact'];
 
-    child.on('close', (code: number | null) => {
-      if (code !== 0) {
-        reject(new Error(`${pm} add next@${version} exited with code ${code}`));
-      } else {
-        console.log(`\n✅ Next.js ${version} installed\n`);
-        resolve();
-      }
-    });
+  await runPackageManagerCommand(pm, args, projectDir, `${pm} add next@${version}`);
 
-    child.on('error', (error: Error) => {
-      reject(error);
-    });
-  });
+  console.log(`\n✅ Next.js ${version} installed\n`);
 }
 
 async function installDependencies(projectDir: string, pm: PackageManager = 'pnpm'): Promise<void> {
   console.log('\n📦 Installing dependencies...\n');
-
-  const { ignoredBuilds } = await runInstallAndDetectIgnoredBuilds(projectDir, pm);
-
+  await runPackageManagerCommand(pm, ['install'], projectDir, `${pm} install`);
   console.log('\n✅ Dependencies installed\n');
-
-  if (pm === 'pnpm' && ignoredBuilds.length > 0) {
-    await maybeApproveBuilds(projectDir, ignoredBuilds);
-  }
 }
 
 /**
- * Run `<pm> install` while passing through stdio so the user sees progress.
- * For pnpm, also tee stdout/stderr to detect the ERR_PNPM_IGNORED_BUILDS warning
- * and extract the affected package names.
+ * Run a package-manager command with stdio passed through to the user.
+ *
+ * For pnpm, additionally tee stdout/stderr to a buffer so that if the command
+ * fails due to `ERR_PNPM_IGNORED_BUILDS`, we can:
+ *   1. detect which packages were ignored,
+ *   2. interactively ask the user whether to approve them, and
+ *   3. run `pnpm approve-builds` followed by a retry of the original command.
  */
-async function runInstallAndDetectIgnoredBuilds(
-  projectDir: string,
+async function runPackageManagerCommand(
   pm: PackageManager,
-): Promise<{ ignoredBuilds: string[] }> {
-  return new Promise((resolve, reject) => {
-    // For npm, we don't need to detect anything — keep simple inherit behavior.
-    if (pm !== 'pnpm') {
-      const child = spawn(pm, ['install'], {
-        cwd: projectDir,
-        stdio: 'inherit',
-        shell: true,
-      });
-      child.on('close', (code) => {
-        if (code !== 0) reject(new Error(`${pm} install exited with code ${code}`));
-        else resolve({ ignoredBuilds: [] });
-      });
-      child.on('error', reject);
-      return;
-    }
+  args: string[],
+  projectDir: string,
+  label: string,
+): Promise<void> {
+  const { code, output } = await spawnAndCapture(pm, args, projectDir, pm === 'pnpm');
 
-    // pnpm: capture output while teeing to the user's terminal.
-    const child = spawn(pm, ['install'], {
+  if (code === 0) return;
+
+  if (pm === 'pnpm') {
+    const ignoredBuilds = parseIgnoredBuilds(output);
+    if (ignoredBuilds.length > 0) {
+      const approved = await maybeApproveBuilds(projectDir, ignoredBuilds);
+      if (approved) {
+        // Retry the original command now that build scripts are approved.
+        const retry = await spawnAndCapture(pm, args, projectDir, true);
+        if (retry.code === 0) return;
+        throw new Error(`${label} exited with code ${retry.code} after approving builds`);
+      }
+    }
+  }
+
+  throw new Error(`${label} exited with code ${code}`);
+}
+
+/**
+ * Spawn a child process inheriting stdin (so interactive prompts still work)
+ * while either inheriting or capturing+teeing stdout/stderr.
+ */
+function spawnAndCapture(
+  pm: PackageManager,
+  args: string[],
+  projectDir: string,
+  capture: boolean,
+): Promise<{ code: number; output: string }> {
+  return new Promise((resolve, reject) => {
+    const stdio: ('inherit' | 'pipe')[] = capture
+      ? ['inherit', 'pipe', 'pipe']
+      : ['inherit', 'inherit', 'inherit'];
+
+    const child = spawn(pm, args, {
       cwd: projectDir,
-      stdio: ['inherit', 'pipe', 'pipe'],
+      stdio,
       shell: true,
     });
 
     let combined = '';
-    child.stdout?.on('data', (chunk: Buffer) => {
-      process.stdout.write(chunk);
-      combined += chunk.toString('utf8');
-    });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      process.stderr.write(chunk);
-      combined += chunk.toString('utf8');
-    });
+    if (capture) {
+      child.stdout?.on('data', (chunk: Buffer) => {
+        process.stdout.write(chunk);
+        combined += chunk.toString('utf8');
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        process.stderr.write(chunk);
+        combined += chunk.toString('utf8');
+      });
+    }
 
-    child.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`${pm} install exited with code ${code}`));
-        return;
-      }
-      resolve({ ignoredBuilds: parseIgnoredBuilds(combined) });
-    });
+    child.on('close', (code) => resolve({ code: code ?? 0, output: combined }));
     child.on('error', reject);
   });
 }
 
 /**
- * Parse pnpm's `Ignored build scripts: foo@1.0.0, bar@2.0.0` warning and return
- * the bare package names (without versions), de-duplicated.
- *
- * Matches both `ERR_PNPM_IGNORED_BUILDS` and the plain `Ignored build scripts:` line.
+ * Parse pnpm's `Ignored build scripts: foo@1.0.0, bar@2.0.0` warning/error and
+ * return the bare package names (without versions), de-duplicated.
  */
 export function parseIgnoredBuilds(output: string): string[] {
   const match = output.match(/Ignored build scripts:\s*([^\n\r]+)/i);
@@ -457,9 +448,14 @@ export function parseIgnoredBuilds(output: string): string[] {
   return Array.from(new Set(list));
 }
 
-async function maybeApproveBuilds(projectDir: string, ignoredBuilds: string[]): Promise<void> {
+/**
+ * Prompt the user and, if approved, run `pnpm approve-builds` followed by
+ * `pnpm rebuild <packages>`. Returns true if the user approved (regardless of
+ * which packages they actually selected inside approve-builds).
+ */
+async function maybeApproveBuilds(projectDir: string, ignoredBuilds: string[]): Promise<boolean> {
   console.log(
-    `\n⚠️  pnpm skipped build scripts for: ${ignoredBuilds.join(', ')}\n` +
+    `\n⚠️  pnpm refused to run build scripts for: ${ignoredBuilds.join(', ')}\n` +
       '   These packages (e.g. sharp) need their build scripts to run correctly.\n',
   );
 
@@ -474,37 +470,25 @@ async function maybeApproveBuilds(projectDir: string, ignoredBuilds: string[]): 
     console.log(
       '\nℹ️  Skipped. You can run `pnpm approve-builds` later inside the project directory.\n',
     );
-    return;
+    return false;
   }
 
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn('pnpm', ['approve-builds'], {
-      cwd: projectDir,
-      stdio: 'inherit',
-      shell: true,
-    });
-    child.on('close', (code) => {
-      if (code !== 0) reject(new Error(`pnpm approve-builds exited with code ${code}`));
-      else resolve();
-    });
-    child.on('error', reject);
-  });
-
-  // After approval, rebuild the approved packages so their native binaries are present.
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn('pnpm', ['rebuild', ...ignoredBuilds], {
-      cwd: projectDir,
-      stdio: 'inherit',
-      shell: true,
-    });
-    child.on('close', (code) => {
-      if (code !== 0) reject(new Error(`pnpm rebuild exited with code ${code}`));
-      else resolve();
-    });
-    child.on('error', reject);
-  });
+  await runSimple('pnpm', ['approve-builds'], projectDir);
+  await runSimple('pnpm', ['rebuild', ...ignoredBuilds], projectDir);
 
   console.log('\n✅ Build scripts approved and packages rebuilt\n');
+  return true;
+}
+
+function runSimple(command: string, args: string[], cwd: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, stdio: 'inherit', shell: true });
+    child.on('close', (code) => {
+      if (code !== 0) reject(new Error(`${command} ${args.join(' ')} exited with code ${code}`));
+      else resolve();
+    });
+    child.on('error', reject);
+  });
 }
 
 export function injectSwallowKitNextConfig(nextConfigContent: string, projectName: string): string {
