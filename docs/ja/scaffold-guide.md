@@ -1,10 +1,10 @@
-# SwallowKit Scaffold ガイド
+# Scaffold ガイド
 
-## 概要
+Zod スキーマから CRUD 操作を生成します。このコマンドは Azure Functions バックエンドハンドラー、Next.js BFF API ルート、React UI ページ、Cosmos DB インフラを、1 つのスキーマファイルから型付きで生成します。
 
-SwallowKit Scaffold は、Zod スキーマ定義から完全な CRUD（Create, Read, Update, Delete）操作を自動生成する強力なコード生成ツールです。Azure Functions、Next.js API ルート、型安全な UI コンポーネントを最小限の設定で生成します。さらに、Functions バックエンドに C# または Python を選んだ場合は、共有 Zod モデルから OpenAPI を出力し、各言語のネイティブツールでバックエンド用スキーマ資産も生成します。
+C# または Python バックエンドでは、OpenAPI ドキュメントの出力とネイティブスキーマ資産の生成も行います。
 
-💡 **参考情報**: スキーマ共有の概念やメリットについては、**[Zod スキーマ共有ガイド](./zod-schema-sharing-guide)** もご参照ください。
+スキーマ設計の考え方については[基本概念](/ja/concepts)を参照してください。
 
 ## クイックスタート
 
@@ -12,9 +12,14 @@ SwallowKit Scaffold は、Zod スキーマ定義から完全な CRUD（Create, R
 
 `create-model` コマンドで、`id`、`createdAt`、`updatedAt` を含むモデルの雛形を生成します：
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit create-model product
 ```
+```bash [pnpm]
+pnpm swallowkit create-model product
+```
+:::
 
 これにより `shared/models/product.ts` が生成されます：
 
@@ -34,9 +39,14 @@ export type Product = z.infer<typeof product>;
 
 💡 **複数のモデルを一度に作成**することもできます：
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit create-model user post comment
 ```
+```bash [pnpm]
+pnpm swallowkit create-model user post comment
+```
+:::
 
 ### 2. モデルをカスタマイズ
 
@@ -83,9 +93,14 @@ export type Product = z.infer<typeof product>;
 
 ### 3. Scaffold コマンドを実行
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit scaffold shared/models/product.ts
 ```
+```bash [pnpm]
+pnpm swallowkit scaffold shared/models/product.ts
+```
+:::
 
 ### 4. 生成されるファイル
 
@@ -127,19 +142,31 @@ scaffold コマンドは以下のファイルを生成します：
 
 開発サーバーを起動します：
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit dev
 ```
+```bash [pnpm]
+pnpm swallowkit dev
+```
+:::
 
 http://localhost:3000 を開いてアプリケーションを確認できます。
 
 Cosmos DB Emulator をデバッグ用の決まったデータで起動したい場合は、seed 環境を生成して `dev` に渡します：
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit create-dev-seeds local
 # dev-seeds/local/*.json を編集
 npx swallowkit dev --seed-env local
 ```
+```bash [pnpm]
+pnpm swallowkit create-dev-seeds local
+# dev-seeds/local/*.json を編集
+pnpm swallowkit dev --seed-env local
+```
+:::
 
 SwallowKit は `{schema}.json` を対応する Cosmos コンテナへマッピングし、Azure Functions を起動する前にそのコンテナのローカル Emulator データを置き換えます。
 

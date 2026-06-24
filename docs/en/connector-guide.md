@@ -1,10 +1,8 @@
-# Connector Guide
+# External connectors
 
-## Overview
+Integrate external data sources (MySQL, PostgreSQL, SQL Server, REST APIs) alongside Cosmos DB. Connector models use the same Zod-driven scaffold workflow and produce identical BFF routes — the frontend does not need to know where data comes from.
 
-SwallowKit's **Connector** feature extends your project beyond Cosmos DB by integrating with external data sources — relational databases (MySQL, PostgreSQL, SQL Server) and SaaS REST APIs. Connectors let you treat external data the same way you treat Cosmos DB models: define a Zod schema, scaffold, and get full-stack CRUD with type-safe UI, BFF routes, and Azure Functions — all generated automatically.
-
-💡 **Key concept**: A connector model is a standard Zod model with an additional `connectorConfig` export that tells SwallowKit how to reach the external data source.
+A connector model is a standard Zod model with an additional `connectorConfig` export that tells SwallowKit how to reach the external data source.
 
 ## Architecture
 
@@ -43,13 +41,22 @@ The mock proxy intercepts requests to connector models and serves realistic fake
 
 Use the `add-connector` command to register a new external data source:
 
-```bash
+::: code-group
+```bash [npm]
 # Add an RDB connector (MySQL)
 npx swallowkit add-connector mysql --type rdb --provider mysql
 
 # Add an API connector (Backlog)
 npx swallowkit add-connector backlog --type api
 ```
+```bash [pnpm]
+# Add an RDB connector (MySQL)
+pnpm swallowkit add-connector mysql --type rdb --provider mysql
+
+# Add an API connector (Backlog)
+pnpm swallowkit add-connector backlog --type api
+```
+:::
 
 This adds entries to the `connectors` section of your `swallowkit.config.js`. You can also edit the config file manually — see the [Configuration Reference](#configuration-reference) below.
 
@@ -57,13 +64,22 @@ This adds entries to the `connectors` section of your `swallowkit.config.js`. Yo
 
 Use `create-model` with the `--connector` flag to generate a model template that includes `connectorConfig`:
 
-```bash
+::: code-group
+```bash [npm]
 # Create a model bound to the mysql connector
 npx swallowkit create-model user --connector mysql
 
 # Create a model bound to the backlog connector
 npx swallowkit create-model backlog-issue --connector backlog
 ```
+```bash [pnpm]
+# Create a model bound to the mysql connector
+pnpm swallowkit create-model user --connector mysql
+
+# Create a model bound to the backlog connector
+pnpm swallowkit create-model backlog-issue --connector backlog
+```
+:::
 
 This generates `shared/models/user.ts` (or `backlog-issue.ts`) with a Zod schema and a `connectorConfig` export pre-filled for the specified connector.
 
@@ -133,10 +149,16 @@ export const connectorConfig = {
 
 Run `scaffold` as usual — SwallowKit detects the `connectorConfig` export and generates connector-specific Functions code instead of Cosmos DB code:
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit scaffold shared/models/user.ts
 npx swallowkit scaffold shared/models/backlog-issue.ts
 ```
+```bash [pnpm]
+pnpm swallowkit scaffold shared/models/user.ts
+pnpm swallowkit scaffold shared/models/backlog-issue.ts
+```
+:::
 
 Generated files depend on the backend language:
 
@@ -155,9 +177,14 @@ Generated files depend on the backend language:
 
 Start the dev server with the `--mock-connectors` flag to work without real external connections:
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit dev --mock-connectors
 ```
+```bash [pnpm]
+pnpm swallowkit dev --mock-connectors
+```
+:::
 
 This starts the mock proxy server on port 7072 alongside the normal dev environment (Cosmos Emulator + Azure Functions on 7071 + Next.js). See [Mock Server](#mock-server) for details.
 
@@ -340,9 +367,14 @@ The mock server auto-generates realistic data based on Zod schema field names an
 
 You can provide initial data for connector models using dev-seeds JSON files:
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit create-dev-seeds shared/models/user.ts
 ```
+```bash [pnpm]
+pnpm swallowkit create-dev-seeds shared/models/user.ts
+```
+:::
 
 This creates a JSON seed file that the mock server loads as initial data instead of auto-generated data. The seed file format is the same as for standard Cosmos DB models.
 

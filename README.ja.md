@@ -7,110 +7,106 @@
 
 [English](./README.md) | 日本語
 
-**Azure 上の Next.js アプリケーション向けの型安全なスキーマ駆動開発ツールキット**
+Next.js と Azure のための、スキーマ駆動アプリケーション開発ツールキットです。
 
-SwallowKit は、Zod スキーマを通じてエンドツーエンドの型安全性を維持しながら、外部の Azure Functions バックエンドを持つフルスタック Next.js アプリケーションを Static Web Apps で構築するための統合キットです。
+SwallowKit は、共有された Zod スキーマを中心にして、保守しやすいフルスタックアプリケーションを Azure 上に構築するための scaffolding ツールです。1 つのスキーマ定義から、フロントエンドフォーム、BFF ルート、Azure Functions バックエンド、OpenAPI、インフラ定義、AI エージェント向けのプロジェクトメタデータなどを生成できます。
 
-Next.js の API ルートを BFF（Backend For Frontend）としての使用のみに制限し、ビジネスロジックは独立した Azure Functions にオフロードすることでクライアント・サーバー間の明確な分離を提供します。
+フロントエンド、バックエンド、データベース、バリデーション、API 契約、デプロイ構成がばらばらになりがちな Next.js + Azure アプリケーション開発を、明示的な構成で整理することを目的としています。
 
-Zod スキーマから自動的に CRUD 操作を生成する Scaffold 機能を備え、一貫した型定義で Next.js (Azure Static Web Apps)、Azure Functions、Cosmos DB を組み合わせた構成で、CRUD コードの自動生成から本番デプロイ・CI/CD までをサポートします。
+## 🎯 なぜ SwallowKit か
+
+AI はアプリケーションコードをすばやく生成できます。フレームワークは複雑さをうまく隠してくれます。しかし、本番で運用するアプリケーションには、依然として明示的なアーキテクチャが必要です。
+
+一般的なフルスタックアプリケーションでは、同じドメインモデルが多くの場所に重複して現れます。
+
+- フロントエンドのフォーム型
+- クライアント側バリデーション
+- BFF のリクエスト・レスポンス型
+- バックエンド DTO
+- API 契約
+- データベースエンティティ
+- シードデータ
+- インフラ・デプロイ構成
+
+アプリケーションが大きくなるほど、これらの定義は少しずつずれていきます。SwallowKit は、スキーマを明示的な中心に置き、その周辺に必要なアプリケーション構造を生成することで、このずれを減らします。
+
+**SwallowKit は、すべてを隠蔽するフルスタックフレームワークではありません。生成されたコードを読み、編集し、必要なら置き換えられることを重視した scaffolding ツールです。**
+
+## ✨ 主な機能
+
+- **Zod スキーマを中心にした型定義** とバリデーション共有
+- **Next.js、BFF ルート、Azure Functions、UI コンポーネントの CRUD scaffolding**
+- **Bicep による Azure 向けインフラ定義**
+- **複数言語の Azure Functions バックエンド対応**（TypeScript、C#、Python）
+- **ローカル開発支援** とシードデータ
+- **AI / MCP 向けのプロジェクトメタデータ** とコマンド
+- **VS Code 拡張機能**
+
+## 🏗️ 想定アーキテクチャ
+
+SwallowKit は、次のような構成のアプリケーションを主な対象にしています。
+
+- Next.js
+- Azure Static Web Apps
+- Azure Functions
+- Azure Cosmos DB
+- Azure Bicep
+- GitHub Actions または Azure Pipelines
+
+標準構成では、BFF パターンを採用します。
+
+```
+ブラウザー
+  |
+Next.js フロントエンド
+  |
+Next.js BFF ルート
+  |
+Azure Functions API
+  |
+Azure Cosmos DB
+```
+
+BFF レイヤーを置くことで、フロントエンドをシンプルに保ちながら、バックエンドサービス、認証・認可、クラウドリソースとの接続を整理しやすくします。
 
 > **注意**: このプロジェクトは活発に開発中です。将来のバージョンでAPIが変更される可能性があります。
 
-## ✨ 主な特徴
-
-- **🔄 Zod スキーマ共有** - フロントエンド、BFF、Azure Functions、Cosmos DB をまたいで Zod を唯一のソースとして維持
-- **⚡ CRUD コード生成** - `swallowkit scaffold` で Azure Functions + Next.js コードを自動生成
-- **🌐 Functions バックエンド多言語対応** - `init` 時に Azure Functions の言語として TypeScript、C#、Python を選択可能
-- **🧬 OpenAPI 出力 + ネイティブコード生成** - C#/Python バックエンドでは `scaffold` が Zod から OpenAPI を出力し、各言語のネイティブツールでスキーマ資産を生成
-- **🛡️ 契約安全性** - 共有 Zod またはネイティブ生成されたモデルにより、フロント/BFF とバックエンドの契約を整合
-- **🎯 BFF パターン** - Next.js API Routes が BFF レイヤーとして機能、自動検証・リソース名推論
-- **☁️ Azure 最適化** - Static Web Apps + Functions + Cosmos DB で最小コスト構成
-- **🚀 簡単デプロイ** - Bicep IaC + CI/CD ワークフローを自動生成
-- **🤖 AI フレンドリー** - 自動生成される指示ファイル（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）とレイヤー別ルールにより、GitHub Copilot・Claude Code・OpenAI Codex がプロジェクト規約に従ってコードを生成
-- **🧠 MCP + Machine Interface** - `swallowkit machine ...` で inspection / validation / generation を決定的な JSON として公開し、`swallowkit-mcp` で同じ機能を MCP stdio として提供
-- **🔌 外部データコネクタ** - MySQL・PostgreSQL・REST API などの外部データソースを Cosmos DB と並行して統合。同じ Zod 駆動の scaffold ワークフローで完全な型安全性を維持
-- **🔐 認証・認可** - カスタム JWT 認証（外部 RDB ユーザーストア）とモデル単位のロールベースアクセス制御を組み込みサポート。将来の Static Web Apps 認証統合も計画中
-- **🧪 再利用可能な Dev Seed** - Cosmos DB Emulator の実データをそのまま seed 化し、デモ・再現確認・オンボーディング・ローカル検証に再利用可能
-- **🧩 [VS Code 拡張機能](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)** - init/scaffold/dev の GUI ウィザード、モデルファイル右クリックでスキャフォールド、開発サーバーステータスバー、TypeScript スニペット
-
-
 ## 📚 ドキュメント
 
-**[SwallowKit ドキュメント](https://himanago.github.io/swallowkit/ja/)** で完全なドキュメントをご覧ください（[English](https://himanago.github.io/swallowkit/en/) もあります）。
+詳しい使い方はドキュメントサイトを参照してください（[English](https://himanago.github.io/swallowkit/en/) もあります）。
 
-- **[CLI リファレンス](https://himanago.github.io/swallowkit/ja/cli-reference)** - 全コマンドの詳細
+- **[はじめる](https://himanago.github.io/swallowkit/ja/getting-started)** - 最初のプロジェクトセットアップ
+- **[基本概念](https://himanago.github.io/swallowkit/ja/concepts)** - スキーマ中心のアーキテクチャ
 - **[Scaffold ガイド](https://himanago.github.io/swallowkit/ja/scaffold-guide)** - CRUD コード生成
-- **[Connector ガイド](https://himanago.github.io/swallowkit/ja/connector-guide)** - 外部データソース統合
-- **[認証ガイド](https://himanago.github.io/swallowkit/ja/auth-guide)** - 認証とロールベースアクセス制御
-- **[Zod スキーマ共有ガイド](https://himanago.github.io/swallowkit/ja/zod-schema-sharing-guide)** - スキーマ設計
+- **[ローカル開発](https://himanago.github.io/swallowkit/ja/dev-guide)** - Dev サーバー、seeds、モックコネクタ
 - **[デプロイガイド](https://himanago.github.io/swallowkit/ja/deployment-guide)** - Azure へのデプロイ
+- **[AI / MCP ガイド](https://himanago.github.io/swallowkit/ja/ai-mcp-guide)** - AI エージェント統合
+- **[認証](https://himanago.github.io/swallowkit/ja/auth-guide)** - 認証と認可
+- **[コネクタ](https://himanago.github.io/swallowkit/ja/connector-guide)** - 外部データソース統合
 
 ## 🚀 クイックスタート
 
-### 1. プロジェクト作成
+新しいプロジェクトを作成します。
 
 ```bash
 npx swallowkit init my-app
-# or
-pnpm dlx swallowkit init my-app
 cd my-app
 ```
 
-対話プロンプトで CI/CD プロバイダー、Azure Functions のバックエンド言語、Cosmos DB モード、ネットワーク設定を選択します。フラグで直接指定するとプロンプトをスキップできます：
+モデルを作成し、スキーマを編集します。
 
 ```bash
-# 非対話モード（VS Code 拡張機能や自動化に便利）
-npx swallowkit init my-app --cicd github --backend-language python --cosmos-db-mode serverless --vnet outbound
+npx swallowkit create-model todo
 ```
-
-| フラグ | 値 | 説明 |
-|------|-----|------|
-| `--cicd <provider>` | `github`, `azure`, `skip` | CI/CD プロバイダー |
-| `--backend-language <language>` | `typescript`, `csharp`, `python` | Azure Functions のバックエンド言語 |
-| `--cosmos-db-mode <mode>` | `freetier`, `serverless` | Cosmos DB 課金モード |
-| `--vnet <option>` | `outbound`, `none` | ネットワークセキュリティ |
-
-フラグを省略すると、その項目は対話プロンプトで質問されます。
-
-### 2. モデルの作成
-
-複数のモデルをまとめて作成できます：
-
-```bash
-npx swallowkit create-model category todo
-# or
-pnpm dlx swallowkit create-model category todo
-```
-
-これにより `shared/models/category.ts` と `shared/models/todo.ts` が生成されます。必要なフィールドを追加してカスタマイズ：
-
-```typescript
-// shared/models/category.ts
-import { z } from 'zod';
-
-export const category = z.object({
-  id: z.string(),
-  name: z.string().min(1).max(50),
-  createdAt: z.string().optional(),
-  updatedAt: z.string().optional(),
-});
-
-export type Category = z.infer<typeof category>;
-```
-
-親子関係を表現するには、ID 参照ではなく**ネスト型**で記述します：
 
 ```typescript
 // shared/models/todo.ts
 import { z } from 'zod';
-import { category } from './category';
 
 export const todo = z.object({
   id: z.string(),
   text: z.string().min(1).max(200),
   completed: z.boolean().default(false),
-  category: category.optional(),       // ネストオブジェクト（categoryId ではない）
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
@@ -118,236 +114,40 @@ export const todo = z.object({
 export type Todo = z.infer<typeof todo>;
 ```
 
-> **Tip**: ネスト型を使うことで型安全性が保たれ、関連データがドキュメント内にまとまって保存されます。これは Cosmos DB のドキュメントモデルに自然な形です。
-
-### 3. CRUD コード生成
+CRUD コードを生成し、開発サーバーを起動します。
 
 ```bash
-npx swallowkit scaffold shared/models/todo.ts
-# or
-pnpm dlx swallowkit scaffold shared/models/todo.ts
-```
-
-これで以下が自動生成されます:
-- ✅ Azure Functions (CRUD エンドポイント + Cosmos DB バインディング)
-- ✅ Next.js BFF API Routes (自動検証・リソース名推論)
-- ✅ React コンポーネント (型安全なフォーム)
-
-`init` で `csharp` または `python` を選んだ場合、`swallowkit scaffold` はあわせて `functions/openapi/` に OpenAPI ドキュメントを出力し、`functions/generated/` にネイティブ生成された各言語向けスキーマ資産を生成します。
-
-### 4. 開発サーバー起動
-
-```bash
+npx swallowkit scaffold todo
 npx swallowkit dev
-# or
-pnpm dlx swallowkit dev
 ```
 
-- Next.js: http://localhost:3000
-- Azure Functions: http://localhost:7071
+Azure Functions、Next.js BFF ルート、React UI コンポーネントが、共有スキーマから型付きで生成されます。
 
-バックエンド言語ごとの補足:
+## 🤖 AI エージェントとの協調
 
-- **Python バックエンド**: `swallowkit dev` はローカルの Python 実行環境管理に **uv** を使います。プロジェクト内の `.uv/bin` に `uv` 本体を導入または再利用し、`.uv/python` に uv 管理の Python を保持し、Functions 本体用に `functions/.venv`、Python スキーマ生成用に `functions/.codegen-venv` を作成します。
-- **C# バックエンド**: Azure Functions isolated worker はコールドスタート時にワーカービルドが入るため、応答開始まで少し時間がかかることがあります。`swallowkit dev` は Functions ホストが HTTP 応答できる状態になるまで待ってから、バックエンド URL を ready として表示します。
+SwallowKit は、AI コーディングエージェントがプロジェクト構造を理解し、公式の生成コマンドを通じて変更を行い、生成物を検証できるように、機械可読なプロジェクトメタデータとコマンドインターフェースを提供します。
 
-手元の Cosmos DB Emulator データをそのまま seed として再利用したい場合は、テンプレート生成に加えて、現在の Emulator データを `dev-seeds/<environment>/` へ書き出せます：
+目的は、AI に自由にファイルを書き換えさせることではなく、明示的なアーキテクチャ境界の中で安全に開発を支援させることです。
 
-```bash
-npx swallowkit create-dev-seeds local
-# dev-seeds/local/*.json を手で編集して利用
-npx swallowkit dev --seed-env local
-
-# または、現在 Emulator に入っているデータをそのまま seed 化
-npx swallowkit create-dev-seeds local --from-emulator --force
-npx swallowkit dev --seed-env local
-```
-
-この機能のメリット:
-
-- アプリを触りながら登録した現実的なデータを、そのまま検証用 seed として保存できる
-- デモ、障害再現、レビュー、オンボーディングで同じ状態をすぐ再現できる
-- Cosmos DB Emulator からの手作業コピーを避けつつ、スキーマ対応したファイル構成で管理できる
-- `swallowkit dev --seed-env <environment>` で既知の状態に素早く戻せる
-
-書き出された JSON では `_etag` などの Cosmos システムプロパティは自動除去され、再投入しやすい形になります。
-
-### 5. フロントエンドから使用
-
-```typescript
-import { api } from '@/lib/api/backend';
-import type { Todo } from '@/shared/models/todo';
-
-// 全件取得 - BFFエンドポイントを呼び出し
-const todos = await api.get<Todo[]>('/api/todos');
-
-// 作成 - バックエンドで検証
-const created = await api.post<Todo>('/api/todos', {
-  text: '牛乳を買う',
-  completed: false
-});
-
-// 更新 - バックエンドで検証
-const updated = await api.put<Todo>('/api/todos/123', { completed: true });
-
-// 削除
-await api.delete('/api/todos/123');
-```
-
-### 6. 外部データソースの統合（オプション）
-
-SwallowKit は **コネクタ** により、Cosmos DB と併用して外部 RDB データベースや REST API を統合できます。同じ Zod 駆動のワークフローをそのまま使えます：
-
-```bash
-# コネクタを登録
-npx swallowkit add-connector mysql --type rdb --provider mysql --connection-env MYSQL_CONNECTION_STRING
-
-# コネクタ対応モデルを作成
-npx swallowkit create-model user --connector mysql
-# shared/models/user.ts を編集（スキーマ + connectorConfig をカスタマイズ）
-
-# scaffold がコネクタ固有の Functions コードを生成
-npx swallowkit scaffold shared/models/user.ts
-
-# 実際の MySQL がなくてもモックデータでローカル開発
-npx swallowkit dev --mock-connectors
-```
-
-フロントエンドと BFF レイヤーはデータソースの違いを意識しません — `callFunction()` は Cosmos DB モデルでもコネクタモデルでも同一です。詳しくは **[Connector ガイド](https://himanago.github.io/swallowkit/ja/connector-guide)** を参照してください。
-
-## 🤖 AI / MCP 統合
-
-SwallowKit は、コーディングエージェントや MCP adapter 向けに machine-readable な CLI を提供します。AI が filesystem を推測して直接変更するのではなく、SwallowKit の正式な generator / inspector / validator を経由して操作できるようにするためです。
-
-```bash
-# framework が理解している project metadata を取得
-npx swallowkit machine inspect project
-
-# SwallowKit 規約と生成物の整合性を検証
-npx swallowkit machine validate project
-
-# 正式な machine interface 経由で生成
-npx swallowkit machine generate model todo --overwrite never
-npx swallowkit machine generate scaffold todo --api-only
-```
-
-`swallowkit machine` はすべて:
-
-- 非対話
-- deterministic
-- stdout は JSON のみ
-- 成功 / 失敗ともに構造化出力
-
-MCP client からは、同梱の stdio server を利用できます:
-
-```bash
-npx swallowkit-mcp
-```
-
-`swallowkit init` で生成されるプロジェクトには、ローカルに install された SwallowKit MCP entrypoint を起動する project-scoped な `.mcp.json` bootstrap が含まれます。repository の MCP 自動検出に対応した agent runtime では、依存関係の install 後に project root から同じ `swallowkit_*` Tool をそのまま使えます。
-
-project MCP 設定を自動読込しない runtime でも、生成される instruction files が `swallowkit machine ...` の利用に誘導し、必要なら同じ launcher を手動登録できます。
-
-MCP server は explicit な Tool だけを公開する薄い adapter で、実処理は machine CLI に委譲します。
-
-## 🏗️ アーキテクチャ
+## 📦 生成されるプロジェクト構成
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Frontend (React)                                            │
-│  - Client Components                                         │
-│  - Server Components (SSR)                                   │
-└──────────────────────────┬───────────────────────────────────┘
-                           │ api.post('/api/todos', data)
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  BFF Layer (Next.js API Routes)                              │
-│  - Auto Schema Validation (Zod)                              │
-│  - Error Handling                                            │
-└──────────────────────────┬───────────────────────────────────┘
-                           │ HTTP Request
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Azure Functions (Backend)                                   │
-│  - HTTP Triggers (CRUD)                                      │
-│  - Zod Validation (Re-check)                                 │
-│  - Business Logic                                            │
-│  - Data Source Bindings                                      │
-└──────────┬───────────────┼───────────────┬──────────────────┘
-           │               │               │
-           ▼               ▼               ▼
-┌────────────────┐ ┌──────────────┐ ┌──────────────────┐
-│  Azure Cosmos  │ │  外部 RDB    │ │  外部 SaaS API   │
-│  DB (既定)     │ │  (MySQL,     │ │  (REST)          │
-│                │ │  PostgreSQL) │ │                  │
-└────────────────┘ └──────────────┘ └──────────────────┘
+.
+├── app/                  # Next.js ページと BFF API ルート
+├── shared/
+│   └── models/           # 共有 Zod スキーマ（単一のソース）
+├── functions/            # Azure Functions バックエンド
+├── infra/                # Bicep テンプレート
+├── lib/                  # BFF ヘルパーと scaffold 設定
+└── .swallowkit/          # SwallowKit プロジェクトメタデータ
 ```
 
-**重要なパターン:**
-- **BFF (Backend For Frontend)**: Next.js API Routes が Azure Functions へのプロキシ
-- **共有スキーマ**: `shared/models/` の Zod スキーマを唯一のソースとして扱う
-- **C#/Python 向け OpenAPI 出力**: TypeScript 以外の Functions は `functions/generated/` のネイティブ生成資産を利用
-- **外部コネクタ**: MySQL・PostgreSQL・REST API — scaffold 生成の Functions で同じ BFF パターンを維持
-- **契約安全性**: 共有 Zod または生成モデルで BFF とバックエンドの整合を保つ
-- **マネージド ID**: サービス間の安全な接続（接続文字列不要）
+## 🔗 ステータス
 
-## 📦 前提条件
+SwallowKit は現在開発中です。API、プロジェクト構成、生成されるコードは変更される可能性があります。
 
-- Node.js 22.x
-- **pnpm**（推奨）: `corepack enable` を実行するか、`npm install -g pnpm` でインストール
-  - npm でも動作します — SwallowKit はパッケージマネージャーを自動検出します（pnpm がインストール済みなら常に pnpm を優先）
-- Azure CLI (`az`) - Azure へのプロビジョニングやデプロイを行う場合に必要
-- Azure Functions Core Tools 4.x - ローカルの Azure Functions 起動に必要
-- Azure Cosmos DB Emulator (ローカル開発用)
-  - [公式ドキュメント (vNext 推奨)](https://learn.microsoft.com/ja-jp/azure/cosmos-db/emulator-linux)
-    - Windows: [ダウンロード](https://aka.ms/cosmosdb-emulator)
-    - Docker: `docker run -p 8081:8081 mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator`
+フィードバック、Issue、小さなサンプルユースケースの共有を歓迎します。
 
-### バックエンド別要件
-
-- TypeScript/Node.js: 追加要件なし
-- Python: uv を使用します
-- C#: .NET 10 SDK と Azure Functions Core Tools 4.6.0 以上が必要です
-
-> **補足**: Azure Functions をローカルで起動するため、Azure Functions Core Tools 4.x は共通で必要です。C# バックエンドでは .NET 10 SDK と Core Tools 4.6.0 以上を推奨します。
-
-## 🚀 Azure へのデプロイ
-
-Next.js アプリを standalone モードで Azure Static Web Apps にデプロイし、バックエンド操作のために独立した Azure Functions に接続します。
-
-**1. リソースをプロビジョニング (Bicep IaC)**
-
-```bash
-npx swallowkit provision --resource-group my-app-rg
-# or
-pnpm dlx swallowkit provision --resource-group my-app-rg
-```
-
-このコマンドでは、プライマリリージョンと Static Web App リージョンを対話式に選択します。プロビジョニング完了後は、CI/CD 設定に必要な値がターミナルに表示されます。コピーしておいてください。
-
-**2. コードをプッシュ**
-
-```bash
-git push origin main
-```
-
-**3. 自動実行された CI/CD をキャンセル** — シークレット未登録のため失敗します。
-
-**4. 表示された secrets / variables を登録** — GitHub (Settings → Secrets) または Azure DevOps (Pipelines → Library) に登録します。
-
-**5. CI/CD ワークフローを手動で再実行します。**
-
-詳細は **[デプロイガイド](https://himanago.github.io/swallowkit/ja/deployment-guide)** を参照してください。
-
-##  ライセンス
+## 📄 ライセンス
 
 MIT
-
-## 🔗 関連リンク
-
-- [SwallowKit VS Code 拡張機能](https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode)
-- [Azure Static Web Apps](https://learn.microsoft.com/ja-jp/azure/static-web-apps/)
-- [Azure Functions](https://learn.microsoft.com/ja-jp/azure/azure-functions/)
-- [Azure Cosmos DB](https://learn.microsoft.com/ja-jp/azure/cosmos-db/)
-- [Next.js](https://nextjs.org/)
-- [Zod](https://zod.dev/)

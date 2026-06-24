@@ -7,6 +7,7 @@ import {
   buildCSharpFunctionsProjectSource,
   buildSwallowKitConfigSource,
   injectSwallowKitNextConfig,
+  parseIgnoredBuilds,
 } from "../cli/commands/init";
 
 describe("injectSwallowKitNextConfig", () => {
@@ -119,5 +120,25 @@ module.exports = nextConfig;
       expect.stringMatching(/^\.\/node_modules\/swallowkit\/dist\/mcp\/index\.js$/),
     ]);
     expect(parsed.mcpServers.swallowkit.cwd).toBe(".");
+  });
+});
+
+describe("parseIgnoredBuilds", () => {
+  it("extracts package names from the pnpm warning line", () => {
+    const output = [
+      "WARN  Issues with peer dependencies found",
+      " ERR_PNPM_IGNORED_BUILDS  Ignored build scripts: sharp@0.34.5, unrs-resolver@1.12.2",
+      "run pnpm approve-builds",
+    ].join("\n");
+    expect(parseIgnoredBuilds(output)).toEqual(["sharp", "unrs-resolver"]);
+  });
+
+  it("handles scoped packages and de-duplicates entries", () => {
+    const output = "Ignored build scripts: @scope/pkg@1.0.0, sharp@0.34.5, sharp@0.34.5";
+    expect(parseIgnoredBuilds(output)).toEqual(["@scope/pkg", "sharp"]);
+  });
+
+  it("returns an empty array when no warning is present", () => {
+    expect(parseIgnoredBuilds("everything is fine")).toEqual([]);
   });
 });

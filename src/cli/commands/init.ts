@@ -375,32 +375,136 @@ async function upgradeNextJs(projectDir: string, version: string, pm: PackageMan
 }
 
 async function installDependencies(projectDir: string, pm: PackageManager = 'pnpm'): Promise<void> {
+  console.log('\n📦 Installing dependencies...\n');
+
+  const { ignoredBuilds } = await runInstallAndDetectIgnoredBuilds(projectDir, pm);
+
+  console.log('\n✅ Dependencies installed\n');
+
+  if (pm === 'pnpm' && ignoredBuilds.length > 0) {
+    await maybeApproveBuilds(projectDir, ignoredBuilds);
+  }
+}
+
+/**
+ * Run `<pm> install` while passing through stdio so the user sees progress.
+ * For pnpm, also tee stdout/stderr to detect the ERR_PNPM_IGNORED_BUILDS warning
+ * and extract the affected package names.
+ */
+async function runInstallAndDetectIgnoredBuilds(
+  projectDir: string,
+  pm: PackageManager,
+): Promise<{ ignoredBuilds: string[] }> {
   return new Promise((resolve, reject) => {
-    console.log('\n📦 Installing dependencies...\n');
-    
-    const child = spawn(
-      pm,
-      ['install'],
-      {
+    // For npm, we don't need to detect anything — keep simple inherit behavior.
+    if (pm !== 'pnpm') {
+      const child = spawn(pm, ['install'], {
         cwd: projectDir,
         stdio: 'inherit',
         shell: true,
-      }
-    );
+      });
+      child.on('close', (code) => {
+        if (code !== 0) reject(new Error(`${pm} install exited with code ${code}`));
+        else resolve({ ignoredBuilds: [] });
+      });
+      child.on('error', reject);
+      return;
+    }
 
-    child.on('close', (code: number | null) => {
+    // pnpm: capture output while teeing to the user's terminal.
+    const child = spawn(pm, ['install'], {
+      cwd: projectDir,
+      stdio: ['inherit', 'pipe', 'pipe'],
+      shell: true,
+    });
+
+    let combined = '';
+    child.stdout?.on('data', (chunk: Buffer) => {
+      process.stdout.write(chunk);
+      combined += chunk.toString('utf8');
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      process.stderr.write(chunk);
+      combined += chunk.toString('utf8');
+    });
+
+    child.on('close', (code) => {
       if (code !== 0) {
         reject(new Error(`${pm} install exited with code ${code}`));
-      } else {
-        console.log('\n✅ Dependencies installed\n');
-        resolve();
+        return;
       }
+      resolve({ ignoredBuilds: parseIgnoredBuilds(combined) });
     });
-
-    child.on('error', (error: Error) => {
-      reject(error);
-    });
+    child.on('error', reject);
   });
+}
+
+/**
+ * Parse pnpm's `Ignored build scripts: foo@1.0.0, bar@2.0.0` warning and return
+ * the bare package names (without versions), de-duplicated.
+ *
+ * Matches both `ERR_PNPM_IGNORED_BUILDS` and the plain `Ignored build scripts:` line.
+ */
+export function parseIgnoredBuilds(output: string): string[] {
+  const match = output.match(/Ignored build scripts:\s*([^\n\r]+)/i);
+  if (!match) return [];
+  const list = match[1]
+    .split(',')
+    .map((entry) => entry.trim())
+    // strip version suffix: `sharp@0.34.5` -> `sharp`, `@scope/pkg@1.0.0` -> `@scope/pkg`
+    .map((entry) => entry.replace(/@[^@]+$/, ''))
+    .filter((name) => name.length > 0);
+  return Array.from(new Set(list));
+}
+
+async function maybeApproveBuilds(projectDir: string, ignoredBuilds: string[]): Promise<void> {
+  console.log(
+    `\n⚠️  pnpm skipped build scripts for: ${ignoredBuilds.join(', ')}\n` +
+      '   These packages (e.g. sharp) need their build scripts to run correctly.\n',
+  );
+
+  const response = await prompts({
+    type: 'confirm',
+    name: 'approve',
+    message: 'Run `pnpm approve-builds` now to approve these build scripts?',
+    initial: true,
+  });
+
+  if (!response.approve) {
+    console.log(
+      '\nℹ️  Skipped. You can run `pnpm approve-builds` later inside the project directory.\n',
+    );
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('pnpm', ['approve-builds'], {
+      cwd: projectDir,
+      stdio: 'inherit',
+      shell: true,
+    });
+    child.on('close', (code) => {
+      if (code !== 0) reject(new Error(`pnpm approve-builds exited with code ${code}`));
+      else resolve();
+    });
+    child.on('error', reject);
+  });
+
+  // After approval, rebuild the approved packages so their native binaries are present.
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('pnpm', ['rebuild', ...ignoredBuilds], {
+      cwd: projectDir,
+      stdio: 'inherit',
+      shell: true,
+    });
+    child.on('close', (code) => {
+      if (code !== 0) reject(new Error(`pnpm rebuild exited with code ${code}`));
+      else resolve();
+    });
+    child.on('error', reject);
+  });
+
+  console.log('\n✅ Build scripts approved and packages rebuilt\n');
 }
 
 export function injectSwallowKitNextConfig(nextConfigContent: string, projectName: string): string {
@@ -876,7 +980,7 @@ export async function register() {
   createReadme(projectDir, projectName, cicdChoice, azureConfig, pm, backendLanguage);
 
   // 19. Create AI agent instruction files (AGENTS.md, CLAUDE.md, .github/copilot-instructions.md, etc.)
-  createAiAgentFiles(projectDir, projectName, backendLanguage);
+  createAiAgentFiles(projectDir, projectName, backendLanguage, pm);
 }
 
 async function createSharedPackage(projectDir: string, projectName: string) {
@@ -1700,9 +1804,10 @@ This project was generated by SwallowKit. If you encounter any issues or have su
   console.log('✅ README.md created\n');
 }
 
-function createAiAgentFiles(projectDir: string, projectName: string, backendLanguage: BackendLanguage) {
+function createAiAgentFiles(projectDir: string, projectName: string, backendLanguage: BackendLanguage, pm: PackageManager) {
   console.log('🤖 Creating AI agent instruction files...\n');
   const backendLanguageLabel = getBackendLanguageLabel(backendLanguage);
+  const runCmd = pm === 'pnpm' ? 'pnpm' : 'npx';
   const projectMcpConfigSource = buildSwallowKitMcpProjectConfigSource();
   const functionsStructureLine = backendLanguage === 'typescript'
     ? `│   └── src/               # HTTP trigger handlers with Cosmos DB bindings`
@@ -1764,11 +1869,12 @@ ${functionsStructureLine}
 - This repository includes a project-scoped \`.mcp.json\` file that starts the locally installed SwallowKit MCP server on runtimes that auto-load project MCP configurations.
 - Prefer the \`swallowkit_*\` MCP tools for framework-owned inspection, validation, and generation when they are available.
 - If MCP is unavailable in your runtime, fall back to the machine CLI:
-  - \`npx swallowkit machine inspect project\`
-  - \`npx swallowkit machine validate project\`
-  - \`npx swallowkit machine generate scaffold <name> --api-only\`
+  - \`${runCmd} swallowkit machine inspect project\`
+  - \`${runCmd} swallowkit machine validate project\`
+  - \`${runCmd} swallowkit machine generate scaffold <name> --api-only\`
 - Do not hand-edit framework-owned artifacts when the MCP or machine interface can generate or validate them for you.
 - The local MCP bootstrap depends on project dependencies already being installed.
+- **Always invoke SwallowKit via \`${runCmd}\`.** Do not mix package manager commands.
 
 ## Critical Design Principles
 
@@ -1887,9 +1993,9 @@ Use the SwallowKit CLI — do **not** manually create model files or CRUD boiler
 ### Skill: Create a new data model
 
 \`\`\`bash
-npx swallowkit create-model <name>
+${runCmd} swallowkit create-model <name>
 # Multiple models at once:
-npx swallowkit create-model user post comment
+${runCmd} swallowkit create-model user post comment
 \`\`\`
 
 Creates \`shared/models/<name>.ts\` with a Zod schema template including \`id\`, \`createdAt\`, \`updatedAt\`.
@@ -1898,7 +2004,7 @@ Edit the generated file to add your domain-specific fields, then run scaffold.
 ### Skill: Generate full CRUD from a model
 
 \`\`\`bash
-npx swallowkit scaffold shared/models/<name>.ts
+${runCmd} swallowkit scaffold shared/models/<name>.ts
 \`\`\`
 
 Generates:
@@ -1910,7 +2016,7 @@ Generates:
 ### Skill: Start development servers
 
 \`\`\`bash
-npx swallowkit dev
+${runCmd} swallowkit dev
 \`\`\`
 
 Runs Next.js (http://localhost:3000) and Azure Functions (http://localhost:7071) concurrently.
@@ -1919,17 +2025,18 @@ Checks for Cosmos DB Emulator availability.
 ### Skill: Provision Azure resources
 
 \`\`\`bash
-npx swallowkit provision --resource-group <name> --location <region>
+${runCmd} swallowkit provision --resource-group <name> --location <region>
 \`\`\`
 
 Deploys Bicep infrastructure: Static Web Apps, Functions, Cosmos DB, Storage, Managed Identity.
 
 ### Typical workflow for "add a new feature/model"
 
-1. \`npx swallowkit create-model <name>\`
+1. \`${runCmd} swallowkit create-model <name>\`
 2. Edit \`shared/models/<name>.ts\` — add fields
-3. \`npx swallowkit scaffold shared/models/<name>.ts\`
-4. \`npx swallowkit dev\` — verify at http://localhost:3000/<name>
+3. \`${runCmd} swallowkit scaffold shared/models/<name>.ts\`
+4. \`${runCmd} swallowkit dev\` — verify at http://localhost:3000/<name>
+5. If \`dev-seeds/\` already exists, update the seed JSON files to include realistic data for the new model and adjust existing seeds if relationships changed.
 
 ## Do NOT
 
@@ -1974,23 +2081,25 @@ This file is for Claude Code. Read AGENTS.md in the project root for the full ar
 
 - This repository includes a project-scoped \`.mcp.json\` that registers the locally installed SwallowKit MCP server for runtimes that support project MCP files.
 - When the \`swallowkit_*\` tools are available, prefer them for inspect / validate / generate tasks.
-- If MCP is unavailable, use \`npx swallowkit machine ...\` instead.
+- If MCP is unavailable, use \`${runCmd} swallowkit machine ...\` instead.
+- **Always invoke SwallowKit via \`${runCmd}\`.** Do not mix package manager commands.
 
 ## SwallowKit CLI Commands
 
 | Task | Command |
 |------|---------|
-| Create model | \`npx swallowkit create-model <name>\` |
-| Generate CRUD | \`npx swallowkit scaffold shared/models/<name>.ts\` |
-| Dev servers | \`npx swallowkit dev\` |
-| Provision Azure | \`npx swallowkit provision --resource-group <rg> --location <region>\` |
+| Create model | \`${runCmd} swallowkit create-model <name>\` |
+| Generate CRUD | \`${runCmd} swallowkit scaffold shared/models/<name>.ts\` |
+| Dev servers | \`${runCmd} swallowkit dev\` |
+| Provision Azure | \`${runCmd} swallowkit provision --resource-group <rg> --location <region>\` |
 
 ## Workflow: Add a new model
 
-1. \`npx swallowkit create-model <name>\`
+1. \`${runCmd} swallowkit create-model <name>\`
 2. Edit \`shared/models/<name>.ts\` — add your fields
-3. \`npx swallowkit scaffold shared/models/<name>.ts\`
-4. \`npx swallowkit dev\` — verify at http://localhost:3000/<name>
+3. \`${runCmd} swallowkit scaffold shared/models/<name>.ts\`
+4. \`${runCmd} swallowkit dev\` — verify at http://localhost:3000/<name>
+5. If \`dev-seeds/\` exists, update the seed JSON files to include data for the new model and adjust existing seeds if relationships changed.
 `;
 
   fs.writeFileSync(path.join(projectDir, 'CLAUDE.md'), claudeMd);
@@ -2019,13 +2128,15 @@ Frontend (Next.js App Router) → BFF (Next.js API Routes) → Backend (Azure Fu
 1. **BFF is proxy only** — \`app/api/\` routes call Azure Functions via \`callFunction()\`. No business logic, no direct DB access.
 2. **Zod = single source of truth** — Models live in \`shared/models/\`. Types are derived with \`z.infer<>\`. Never define types separately.
 3. **Backend owns data** — All CRUD and business logic stay in \`functions/\`, and generated contract assets under \`functions/generated/\` must stay aligned with \`shared/models/\`.
-4. **Use the CLI** — Run \`npx swallowkit create-model <name>\` then \`npx swallowkit scaffold shared/models/<name>.ts\` to add models. Do not create boilerplate manually.
+4. **Use the CLI** — Run \`${runCmd} swallowkit create-model <name>\` then \`${runCmd} swallowkit scaffold shared/models/<name>.ts\` to add models. Do not create boilerplate manually.
+5. **Maintain seed data** — When adding models or changing schemas, update the JSON files under \`dev-seeds/\` to keep seed data consistent with the current schema.
 
 ## SwallowKit Framework Operations
 
 - Prefer the SwallowKit MCP or machine interface for framework-owned inspection, validation, and generation instead of hand-editing generated files.
 - If your runtime loads project-scoped MCP config from \`.mcp.json\`, use the \`swallowkit_*\` tools.
-- Otherwise use \`npx swallowkit machine inspect project\`, \`npx swallowkit machine validate project\`, and \`npx swallowkit machine generate scaffold <name> --api-only\`.
+- Otherwise use \`${runCmd} swallowkit machine inspect project\`, \`${runCmd} swallowkit machine validate project\`, and \`${runCmd} swallowkit machine generate scaffold <name> --api-only\`.
+- **Always invoke SwallowKit via \`${runCmd}\`.** Do not mix package manager commands.
 
 ## Naming
 
@@ -2067,7 +2178,7 @@ Files in this directory are the **single source of truth** for data models acros
 - Export a \`displayName\` string constant for UI display.
 - Re-export every model from \`shared/index.ts\`.
 - For relationships, use **nested schemas** (import and embed the related schema), not ID references.
-- After editing a model, run \`npx swallowkit scaffold shared/models/<name>.ts\` to regenerate CRUD code.
+- After editing a model, run \`${runCmd} swallowkit scaffold shared/models/<name>.ts\` to regenerate CRUD code.
 `;
 
   fs.writeFileSync(

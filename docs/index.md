@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: "SwallowKit"
-  text: "Type-Safe Azure Dev Toolkit"
-  tagline: Schema-driven full-stack development for Next.js on Azure. End-to-end type safety with shared Zod schemas.
+  text: "Schema-driven scaffolding"
+  tagline: "Keep your Next.js frontend, BFF, Azure Functions backend, and infrastructure aligned through shared Zod schemas."
   image:
     src: /logo.png
     alt: SwallowKit
@@ -16,9 +16,6 @@ hero:
       text: はじめる（日本語）
       link: /ja/
     - theme: alt
-      text: View on GitHub
+      text: GitHub
       link: https://github.com/himanago/swallowkit
-    - theme: alt
-      text: VS Code Extension
-      link: https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode
 ---

@@ -3,104 +3,49 @@ layout: home
 
 hero:
   name: "SwallowKit"
-  text: "型安全 Azure 開発ツールキット"
-  tagline: Azure 上の Next.js アプリのためのスキーマ駆動フルスタック開発。Zod スキーマ共有でエンドツーエンド型安全を実現。
+  text: "スキーマ駆動 scaffolding"
+  tagline: "共有 Zod スキーマを中心に、Next.js フロントエンド・BFF・Azure Functions バックエンド・インフラ構成の整合性を保ちます。"
   image:
     src: /logo.png
     alt: SwallowKit
   actions:
     - theme: brand
       text: はじめる
-      link: /ja/scaffold-guide
+      link: /ja/getting-started
     - theme: alt
-      text: CLI リファレンス
-      link: /ja/cli-reference
+      text: 基本概念
+      link: /ja/concepts
     - theme: alt
-      text: GitHub で見る
+      text: GitHub
       link: https://github.com/himanago/swallowkit
 
 features:
-  - icon: 🔄
-    title: Zod スキーマ共有
-    details: スキーマを一度定義するだけで、フロントエンド・BFF・Azure Functions・Cosmos DB の全レイヤーで共有。重複なし、ずれなし。
-  - icon: ⚡
-    title: CRUD コード自動生成
-    details: <code>swallowkit scaffold</code> を実行するだけで、Zod スキーマから Azure Functions・Next.js BFF ルート・React UI コンポーネントを自動生成。
-  - icon: 🌐
-    title: バックエンド多言語対応
-    details: Azure Functions バックエンドは TypeScript・C#・Python から選択可能。同じスキーマ共有ワークフローをそのまま保てます。
-  - icon: 🛡️
-    title: 完全な型安全性
-    details: React クライアントから Cosmos DB ドキュメントまで、エンドツーエンドで TypeScript。型は常にスキーマから推論され、手書き不要。
-  - icon: 🎯
-    title: BFF パターン
-    details: Next.js API Routes が型付き BFF プロキシレイヤーとして機能。自動 Zod バリデーションと Azure Functions リソース名推論を内蔵。
-  - icon: ☁️
-    title: Azure 最適化
-    details: Azure Static Web Apps・Azure Functions・Azure Cosmos DB を使ったコスト最小構成。マネージド ID でセキュアな接続。
-  - icon: 🚀
-    title: ゼロ設定デプロイ
-    details: Bicep IaC で Azure リソースをプロビジョニングし、GitHub Actions または Azure Pipelines の CI/CD ワークフローを自動生成。
-  - icon: 🤖
-    title: AI フレンドリー
-    details: 自動生成される指示ファイルに加え、machine-readable な <code>swallowkit machine</code> と同梱の <code>swallowkit-mcp</code> により、コーディングエージェントが正式な generator / inspector / validator を経由して安全に操作できます。
-  - icon: 🔌
-    title: 外部データコネクタ
-    details: MySQL・PostgreSQL・REST API などの外部データソースを Cosmos DB と並行して統合。同じ Zod 駆動の scaffold ワークフローと完全な型安全性を維持。
-  - icon: 🔐
-    title: 認証・認可
-    details: 外部 RDB ユーザーストアによるカスタム JWT 認証とモデル単位のロールベースアクセス制御を追加。`--mock-connectors` でユーザーデータもモック化され、ローカル開発でも認証フローが動作。
-  - icon: 🧩
-    title: VS Code 拡張機能
-    details: '<a href="https://marketplace.visualstudio.com/items?itemName=himanago.swallowkit-vscode">拡張機能をインストール</a>して、GUI ウィザード・右クリックスキャフォールド・開発サーバーステータスバー・TypeScript スニペットを利用。ターミナル不要で操作可能。'
+  - title: 共有スキーマと契約の一元化
+    details: ドメインモデルを Zod スキーマとして一度定義すれば、TypeScript 型、バリデーション、BFF ルート、バックエンドハンドラー、API 契約が生成されます。アプリケーションが大きくなっても定義がずれません。
+  - title: フルスタック CRUD scaffolding
+    details: "<code>swallowkit scaffold</code> を実行すると、1 つのスキーマファイルから Azure Functions、Next.js BFF API ルート、React UI コンポーネントが生成されます。生成コードは読みやすく、自由に編集できます。"
+  - title: Azure インフラとデプロイ
+    details: Bicep テンプレート、CI/CD ワークフロー（GitHub Actions または Azure Pipelines）、Azure リソースのプロビジョニングがアプリケーションコードと一緒に生成されます。Static Web Apps、Functions、Cosmos DB は Managed Identity で構成されます。
+  - title: AI エージェント対応の構造
+    details: "生成される指示ファイル（<code>AGENTS.md</code>、<code>CLAUDE.md</code>、<code>.github/copilot-instructions.md</code>）と <code>swallowkit machine</code> CLI により、コーディングエージェントがプロジェクトの検査・生成・検証を明示的な境界の中で行えます。"
 ---
 
 <div class="vp-doc" style="max-width: 960px; margin: 0 auto; padding: 48px 24px;">
 
-## クイックスタート
+## なぜ SwallowKit か
 
-```bash
-npx swallowkit init my-app
-cd my-app
-```
+フルスタックアプリケーションでは、同じドメインモデルがフロントエンドフォーム、クライアントバリデーション、BFF 型、バックエンド DTO、API 契約、データベースエンティティ、インフラ構成にわたって繰り返されます。プロジェクトが大きくなるほど、これらの定義はずれていきます。
 
-### はじめてのモデルを作成
+AI はコードをすばやく生成できますが、レイヤー間の整合性を自動で維持してはくれません。フレームワークは複雑さを隠せますが、本番アプリケーションには開発者が読み変更できる明示的なアーキテクチャが必要です。
 
-```bash
-npx swallowkit create-model todo
-```
+SwallowKit は共有 Zod スキーマを中心に置き、その周辺のアプリケーション構造を生成することでこの問題に対処します。ランタイムフレームワークではなく scaffolding ツールです。生成されたコードは読み、編集し、置き換えられます。
 
-```typescript
-// shared/models/todo.ts
-import { z } from 'zod';
+## 次のステップ
 
-export const todo = z.object({
-  id: z.string(),
-  text: z.string().min(1).max(200),
-  completed: z.boolean().default(false),
-  createdAt: z.string().optional(),
-  updatedAt: z.string().optional(),
-});
-
-export type Todo = z.infer<typeof todo>;
-```
-
-### CRUD を自動生成
-
-```bash
-npx swallowkit scaffold shared/models/todo.ts
-```
-
-Azure Functions・BFF API ルート・React コンポーネントが完全型付きで生成されます。
-
-### 開発サーバーを起動
-
-```bash
-npx swallowkit dev
-# Next.js → http://localhost:3000
-# Azure Functions → http://localhost:7071
-```
-
-Python バックエンドでは、ローカル実行環境のセットアップに **uv** を使い、プロジェクト内に状態を保持します。C# バックエンドでは、Functions ホストが応答可能になってから URL を ready として表示します。
+- [はじめる](/ja/getting-started) — プロジェクトを作成し、最初の CRUD フローを生成する
+- [基本概念](/ja/concepts) — スキーマ中心のアーキテクチャを理解する
+- [Scaffold ガイド](/ja/scaffold-guide) — CRUD 生成の詳細
+- [Azure へのデプロイ](/ja/deployment-guide) — Bicep でプロビジョニングとデプロイ
+- [AI / MCP ガイド](/ja/ai-mcp-guide) — コーディングエージェント向けの機械可読インターフェース
 
 </div>

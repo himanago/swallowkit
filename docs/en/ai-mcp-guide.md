@@ -1,6 +1,6 @@
-# AI / MCP Guide
+# AI / MCP integration
 
-SwallowKit provides a **machine-readable CLI** and a bundled **MCP stdio server** so coding agents can operate through the framework's official generators, inspectors, and validators instead of guessing raw filesystem edits.
+SwallowKit provides a machine-readable CLI (`swallowkit machine`) and a bundled MCP stdio server (`swallowkit-mcp`) so coding agents can operate through official generators, inspectors, and validators instead of guessing raw filesystem edits.
 
 ## Architecture
 
@@ -19,11 +19,18 @@ Use the machine interface when an agent needs structured project data or needs t
 
 ### Inspection
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit machine inspect project
 npx swallowkit machine inspect entities
 npx swallowkit machine inspect routes
 ```
+```bash [pnpm]
+pnpm swallowkit machine inspect project
+pnpm swallowkit machine inspect entities
+pnpm swallowkit machine inspect routes
+```
+:::
 
 These commands return framework-owned metadata such as:
 
@@ -34,9 +41,14 @@ These commands return framework-owned metadata such as:
 
 ### Validation
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit machine validate project
 ```
+```bash [pnpm]
+pnpm swallowkit machine validate project
+```
+:::
 
 Validation returns structured violations for:
 
@@ -48,10 +60,16 @@ Validation returns structured violations for:
 
 ### Generation
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit machine generate model todo --overwrite never
 npx swallowkit machine generate scaffold todo --api-only
 ```
+```bash [pnpm]
+pnpm swallowkit machine generate model todo --overwrite never
+pnpm swallowkit machine generate scaffold todo --api-only
+```
+:::
 
 Generation stays non-interactive and returns JSON describing created or updated artifacts.
 
@@ -103,9 +121,14 @@ Inspection and validation use this manifest as the primary project map. If it is
 
 Use the bundled stdio MCP server when your agent platform supports MCP tools:
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit-mcp
 ```
+```bash [pnpm]
+pnpm swallowkit-mcp
+```
+:::
 
 The server exposes explicit tools only:
 

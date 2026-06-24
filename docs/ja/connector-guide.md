@@ -1,10 +1,8 @@
-# Connector ガイド
+# 外部コネクタ
 
-## 概要
+Cosmos DB と並行して外部データソース（MySQL、PostgreSQL、SQL Server、REST API）を統合します。コネクタモデルは同じ Zod 駆動の scaffold ワークフローを使い、同一の BFF ルートを生成します。フロントエンドはデータの取得元を意識する必要がありません。
 
-SwallowKit の **Connector** 機能は、Cosmos DB 以外の外部データソース — リレーショナルデータベース（MySQL、PostgreSQL、SQL Server）や SaaS REST API — との統合を可能にします。Connector を使うと、外部データを Cosmos DB モデルと同じように扱えます。Zod スキーマを定義して scaffold するだけで、型安全な UI、BFF ルート、Azure Functions がすべて自動生成されます。
-
-💡 **ポイント**: Connector モデルは、通常の Zod モデルに `connectorConfig` というエクスポートを追加したものです。これにより SwallowKit が外部データソースへのアクセス方法を認識します。
+コネクタモデルは通常の Zod モデルに `connectorConfig` エクスポートを追加したものです。これにより SwallowKit が外部データソースへのアクセス方法を認識します。
 
 ## アーキテクチャ
 
@@ -43,13 +41,22 @@ Frontend → BFF → Mock Proxy (:7072) ──┬─ Connector ルート → イ
 
 `add-connector` コマンドで新しい外部データソースを登録します：
 
-```bash
+::: code-group
+```bash [npm]
 # RDB Connector の追加（MySQL）
 npx swallowkit add-connector mysql --type rdb --provider mysql
 
 # API Connector の追加（Backlog）
 npx swallowkit add-connector backlog --type api
 ```
+```bash [pnpm]
+# RDB Connector の追加（MySQL）
+pnpm swallowkit add-connector mysql --type rdb --provider mysql
+
+# API Connector の追加（Backlog）
+pnpm swallowkit add-connector backlog --type api
+```
+:::
 
 これにより `swallowkit.config.js` の `connectors` セクションにエントリが追加されます。設定ファイルを手動で編集することも可能です — 詳しくは[設定リファレンス](#設定リファレンス)をご覧ください。
 
@@ -57,13 +64,22 @@ npx swallowkit add-connector backlog --type api
 
 `create-model` コマンドに `--connector` フラグを付けて、`connectorConfig` 付きのモデル雛形を生成します：
 
-```bash
+::: code-group
+```bash [npm]
 # mysql Connector に紐づくモデルを作成
 npx swallowkit create-model user --connector mysql
 
 # backlog Connector に紐づくモデルを作成
 npx swallowkit create-model backlog-issue --connector backlog
 ```
+```bash [pnpm]
+# mysql Connector に紐づくモデルを作成
+pnpm swallowkit create-model user --connector mysql
+
+# backlog Connector に紐づくモデルを作成
+pnpm swallowkit create-model backlog-issue --connector backlog
+```
+:::
 
 これにより `shared/models/user.ts`（または `backlog-issue.ts`）に Zod スキーマと、指定した Connector 用の `connectorConfig` エクスポートが生成されます。
 
@@ -133,10 +149,16 @@ export const connectorConfig = {
 
 通常どおり `scaffold` を実行します — SwallowKit は `connectorConfig` エクスポートを検出し、Cosmos DB コードの代わりに Connector 固有の Functions コードを生成します：
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit scaffold shared/models/user.ts
 npx swallowkit scaffold shared/models/backlog-issue.ts
 ```
+```bash [pnpm]
+pnpm swallowkit scaffold shared/models/user.ts
+pnpm swallowkit scaffold shared/models/backlog-issue.ts
+```
+:::
 
 生成されるファイルはバックエンド言語によって異なります：
 
@@ -155,9 +177,14 @@ npx swallowkit scaffold shared/models/backlog-issue.ts
 
 `--mock-connectors` フラグ付きで dev サーバーを起動すると、実際の外部接続なしで開発できます：
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit dev --mock-connectors
 ```
+```bash [pnpm]
+pnpm swallowkit dev --mock-connectors
+```
+:::
 
 これにより、通常の開発環境（Cosmos Emulator + Azure Functions（ポート 7071）+ Next.js）に加えて、ポート 7072 でモックプロキシサーバーが起動します。詳しくは[モックサーバー](#モックサーバー)をご覧ください。
 
@@ -340,9 +367,14 @@ export const connectorConfig = {
 
 Connector モデルに初期データを提供するには、dev-seeds JSON ファイルを使用します：
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit create-dev-seeds shared/models/user.ts
 ```
+```bash [pnpm]
+pnpm swallowkit create-dev-seeds shared/models/user.ts
+```
+:::
 
 これにより、自動生成データの代わりにモックサーバーが読み込む初期データの JSON シードファイルが作成されます。シードファイルの形式は標準の Cosmos DB モデルと同じです。
 

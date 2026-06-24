@@ -1,6 +1,6 @@
-# Deployment Guide
+# Deploy to Azure
 
-This guide explains how to deploy SwallowKit applications to Azure.
+Provision Azure resources and configure CI/CD for a SwallowKit project. After completing this guide, your application will be running on Azure Static Web Apps with an Azure Functions backend and Cosmos DB.
 
 ## Table of Contents
 

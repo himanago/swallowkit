@@ -1,6 +1,6 @@
-# デプロイガイド
+# Azure へのデプロイ
 
-このガイドでは、SwallowKit アプリケーションを Azure にデプロイする方法を説明します。
+SwallowKit プロジェクトの Azure リソースをプロビジョニングし、CI/CD を設定します。このガイドを完了すると、Azure Static Web Apps 上で Azure Functions バックエンドと Cosmos DB を使ったアプリケーションが動作する状態になります。
 
 ## 目次
 

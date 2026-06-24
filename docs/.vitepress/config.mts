@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress';
 export default defineConfig({
   title: 'SwallowKit',
   description:
-    'Type-safe schema-driven development toolkit for Next.js applications on Azure',
+    'Schema-driven application scaffolding for Next.js and Azure',
   base: '/swallowkit/',
   lastUpdated: true,
   cleanUrls: true,
@@ -49,13 +49,12 @@ export default defineConfig({
       lang: 'en',
       title: 'SwallowKit',
       description:
-        'Type-safe schema-driven development toolkit for Next.js applications on Azure',
+        'Schema-driven application scaffolding for Next.js and Azure',
       themeConfig: {
         nav: [
-          { text: 'Guide', link: '/en/scaffold-guide' },
-          { text: 'AI / MCP', link: '/en/ai-mcp-guide' },
+          { text: 'Getting Started', link: '/en/getting-started' },
+          { text: 'Guides', link: '/en/scaffold-guide' },
           { text: 'CLI Reference', link: '/en/cli-reference' },
-          { text: 'Deployment', link: '/en/deployment-guide' },
           {
             text: 'npm',
             link: 'https://www.npmjs.com/package/swallowkit',
@@ -68,33 +67,29 @@ export default defineConfig({
         sidebar: {
           '/en/': [
             {
-              text: 'Getting Started',
+              text: 'Overview',
               items: [
                 { text: 'Introduction', link: '/en/' },
-                { text: 'Scaffold Guide', link: '/en/scaffold-guide' },
-                {
-                  text: 'Zod Schema Sharing',
-                  link: '/en/zod-schema-sharing-guide',
-                },
-                {
-                  text: 'Connector Guide',
-                  link: '/en/connector-guide',
-                },
-                {
-                  text: 'Authentication Guide',
-                  link: '/en/auth-guide',
-                },
-                {
-                  text: 'AI / MCP Guide',
-                  link: '/en/ai-mcp-guide',
-                },
+                { text: 'Getting started', link: '/en/getting-started' },
+                { text: 'Core concepts', link: '/en/concepts' },
+              ],
+            },
+            {
+              text: 'Guides',
+              items: [
+                { text: 'Scaffold (CRUD generation)', link: '/en/scaffold-guide' },
+                { text: 'Local development', link: '/en/dev-guide' },
+                { text: 'Deploy to Azure', link: '/en/deployment-guide' },
+                { text: 'AI / MCP integration', link: '/en/ai-mcp-guide' },
+                { text: 'Authentication', link: '/en/auth-guide' },
+                { text: 'External connectors', link: '/en/connector-guide' },
               ],
             },
             {
               text: 'Reference',
               items: [
-                { text: 'CLI Reference', link: '/en/cli-reference' },
-                { text: 'Deployment Guide', link: '/en/deployment-guide' },
+                { text: 'CLI reference', link: '/en/cli-reference' },
+                { text: 'Zod schema sharing', link: '/en/zod-schema-sharing-guide' },
               ],
             },
           ],
@@ -106,13 +101,12 @@ export default defineConfig({
       lang: 'ja',
       title: 'SwallowKit',
       description:
-        'Azure 上の Next.js アプリケーション向けの型安全なスキーマ駆動開発ツールキット',
+        'Next.js と Azure のためのスキーマ駆動アプリケーション scaffolding',
       themeConfig: {
         nav: [
+          { text: 'はじめる', link: '/ja/getting-started' },
           { text: 'ガイド', link: '/ja/scaffold-guide' },
-          { text: 'AI / MCP', link: '/ja/ai-mcp-guide' },
           { text: 'CLI リファレンス', link: '/ja/cli-reference' },
-          { text: 'デプロイ', link: '/ja/deployment-guide' },
           {
             text: 'npm',
             link: 'https://www.npmjs.com/package/swallowkit',
@@ -125,33 +119,29 @@ export default defineConfig({
         sidebar: {
           '/ja/': [
             {
-              text: 'はじめに',
+              text: '概要',
               items: [
                 { text: 'イントロダクション', link: '/ja/' },
-                { text: 'Scaffold ガイド', link: '/ja/scaffold-guide' },
-                {
-                  text: 'Zod スキーマ共有',
-                  link: '/ja/zod-schema-sharing-guide',
-                },
-                {
-                  text: 'Connector ガイド',
-                  link: '/ja/connector-guide',
-                },
-                {
-                  text: '認証ガイド',
-                  link: '/ja/auth-guide',
-                },
-                {
-                  text: 'AI / MCP ガイド',
-                  link: '/ja/ai-mcp-guide',
-                },
+                { text: 'はじめる', link: '/ja/getting-started' },
+                { text: '基本概念', link: '/ja/concepts' },
+              ],
+            },
+            {
+              text: 'ガイド',
+              items: [
+                { text: 'Scaffold（CRUD 生成）', link: '/ja/scaffold-guide' },
+                { text: 'ローカル開発', link: '/ja/dev-guide' },
+                { text: 'Azure へのデプロイ', link: '/ja/deployment-guide' },
+                { text: 'AI / MCP 統合', link: '/ja/ai-mcp-guide' },
+                { text: '認証', link: '/ja/auth-guide' },
+                { text: '外部コネクタ', link: '/ja/connector-guide' },
               ],
             },
             {
               text: 'リファレンス',
               items: [
                 { text: 'CLI リファレンス', link: '/ja/cli-reference' },
-                { text: 'デプロイガイド', link: '/ja/deployment-guide' },
+                { text: 'Zod スキーマ共有', link: '/ja/zod-schema-sharing-guide' },
               ],
             },
           ],

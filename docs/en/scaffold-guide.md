@@ -1,20 +1,25 @@
-# SwallowKit Scaffold Guide
+# Scaffold guide
 
-## Overview
+Generate CRUD operations from Zod schemas. This command creates Azure Functions backend handlers, Next.js BFF API routes, React UI pages, and Cosmos DB infrastructure — all typed from a single schema file.
 
-SwallowKit Scaffold is a powerful code generation tool that automatically creates complete CRUD (Create, Read, Update, Delete) operations from your Zod schema definitions. It generates Azure Functions, Next.js API routes, and type-safe UI components with minimal configuration. When your project uses a C# or Python Functions backend, it also exports OpenAPI and generates native backend schema assets from the shared Zod models.
+For C# or Python backends, it also exports an OpenAPI document and generates native schema assets.
 
-💡 **Reference**: For more information about schema sharing concepts and benefits, please see the **[Zod Schema Sharing Guide](./zod-schema-sharing-guide.md)**.
+For schema design concepts, see [Core concepts](/en/concepts).
 
-## Quick Start
+## Quick start
 
 ### 1. Create Model Template
 
 Use the `create-model` command to generate a model template with `id`, `createdAt`, and `updatedAt` fields:
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit create-model product
 ```
+```bash [pnpm]
+pnpm swallowkit create-model product
+```
+:::
 
 This generates `shared/models/product.ts`:
 
@@ -34,9 +39,14 @@ export type Product = z.infer<typeof product>;
 
 💡 **Create multiple models at once**:
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit create-model user post comment
 ```
+```bash [pnpm]
+pnpm swallowkit create-model user post comment
+```
+:::
 
 ### 2. Customize Your Model
 
@@ -83,9 +93,14 @@ This ensures timestamp consistency and prevents clients from setting incorrect v
 
 ### 3. Run Scaffold Command
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit scaffold shared/models/product.ts
 ```
+```bash [pnpm]
+pnpm swallowkit scaffold shared/models/product.ts
+```
+:::
 
 ### 4. Generated Files
 
@@ -127,19 +142,31 @@ The scaffold command generates the following files:
 
 Start the development server:
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit dev
 ```
+```bash [pnpm]
+pnpm swallowkit dev
+```
+:::
 
 Open http://localhost:3000 to see your application.
 
 If you want the Cosmos DB Emulator to start with deterministic debug data, generate a seed environment and launch `dev` with it:
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit create-dev-seeds local
 # edit dev-seeds/local/*.json
 npx swallowkit dev --seed-env local
 ```
+```bash [pnpm]
+pnpm swallowkit create-dev-seeds local
+# edit dev-seeds/local/*.json
+pnpm swallowkit dev --seed-env local
+```
+:::
 
 SwallowKit will map each `{schema}.json` file to the matching Cosmos container and replace that container's local emulator data before Azure Functions starts.
 

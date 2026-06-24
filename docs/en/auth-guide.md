@@ -1,8 +1,6 @@
-# Authentication Guide
+# Authentication
 
-## Overview
-
-SwallowKit's **Authentication** feature adds a complete auth infrastructure to your project — user login, JWT token management, role-based authorization, and React auth context — all generated from config with a single CLI command.
+Add user authentication and role-based authorization to a SwallowKit project. Currently supports custom JWT authentication with an external RDB user store.
 
 Current implementation status:
 
@@ -71,13 +69,14 @@ Browser (Cookie)
 
 The user database must be registered as an RDB connector. If you already have one, skip this step.
 
-```bash
-# npx
+::: code-group
+```bash [npm]
 npx swallowkit add-connector userdb --type rdb --provider postgres
-
-# pnpm
-pnpm dlx swallowkit add-connector userdb --type rdb --provider postgres
 ```
+```bash [pnpm]
+pnpm swallowkit add-connector userdb --type rdb --provider postgres
+```
+:::
 
 This adds a connector entry to `swallowkit.config.js`. See the [Connector Guide](./connector-guide.md) for details.
 
@@ -121,13 +120,14 @@ module.exports = {
 
 Generate all auth infrastructure files:
 
-```bash
-# npx
+::: code-group
+```bash [npm]
 npx swallowkit add-auth
-
-# pnpm
-pnpm dlx swallowkit add-auth
 ```
+```bash [pnpm]
+pnpm swallowkit add-auth
+```
+:::
 
 This creates login/logout/me endpoints, BFF routes, middleware, a login page, and React auth context. See [Generated Files](#generated-files) for the full list.
 
@@ -142,25 +142,27 @@ export const authPolicy = { roles: ['admin', 'estimator'] };
 
 ### 5. Re-scaffold Models with Auth Policies
 
-```bash
-# npx
+::: code-group
+```bash [npm]
 npx swallowkit scaffold shared/models/estimate.ts
-
-# pnpm
-pnpm dlx swallowkit scaffold shared/models/estimate.ts
 ```
+```bash [pnpm]
+pnpm swallowkit scaffold shared/models/estimate.ts
+```
+:::
 
 Scaffold detects the `authPolicy` export and injects role guards into the generated Functions. See [Scaffold Integration](#scaffold-integration) for details.
 
 ### 6. Start Dev with Mock Connectors
 
-```bash
-# npx
+::: code-group
+```bash [npm]
 npx swallowkit dev --mock-connectors --seed-env local
-
-# pnpm
-pnpm dlx swallowkit dev --mock-connectors --seed-env local
 ```
+```bash [pnpm]
+pnpm swallowkit dev --mock-connectors --seed-env local
+```
+:::
 
 `--mock-connectors` mocks all RDB connector data in-memory — including the user table referenced by `auth.customJwt.userTable`. This means the auth login endpoint works against mock user data without a real database. Define user seed data in `dev-seeds/<env>/user.json` just like any other connector model:
 

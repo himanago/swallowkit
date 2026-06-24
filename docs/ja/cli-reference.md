@@ -1,6 +1,10 @@
 # CLI リファレンス
 
-SwallowKit CLI の全コマンドとオプションの詳細リファレンスです。
+SwallowKit CLI の全コマンドとオプションです。
+
+::: tip パッケージマネージャー
+以下の例は `npx` を使用しています。pnpm の場合は `npx` を `pnpm` に置き換えてください（`swallowkit init` の場合は `pnpm dlx`）。
+:::
 
 ## 目次
 

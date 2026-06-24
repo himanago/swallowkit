@@ -1,6 +1,10 @@
-# CLI Reference
+# CLI reference
 
-Comprehensive reference for all SwallowKit CLI commands and options.
+All SwallowKit CLI commands and their options.
+
+::: tip Package manager
+Examples use `npx`. With pnpm, replace `npx` with `pnpm` (or `pnpm dlx` for `swallowkit init`).
+:::
 
 ## Table of Contents
 

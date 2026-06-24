@@ -1,6 +1,6 @@
-# AI / MCP ガイド
+# AI / MCP 統合
 
-SwallowKit は、コーディングエージェントが raw filesystem を推測して直接編集するのではなく、framework の正式な generator / inspector / validator を経由して操作できるように、**machine-readable CLI** と **MCP stdio server** を提供します。
+SwallowKit は machine-readable CLI（`swallowkit machine`）と同梱の MCP stdio サーバー（`swallowkit-mcp`）を提供します。コーディングエージェントがファイルシステムを推測して直接編集するのではなく、正式な generator / inspector / validator を経由して操作できるようにするためです。
 
 ## アーキテクチャ
 
@@ -19,11 +19,18 @@ AI が構造化された project 情報を取得したい場合や、interactive
 
 ### Inspection
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit machine inspect project
 npx swallowkit machine inspect entities
 npx swallowkit machine inspect routes
 ```
+```bash [pnpm]
+pnpm swallowkit machine inspect project
+pnpm swallowkit machine inspect entities
+pnpm swallowkit machine inspect routes
+```
+:::
 
 返される主な情報:
 
@@ -34,9 +41,14 @@ npx swallowkit machine inspect routes
 
 ### Validation
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit machine validate project
 ```
+```bash [pnpm]
+pnpm swallowkit machine validate project
+```
+:::
 
 validation は構造化 violation として以下を返します。
 
@@ -48,10 +60,16 @@ validation は構造化 violation として以下を返します。
 
 ### Generation
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit machine generate model todo --overwrite never
 npx swallowkit machine generate scaffold todo --api-only
 ```
+```bash [pnpm]
+pnpm swallowkit machine generate model todo --overwrite never
+pnpm swallowkit machine generate scaffold todo --api-only
+```
+:::
 
 生成も非対話で行われ、作成・更新された artifact を JSON で返します。
 
@@ -103,9 +121,14 @@ inspection / validation はこの manifest を project map の一次情報とし
 
 MCP 対応の agent platform では、同梱の stdio server を使います。
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit-mcp
 ```
+```bash [pnpm]
+pnpm swallowkit-mcp
+```
+:::
 
 公開される Tool は明示的なものだけです。
 
