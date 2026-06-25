@@ -418,6 +418,17 @@ async function upgradeNextJs(projectDir: string, version: string, pm: PackageMan
 async function installDependencies(projectDir: string, pm: PackageManager = 'pnpm'): Promise<void> {
   console.log('\n📦 Installing dependencies...\n');
   await runPackageManagerCommand(pm, ['install'], projectDir, `${pm} install`);
+
+  if (pm === 'pnpm') {
+    console.log('\n📦 Generating npm lockfile for CI/CD...\n');
+    await runPackageManagerCommand(
+      'npm',
+      ['install', '--package-lock-only', '--ignore-scripts'],
+      projectDir,
+      'npm install --package-lock-only'
+    );
+  }
+
   console.log('\n✅ Dependencies installed\n');
 }
 
@@ -715,20 +726,18 @@ async function addSwallowKitFiles(
     node: '20.x',
   };
 
-  // Workspace configuration depends on package manager
+  // Keep package.json workspaces for npm-based CI/CD even when local development uses pnpm.
   const workspacePackages = usesNodeFunctionsProject(backendLanguage) ? ['shared', 'functions'] : ['shared'];
   const wsConfig = getWorkspaceConfig(pm, workspacePackages);
-  if (wsConfig.type === 'file') {
-    // pnpm: workspaces are defined in pnpm-workspace.yaml
-    delete packageJson.workspaces;
-  } else {
-    // npm: workspaces are defined in package.json
+  packageJson.workspaces = workspacePackages;
+
+  if (wsConfig.type !== 'file') {
     packageJson.workspaces = wsConfig.value;
   }
   
   fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
 
-  // Create workspace config file if needed (pnpm-workspace.yaml)
+  // Create pnpm-workspace.yaml for local pnpm development when needed.
   if (wsConfig.type === 'file') {
     fs.writeFileSync(path.join(projectDir, wsConfig.filename), wsConfig.content);
   }

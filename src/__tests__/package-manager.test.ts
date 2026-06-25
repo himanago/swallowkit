@@ -136,8 +136,8 @@ describe("getSwaAppBuildCommand", () => {
     expect(getSwaAppBuildCommand("npm")).toBe("npm ci && npm run build");
   });
 
-  it("uses npm install for pnpm-initialized projects running on npm-based CI", () => {
-    expect(getSwaAppBuildCommand("npm", "pnpm")).toBe("npm install && npm run build");
+  it("uses npm ci for pnpm-initialized projects once an npm lockfile is generated", () => {
+    expect(getSwaAppBuildCommand("npm", "pnpm")).toBe("npm ci && npm run build");
   });
 });
 
@@ -146,8 +146,8 @@ describe("getCiInstallCommand", () => {
     expect(getCiInstallCommand("npm", "npm")).toBe("npm ci");
   });
 
-  it("returns npm install for pnpm projects running on npm-based CI", () => {
-    expect(getCiInstallCommand("npm", "pnpm")).toBe("npm install");
+  it("returns npm ci for pnpm projects once an npm lockfile is generated", () => {
+    expect(getCiInstallCommand("npm", "pnpm")).toBe("npm ci");
   });
 });
 

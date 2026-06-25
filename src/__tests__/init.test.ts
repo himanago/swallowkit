@@ -158,41 +158,39 @@ describe("buildCosmosDbFreeTierBicepSource", () => {
 });
 
 describe("GitHub Actions workflow generation", () => {
-  it("uses npm install for the SWA workflow when the project was initialized with pnpm", () => {
+  it("uses npm ci for the SWA workflow when the project was initialized with pnpm", () => {
     const workflow = buildGitHubSwaWorkflow("npm", "pnpm");
 
-    expect(workflow).toContain("npm install && npm run build");
-    expect(workflow).not.toContain("npm ci && npm run build");
+    expect(workflow).toContain("npm ci && npm run build");
+    expect(workflow).not.toContain("npm install && npm run build");
     expect(workflow).not.toContain("pnpm/action-setup");
     expect(workflow).not.toContain("pnpm install --frozen-lockfile");
   });
 
-  it("uses npm install for the Functions workflow when the project was initialized with pnpm", () => {
+  it("uses npm ci for the Functions workflow when the project was initialized with pnpm", () => {
     const workflow = getGitHubFunctionsWorkflow("npm", "typescript", "pnpm");
 
-    expect(workflow).toContain("npm install");
-    expect(workflow).not.toContain("npm ci");
+    expect(workflow).toContain("- name: Install dependencies\n        run: |\n          npm ci");
     expect(workflow).toContain("npm run --workspace=shared build");
     expect(workflow).toContain("npm run --workspace=functions build");
     expect(workflow).not.toContain("pnpm/action-setup");
     expect(workflow).not.toContain("pnpm install --frozen-lockfile");
   });
 
-  it("uses npm install for the SWA pipeline when the project was initialized with pnpm", () => {
+  it("uses npm ci for the SWA pipeline when the project was initialized with pnpm", () => {
     const pipeline = buildAzureSwaPipeline("npm", "pnpm");
 
-    expect(pipeline).toContain("npm install");
-    expect(pipeline).not.toContain("npm ci");
+    expect(pipeline).toContain("npm ci");
+    expect(pipeline).not.toContain("npm install");
     expect(pipeline).toContain("npm run build");
     expect(pipeline).not.toContain("corepack enable");
     expect(pipeline).not.toContain("pnpm install --frozen-lockfile");
   });
 
-  it("uses npm install for the Functions pipeline when the project was initialized with pnpm", () => {
+  it("uses npm ci for the Functions pipeline when the project was initialized with pnpm", () => {
     const pipeline = getAzureFunctionsPipeline("npm", "typescript", "pnpm");
 
-    expect(pipeline).toContain("npm install");
-    expect(pipeline).not.toContain("npm ci");
+    expect(pipeline).toContain("- script: |\n      npm ci\n    displayName: 'Install workspace dependencies'");
     expect(pipeline).toContain("npm run --workspace=shared build");
     expect(pipeline).toContain("npm run --workspace=functions build");
     expect(pipeline).not.toContain("corepack enable");

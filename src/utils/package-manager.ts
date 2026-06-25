@@ -181,11 +181,6 @@ export function getCiInstallCommand(ciPm: PackageManager, projectPm: PackageMana
   if (ciPm === "pnpm") {
     return getCommands(ciPm).ci;
   }
-
-  if (projectPm === "pnpm") {
-    return getCommands(ciPm).install;
-  }
-
   return getCommands(ciPm).ci;
 }
 
