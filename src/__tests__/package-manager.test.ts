@@ -2,6 +2,7 @@ import {
   getCommands,
   getWorkspaceConfig,
   getCiSetupStep,
+  getCiInstallCommand,
   getAzurePipelinesSetup,
   getBuildScript,
   getSwaAppBuildCommand,
@@ -133,6 +134,20 @@ describe("getSwaAppBuildCommand", () => {
 
   it("returns an npm build command for npm projects", () => {
     expect(getSwaAppBuildCommand("npm")).toBe("npm ci && npm run build");
+  });
+
+  it("uses npm install for pnpm-initialized projects running on npm-based CI", () => {
+    expect(getSwaAppBuildCommand("npm", "pnpm")).toBe("npm install && npm run build");
+  });
+});
+
+describe("getCiInstallCommand", () => {
+  it("returns npm ci for npm projects", () => {
+    expect(getCiInstallCommand("npm", "npm")).toBe("npm ci");
+  });
+
+  it("returns npm install for pnpm projects running on npm-based CI", () => {
+    expect(getCiInstallCommand("npm", "pnpm")).toBe("npm install");
   });
 });
 

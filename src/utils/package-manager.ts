@@ -177,11 +177,23 @@ export function getCiSetupStep(pm: PackageManager): string {
   return "";
 }
 
-export function getSwaAppBuildCommand(pm: PackageManager): string {
-  if (pm === "pnpm") {
+export function getCiInstallCommand(ciPm: PackageManager, projectPm: PackageManager = ciPm): string {
+  if (ciPm === "pnpm") {
+    return getCommands(ciPm).ci;
+  }
+
+  if (projectPm === "pnpm") {
+    return getCommands(ciPm).install;
+  }
+
+  return getCommands(ciPm).ci;
+}
+
+export function getSwaAppBuildCommand(ciPm: PackageManager, projectPm: PackageManager = ciPm): string {
+  if (ciPm === "pnpm") {
     return "pnpm install --frozen-lockfile && pnpm run build";
   }
-  return "npm ci && npm run build";
+  return `${getCiInstallCommand(ciPm, projectPm)} && npm run build`;
 }
 
 /**

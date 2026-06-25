@@ -9,6 +9,7 @@ import {
   getCommands,
   getWorkspaceConfig,
   getCiSetupStep,
+  getCiInstallCommand,
   getAzurePipelinesSetup,
   getBuildScript,
   getFunctionsPrestart,
@@ -3071,7 +3072,7 @@ output privateDnsZoneId string = privateDnsZone.id
   console.log('✅ Infrastructure files created\n');
 }
 
-export function getGitHubFunctionsWorkflow(pm: PackageManager, backendLanguage: BackendLanguage): string {
+export function getGitHubFunctionsWorkflow(pm: PackageManager, backendLanguage: BackendLanguage, projectPm: PackageManager = pm): string {
   const pmCmd = getCommands(pm);
   const pnpmSetupStep = getCiSetupStep(pm);
 
@@ -3084,7 +3085,7 @@ export function getGitHubFunctionsWorkflow(pm: PackageManager, backendLanguage: 
 ${pnpmSetupStep ? `\n${pnpmSetupStep}\n` : ''}
       - name: Install dependencies
         run: |
-          ${pmCmd.ci}
+          ${getCiInstallCommand(pm, projectPm)}
       
       - name: Build shared package
         run: |
@@ -3231,7 +3232,7 @@ ${commonSetup}      - name: Setup Python
 `;
 }
 
-export function getAzureFunctionsPipeline(pm: PackageManager, backendLanguage: BackendLanguage): string {
+export function getAzureFunctionsPipeline(pm: PackageManager, backendLanguage: BackendLanguage, projectPm: PackageManager = pm): string {
   const pmCmd = getCommands(pm);
   const azPipelinesSetup = getAzurePipelinesSetup(pm);
   const commonSetup = `  - task: NodeTool@0
@@ -3240,7 +3241,7 @@ export function getAzureFunctionsPipeline(pm: PackageManager, backendLanguage: B
     displayName: 'Install Node.js'
 ${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
   - script: |
-      ${pmCmd.ci}
+      ${getCiInstallCommand(pm, projectPm)}
     displayName: 'Install workspace dependencies'
 
   - script: |
@@ -3428,7 +3429,7 @@ ${commonSetup}  - task: UsePythonVersion@0
 `;
 }
 
-export function buildAzureSwaPipeline(pm: PackageManager): string {
+export function buildAzureSwaPipeline(pm: PackageManager, projectPm: PackageManager = pm): string {
   const pmCmd = getCommands(pm);
   const azPipelinesSetup = getAzurePipelinesSetup(pm);
 
@@ -3473,7 +3474,7 @@ steps:
     displayName: 'Install Node.js'
 ${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
   - script: |
-      ${pmCmd.ci}
+      ${getCiInstallCommand(pm, projectPm)}
     displayName: 'Install dependencies'
 
   - script: |
@@ -3505,17 +3506,17 @@ async function createGitHubActionsWorkflows(
 
   const actionsPm: PackageManager = 'npm';
 
-  const swaWorkflow = buildGitHubSwaWorkflow(actionsPm);
+  const swaWorkflow = buildGitHubSwaWorkflow(actionsPm, pm);
   fs.writeFileSync(path.join(workflowsDir, 'deploy-swa.yml'), swaWorkflow);
 
   // deploy-functions.yml
-  const functionsWorkflow = getGitHubFunctionsWorkflow(actionsPm, backendLanguage);
+  const functionsWorkflow = getGitHubFunctionsWorkflow(actionsPm, backendLanguage, pm);
   fs.writeFileSync(path.join(workflowsDir, 'deploy-functions.yml'), functionsWorkflow);
 
   console.log('✅ GitHub Actions workflows created\n');
 }
 
-export function buildGitHubSwaWorkflow(pm: PackageManager): string {
+export function buildGitHubSwaWorkflow(pm: PackageManager, projectPm: PackageManager = pm): string {
   return `name: Deploy Static Web App
 
 on:
@@ -3562,7 +3563,7 @@ jobs:
 ${getCiSetupStep(pm) ? `\n${getCiSetupStep(pm)}\n` : ''}
       - name: Install and build app
         run: |
-          ${getSwaAppBuildCommand(pm)}
+          ${getSwaAppBuildCommand(pm, projectPm)}
       
       - name: Deploy to Azure Static Web Apps
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
@@ -3574,7 +3575,7 @@ ${getCiSetupStep(pm) ? `\n${getCiSetupStep(pm)}\n` : ''}
           app_location: '/'
           api_location: ''
           output_location: ''
-          app_build_command: '${getSwaAppBuildCommand(pm)}'
+          app_build_command: '${getSwaAppBuildCommand(pm, projectPm)}'
         env:
           NEXT_TURBOPACK_EXPERIMENTAL_USE_SYSTEM_TLS_CERTS: '1'
 `;
@@ -3588,11 +3589,11 @@ async function createAzurePipelines(projectDir: string, pm: PackageManager, back
   fs.mkdirSync(pipelinesDir, { recursive: true });
 
   // swa.yml
-  const swaPipeline = buildAzureSwaPipeline(pipelinesPm);
+  const swaPipeline = buildAzureSwaPipeline(pipelinesPm, pm);
   fs.writeFileSync(path.join(pipelinesDir, 'swa.yml'), swaPipeline);
   
   // functions.yml
-  const functionsPipeline = getAzureFunctionsPipeline(pipelinesPm, backendLanguage);
+  const functionsPipeline = getAzureFunctionsPipeline(pipelinesPm, backendLanguage, pm);
   fs.writeFileSync(path.join(pipelinesDir, 'functions.yml'), functionsPipeline);
 
   console.log('✅ Azure Pipelines created\n');
