@@ -2,10 +2,14 @@ import {
   buildGeneratedProjectDependencies,
   buildGeneratedProjectDevDependencies,
   buildSharedTsConfig,
+  buildAzureSwaPipeline,
   buildSwallowKitMcpProjectConfigSource,
+  buildGitHubSwaWorkflow,
   buildCSharpFunctionsProgramSource,
   buildCSharpFunctionsProjectSource,
   buildSwallowKitConfigSource,
+  getAzureFunctionsPipeline,
+  getGitHubFunctionsWorkflow,
   injectSwallowKitNextConfig,
   parseIgnoredBuilds,
   buildCosmosDbFreeTierBicepSource,
@@ -150,5 +154,44 @@ describe("buildCosmosDbFreeTierBicepSource", () => {
 
     expect(source).toContain("throughput: 1000");
     expect(source).not.toContain("containers");
+  });
+});
+
+describe("GitHub Actions workflow generation", () => {
+  it("uses the npm-shaped SWA workflow even when called from pnpm projects", () => {
+    const workflow = buildGitHubSwaWorkflow("npm");
+
+    expect(workflow).toContain("npm ci && npm run build");
+    expect(workflow).not.toContain("pnpm/action-setup");
+    expect(workflow).not.toContain("pnpm install --frozen-lockfile");
+  });
+
+  it("uses the npm-shaped Functions workflow even when called from pnpm projects", () => {
+    const workflow = getGitHubFunctionsWorkflow("npm", "typescript");
+
+    expect(workflow).toContain("npm ci");
+    expect(workflow).toContain("npm run --workspace=shared build");
+    expect(workflow).toContain("npm run --workspace=functions build");
+    expect(workflow).not.toContain("pnpm/action-setup");
+    expect(workflow).not.toContain("pnpm install --frozen-lockfile");
+  });
+
+  it("uses the npm-shaped SWA pipeline even when called from pnpm projects", () => {
+    const pipeline = buildAzureSwaPipeline("npm");
+
+    expect(pipeline).toContain("npm ci");
+    expect(pipeline).toContain("npm run build");
+    expect(pipeline).not.toContain("corepack enable");
+    expect(pipeline).not.toContain("pnpm install --frozen-lockfile");
+  });
+
+  it("uses the npm-shaped Functions pipeline even when called from pnpm projects", () => {
+    const pipeline = getAzureFunctionsPipeline("npm", "typescript");
+
+    expect(pipeline).toContain("npm ci");
+    expect(pipeline).toContain("npm run --workspace=shared build");
+    expect(pipeline).toContain("npm run --workspace=functions build");
+    expect(pipeline).not.toContain("corepack enable");
+    expect(pipeline).not.toContain("pnpm install --frozen-lockfile");
   });
 });

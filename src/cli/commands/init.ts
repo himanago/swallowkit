@@ -13,6 +13,7 @@ import {
   getBuildScript,
   getFunctionsPrestart,
   getFunctionsStartScript,
+  getSwaAppBuildCommand,
 } from "../../utils/package-manager";
 import { syncProjectManifest } from "../../core/project/manifest";
 import {
@@ -3070,7 +3071,7 @@ output privateDnsZoneId string = privateDnsZone.id
   console.log('✅ Infrastructure files created\n');
 }
 
-function getGitHubFunctionsWorkflow(pm: PackageManager, backendLanguage: BackendLanguage): string {
+export function getGitHubFunctionsWorkflow(pm: PackageManager, backendLanguage: BackendLanguage): string {
   const pmCmd = getCommands(pm);
   const pnpmSetupStep = getCiSetupStep(pm);
 
@@ -3230,7 +3231,7 @@ ${commonSetup}      - name: Setup Python
 `;
 }
 
-function getAzureFunctionsPipeline(pm: PackageManager, backendLanguage: BackendLanguage): string {
+export function getAzureFunctionsPipeline(pm: PackageManager, backendLanguage: BackendLanguage): string {
   const pmCmd = getCommands(pm);
   const azPipelinesSetup = getAzurePipelinesSetup(pm);
   const commonSetup = `  - task: NodeTool@0
@@ -3427,88 +3428,11 @@ ${commonSetup}  - task: UsePythonVersion@0
 `;
 }
 
-async function createGitHubActionsWorkflows(
-  projectDir: string,
-  azureConfig: AzureConfig,
-  pm: PackageManager,
-  backendLanguage: BackendLanguage
-) {
-  console.log('📦 Creating GitHub Actions workflows...\n');
-  const workflowsDir = path.join(projectDir, '.github', 'workflows');
-  fs.mkdirSync(workflowsDir, { recursive: true });
-
-  // deploy-swa.yml
-  const swaWorkflow = `name: Deploy Static Web App
-
-on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'app/**'
-      - 'components/**'
-      - 'lib/**'
-      - 'shared/**'
-      - 'public/**'
-      - 'package.json'
-      - 'next.config.js'
-      - 'next.config.ts'
-  workflow_dispatch:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'app/**'
-      - 'components/**'
-      - 'lib/**'
-      - 'shared/**'
-      - 'public/**'
-      - 'package.json'
-      - 'next.config.js'
-      - 'next.config.ts'
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    name: Build and Deploy Static Web App
-    
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      
-      - name: Deploy to Azure Static Web Apps
-        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          azure_static_web_apps_api_token: \${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          repo_token: \${{ secrets.GITHUB_TOKEN }}
-          action: 'upload'
-          app_location: '/'
-          api_location: ''
-          output_location: ''
-        env:
-          NEXT_TURBOPACK_EXPERIMENTAL_USE_SYSTEM_TLS_CERTS: '1'
-`;
-  fs.writeFileSync(path.join(workflowsDir, 'deploy-swa.yml'), swaWorkflow);
-  
-  // deploy-functions.yml
-  const functionsWorkflow = getGitHubFunctionsWorkflow(pm, backendLanguage);
-  fs.writeFileSync(path.join(workflowsDir, 'deploy-functions.yml'), functionsWorkflow);
-
-  console.log('✅ GitHub Actions workflows created\n');
-}
-
-async function createAzurePipelines(projectDir: string, pm: PackageManager, backendLanguage: BackendLanguage) {
-  console.log('📦 Creating Azure Pipelines...\n');
-  
+export function buildAzureSwaPipeline(pm: PackageManager): string {
   const pmCmd = getCommands(pm);
   const azPipelinesSetup = getAzurePipelinesSetup(pm);
-  const pipelinesDir = path.join(projectDir, 'pipelines');
-  fs.mkdirSync(pipelinesDir, { recursive: true });
 
-  // swa.yml
-  const swaPipeline = `trigger:
+  return `trigger:
   branches:
     include:
       - main
@@ -3567,10 +3491,108 @@ ${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
       azure_static_web_apps_api_token: $(AZURE_STATIC_WEB_APPS_API_TOKEN)
     displayName: 'Deploy to Azure Static Web Apps'
 `;
+}
+
+async function createGitHubActionsWorkflows(
+  projectDir: string,
+  azureConfig: AzureConfig,
+  pm: PackageManager,
+  backendLanguage: BackendLanguage
+) {
+  console.log('📦 Creating GitHub Actions workflows...\n');
+  const workflowsDir = path.join(projectDir, '.github', 'workflows');
+  fs.mkdirSync(workflowsDir, { recursive: true });
+
+  const actionsPm: PackageManager = 'npm';
+
+  const swaWorkflow = buildGitHubSwaWorkflow(actionsPm);
+  fs.writeFileSync(path.join(workflowsDir, 'deploy-swa.yml'), swaWorkflow);
+
+  // deploy-functions.yml
+  const functionsWorkflow = getGitHubFunctionsWorkflow(actionsPm, backendLanguage);
+  fs.writeFileSync(path.join(workflowsDir, 'deploy-functions.yml'), functionsWorkflow);
+
+  console.log('✅ GitHub Actions workflows created\n');
+}
+
+export function buildGitHubSwaWorkflow(pm: PackageManager): string {
+  return `name: Deploy Static Web App
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'components/**'
+      - 'lib/**'
+      - 'shared/**'
+      - 'public/**'
+      - 'package.json'
+      - 'next.config.js'
+      - 'next.config.ts'
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'components/**'
+      - 'lib/**'
+      - 'shared/**'
+      - 'public/**'
+      - 'package.json'
+      - 'next.config.js'
+      - 'next.config.ts'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    name: Build and Deploy Static Web App
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+${getCiSetupStep(pm) ? `\n${getCiSetupStep(pm)}\n` : ''}
+      - name: Install and build app
+        run: |
+          ${getSwaAppBuildCommand(pm)}
+      
+      - name: Deploy to Azure Static Web Apps
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: \${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: \${{ secrets.GITHUB_TOKEN }}
+          action: 'upload'
+          app_location: '/'
+          api_location: ''
+          output_location: ''
+          app_build_command: '${getSwaAppBuildCommand(pm)}'
+        env:
+          NEXT_TURBOPACK_EXPERIMENTAL_USE_SYSTEM_TLS_CERTS: '1'
+`;
+}
+
+async function createAzurePipelines(projectDir: string, pm: PackageManager, backendLanguage: BackendLanguage) {
+  console.log('📦 Creating Azure Pipelines...\n');
+
+  const pipelinesPm: PackageManager = 'npm';
+  const pipelinesDir = path.join(projectDir, 'pipelines');
+  fs.mkdirSync(pipelinesDir, { recursive: true });
+
+  // swa.yml
+  const swaPipeline = buildAzureSwaPipeline(pipelinesPm);
   fs.writeFileSync(path.join(pipelinesDir, 'swa.yml'), swaPipeline);
   
   // functions.yml
-  const functionsPipeline = getAzureFunctionsPipeline(pm, backendLanguage);
+  const functionsPipeline = getAzureFunctionsPipeline(pipelinesPm, backendLanguage);
   fs.writeFileSync(path.join(pipelinesDir, 'functions.yml'), functionsPipeline);
 
   console.log('✅ Azure Pipelines created\n');

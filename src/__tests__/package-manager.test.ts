@@ -4,6 +4,7 @@ import {
   getCiSetupStep,
   getAzurePipelinesSetup,
   getBuildScript,
+  getSwaAppBuildCommand,
   getFunctionsPrestart,
   getFunctionsStartScript,
   spawnArgs,
@@ -117,10 +118,21 @@ describe("getCiSetupStep", () => {
   it("returns pnpm setup step for pnpm", () => {
     const step = getCiSetupStep("pnpm");
     expect(step).toContain("pnpm/action-setup");
+    expect(step).toContain("version: latest");
   });
 
   it("returns empty string for npm", () => {
     expect(getCiSetupStep("npm")).toBe("");
+  });
+});
+
+describe("getSwaAppBuildCommand", () => {
+  it("returns a pnpm build command for pnpm projects", () => {
+    expect(getSwaAppBuildCommand("pnpm")).toBe("pnpm install --frozen-lockfile && pnpm run build");
+  });
+
+  it("returns an npm build command for npm projects", () => {
+    expect(getSwaAppBuildCommand("npm")).toBe("npm ci && npm run build");
   });
 });
 

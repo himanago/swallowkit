@@ -169,10 +169,19 @@ export function getWorkspaceConfig(pm: PackageManager, workspaces: string[]) {
 export function getCiSetupStep(pm: PackageManager): string {
   if (pm === "pnpm") {
     return `      - name: Setup pnpm
-        uses: pnpm/action-setup@v4`;
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest`;
   }
   // npm: no extra setup needed (comes with Node.js)
   return "";
+}
+
+export function getSwaAppBuildCommand(pm: PackageManager): string {
+  if (pm === "pnpm") {
+    return "pnpm install --frozen-lockfile && pnpm run build";
+  }
+  return "npm ci && npm run build";
 }
 
 /**
