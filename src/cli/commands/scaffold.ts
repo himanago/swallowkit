@@ -720,7 +720,7 @@ async function generateBFFRoutes(
 /**
  * Generate Cosmos DB container Bicep file
  */
-async function generateCosmosContainer(modelInfo: any): Promise<void> {
+export async function generateCosmosContainer(modelInfo: any): Promise<void> {
   console.log("\n🗄️  Generating Cosmos DB container Bicep file...");
 
   const modelKebab = toKebabCase(modelInfo.name);
@@ -755,12 +755,6 @@ param containerName string = '${modelPascal}s'
 
 @description('Partition key path')
 param partitionKeyPath string = '${modelInfo.partitionKey}'
-
-@description('Throughput (RU/s) - only used for Free Tier')
-param throughput int = 400
-
-@description('Cosmos DB mode: freetier or serverless')
-param cosmosDbMode string
 
 // Reference existing Cosmos DB account
 resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' existing = {
@@ -801,9 +795,6 @@ resource container 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/container
         ]
       }
     }
-    options: cosmosDbMode == 'freetier' ? {
-      throughput: throughput
-    } : {}
   }
 }
 
@@ -833,7 +824,7 @@ async function updateMainBicepWithContainer(modelKebab: string, modelPascal: str
   let mainBicepContent = fs.readFileSync(mainBicepPath, "utf-8");
 
   // Check if container module already exists
-  const containerModuleName = `${modelKebab.replace(/-/g, '')}Container`;
+  const containerModuleName = `${modelPascal.charAt(0).toLowerCase()}${modelPascal.slice(1)}Container`;
   if (mainBicepContent.includes(`module ${containerModuleName}`)) {
     console.log(`ℹ️  Container module '${containerModuleName}' already exists in main.bicep`);
     return;
@@ -872,13 +863,8 @@ module ${containerModuleName} 'containers/${modelKebab}-container.bicep' = {
   name: '${modelKebab}-container'
   params: {
     cosmosAccountName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.accountName : cosmosDbServerless.outputs.accountName
-    databaseName: '$` + `{projectName}Database'
-    cosmosDbMode: cosmosDbMode
+    databaseName: '\${projectName}Database'
   }
-  dependsOn: [
-    cosmosDbFreeTier
-    cosmosDbServerless
-  ]
 }`;
 
   // Insert the module

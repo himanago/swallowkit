@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import { EventEmitter } from "events";
 import * as childProcess from "child_process";
+import { generateCosmosContainer } from "../cli/commands/scaffold";
 import {
   NSWAG_CONSOLECORE_VERSION,
   buildCSharpCodegenToolManifestSource,
@@ -94,7 +95,36 @@ describe("native schema generators", () => {
       path.join("C:\\temp\\generated\\python-models", "backend_models", "models", "product.py")
     );
   });
+describe("generateCosmosContainer", () => {
+  const originalCwd = process.cwd();
+  let tempDir: string;
 
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-cosmos-container-"));
+    process.chdir(tempDir);
+    fs.mkdirSync(path.join(tempDir, "infra", "containers"), { recursive: true });
+    fs.writeFileSync(path.join(tempDir, "infra", "main.bicep"), "module cosmosDbServerless 'modules/cosmosdb-serverless.bicep' = if (cosmosDbMode == 'serverless') {\n  name: 'cosmosDb'\n}\n");
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("generates container templates without container-level throughput settings", async () => {
+    await generateCosmosContainer({ name: "SurveyResponse", partitionKey: "/id" });
+
+    const containerFilePath = path.join(tempDir, "infra", "containers", "survey-response-container.bicep");
+    const containerContent = fs.readFileSync(containerFilePath, "utf-8");
+    const mainContent = fs.readFileSync(path.join(tempDir, "infra", "main.bicep"), "utf-8");
+
+    expect(containerContent).toContain("resource container");
+    expect(containerContent).not.toContain("throughput");
+    expect(containerContent).not.toContain("options:");
+    expect(mainContent).toContain("module surveyResponseContainer 'containers/survey-response-container.bicep'");
+    expect(mainContent).not.toContain("dependsOn");
+  });
+});
   describe("non-destructive native schema generation", () => {
     const originalCwd = process.cwd();
     let tempDir: string;

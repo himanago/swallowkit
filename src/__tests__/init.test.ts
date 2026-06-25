@@ -8,6 +8,7 @@ import {
   buildSwallowKitConfigSource,
   injectSwallowKitNextConfig,
   parseIgnoredBuilds,
+  buildCosmosDbFreeTierBicepSource,
 } from "../cli/commands/init";
 
 describe("injectSwallowKitNextConfig", () => {
@@ -140,5 +141,14 @@ describe("parseIgnoredBuilds", () => {
 
   it("returns an empty array when no warning is present", () => {
     expect(parseIgnoredBuilds("everything is fine")).toEqual([]);
+  });
+});
+
+describe("buildCosmosDbFreeTierBicepSource", () => {
+  it("keeps database-level shared throughput at 1000 RU/s for Free Tier", () => {
+    const source = buildCosmosDbFreeTierBicepSource();
+
+    expect(source).toContain("throughput: 1000");
+    expect(source).not.toContain("containers");
   });
 });
