@@ -3084,6 +3084,7 @@ output privateDnsZoneId string = privateDnsZone.id
 export function getGitHubFunctionsWorkflow(pm: PackageManager, backendLanguage: BackendLanguage, projectPm: PackageManager = pm): string {
   const pmCmd = getCommands(pm);
   const pnpmSetupStep = getCiSetupStep(pm);
+  const npmWorkspaceNormalizationStep = getGitHubNpmWorkspaceNormalizationStep(pm, projectPm);
 
   const commonSetup = `      - uses: actions/checkout@v4
       
@@ -3092,6 +3093,7 @@ export function getGitHubFunctionsWorkflow(pm: PackageManager, backendLanguage: 
         with:
           node-version: '22'
 ${pnpmSetupStep ? `\n${pnpmSetupStep}\n` : ''}
+${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}` : ''}
       - name: Install dependencies
         run: |
           ${getCiInstallCommand(pm, projectPm)}
@@ -3244,11 +3246,13 @@ ${commonSetup}      - name: Setup Python
 export function getAzureFunctionsPipeline(pm: PackageManager, backendLanguage: BackendLanguage, projectPm: PackageManager = pm): string {
   const pmCmd = getCommands(pm);
   const azPipelinesSetup = getAzurePipelinesSetup(pm);
+  const npmWorkspaceNormalizationStep = getAzurePipelinesNpmWorkspaceNormalizationStep(pm, projectPm);
   const commonSetup = `  - task: NodeTool@0
     inputs:
       versionSpec: '22.x'
     displayName: 'Install Node.js'
 ${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
+${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}\n` : ''}
   - script: |
       ${getCiInstallCommand(pm, projectPm)}
     displayName: 'Install workspace dependencies'
@@ -3441,6 +3445,7 @@ ${commonSetup}  - task: UsePythonVersion@0
 export function buildAzureSwaPipeline(pm: PackageManager, projectPm: PackageManager = pm): string {
   const pmCmd = getCommands(pm);
   const azPipelinesSetup = getAzurePipelinesSetup(pm);
+  const npmWorkspaceNormalizationStep = getAzurePipelinesNpmWorkspaceNormalizationStep(pm, projectPm);
 
   return `trigger:
   branches:
@@ -3482,6 +3487,7 @@ steps:
       versionSpec: '22.x'
     displayName: 'Install Node.js'
 ${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
+${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}\n` : ''}
   - script: |
       ${getCiInstallCommand(pm, projectPm)}
     displayName: 'Install dependencies'
@@ -3500,6 +3506,114 @@ ${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
       skip_app_build: true
       azure_static_web_apps_api_token: $(AZURE_STATIC_WEB_APPS_API_TOKEN)
     displayName: 'Deploy to Azure Static Web Apps'
+`;
+}
+
+function getAzurePipelinesNpmWorkspaceNormalizationStep(pm: PackageManager, projectPm: PackageManager): string {
+  if (pm !== 'npm' || projectPm !== 'pnpm') {
+    return '';
+  }
+
+  return `  - script: |
+      node <<'NODE'
+      const fs = require('fs');
+
+      function readJson(path) {
+        return JSON.parse(fs.readFileSync(path, 'utf8'));
+      }
+
+      function writeJson(path, value) {
+        fs.writeFileSync(path, JSON.stringify(value, null, 2) + '\\n');
+      }
+
+      const sharedPackagePath = 'shared/package.json';
+      const sharedPackageName = fs.existsSync(sharedPackagePath) ? readJson(sharedPackagePath).name : undefined;
+
+      function replaceSharedWorkspaceDep(pkg, replacement) {
+        for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+          if (!pkg[section]) continue;
+
+          for (const [name, version] of Object.entries(pkg[section])) {
+            if (typeof version === 'string' && version.startsWith('workspace:') && (name === sharedPackageName || name.endsWith('/shared'))) {
+              pkg[section][name] = replacement;
+            }
+          }
+        }
+      }
+
+      const root = readJson('package.json');
+      root.workspaces = ['shared', 'functions'];
+      replaceSharedWorkspaceDep(root, 'file:shared');
+      root.scripts = root.scripts || {};
+      root.scripts.build = ${JSON.stringify(getBuildScript('npm'))};
+      writeJson('package.json', root);
+
+      if (fs.existsSync('functions/package.json')) {
+        const functionsPkg = readJson('functions/package.json');
+        replaceSharedWorkspaceDep(functionsPkg, 'file:../shared');
+        if (functionsPkg.scripts && functionsPkg.scripts.prestart) {
+          functionsPkg.scripts.prestart = 'npm run build';
+        }
+        writeJson('functions/package.json', functionsPkg);
+      }
+      NODE
+
+      npm install --package-lock-only --ignore-scripts
+    displayName: 'Normalize pnpm workspace for npm CI'`;
+}
+
+function getGitHubNpmWorkspaceNormalizationStep(pm: PackageManager, projectPm: PackageManager): string {
+  if (pm !== 'npm' || projectPm !== 'pnpm') {
+    return '';
+  }
+
+  return `      - name: Normalize pnpm workspace for npm CI
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+
+          function readJson(path) {
+            return JSON.parse(fs.readFileSync(path, 'utf8'));
+          }
+
+          function writeJson(path, value) {
+            fs.writeFileSync(path, JSON.stringify(value, null, 2) + '\\n');
+          }
+
+          const sharedPackagePath = 'shared/package.json';
+          const sharedPackageName = fs.existsSync(sharedPackagePath) ? readJson(sharedPackagePath).name : undefined;
+
+          function replaceSharedWorkspaceDep(pkg, replacement) {
+            for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+              if (!pkg[section]) continue;
+
+              for (const [name, version] of Object.entries(pkg[section])) {
+                if (typeof version === 'string' && version.startsWith('workspace:') && (name === sharedPackageName || name.endsWith('/shared'))) {
+                  pkg[section][name] = replacement;
+                }
+              }
+            }
+          }
+
+          const root = readJson('package.json');
+          root.workspaces = ['shared', 'functions'];
+          replaceSharedWorkspaceDep(root, 'file:shared');
+          root.scripts = root.scripts || {};
+          root.scripts.build = ${JSON.stringify(getBuildScript('npm'))};
+          writeJson('package.json', root);
+
+          if (fs.existsSync('functions/package.json')) {
+            const functionsPkg = readJson('functions/package.json');
+            replaceSharedWorkspaceDep(functionsPkg, 'file:../shared');
+            if (functionsPkg.scripts && functionsPkg.scripts.prestart) {
+              functionsPkg.scripts.prestart = 'npm run build';
+            }
+            writeJson('functions/package.json', functionsPkg);
+          }
+          NODE
+
+          npm install --package-lock-only --ignore-scripts
 `;
 }
 
@@ -3526,6 +3640,8 @@ async function createGitHubActionsWorkflows(
 }
 
 export function buildGitHubSwaWorkflow(pm: PackageManager, projectPm: PackageManager = pm): string {
+  const npmWorkspaceNormalizationStep = getGitHubNpmWorkspaceNormalizationStep(pm, projectPm);
+
   return `name: Deploy Static Web App
 
 on:
@@ -3570,6 +3686,7 @@ jobs:
         with:
           node-version: '22'
 ${getCiSetupStep(pm) ? `\n${getCiSetupStep(pm)}\n` : ''}
+${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}` : ''}
       - name: Install and build app
         run: |
           ${getSwaAppBuildCommand(pm, projectPm)}

@@ -161,6 +161,11 @@ describe("GitHub Actions workflow generation", () => {
   it("uses npm ci for the SWA workflow when the project was initialized with pnpm", () => {
     const workflow = buildGitHubSwaWorkflow("npm", "pnpm");
 
+    expect(workflow).toContain("Normalize pnpm workspace for npm CI");
+    expect(workflow).toContain("root.workspaces = ['shared', 'functions']");
+    expect(workflow).toContain("replaceSharedWorkspaceDep(root, 'file:shared')");
+    expect(workflow).toContain("root.scripts.build = \"npm run --workspace=shared build");
+    expect(workflow).toContain("npm install --package-lock-only --ignore-scripts");
     expect(workflow).toContain("npm ci && npm run build");
     expect(workflow).not.toContain("npm install && npm run build");
     expect(workflow).not.toContain("pnpm/action-setup");
@@ -170,6 +175,10 @@ describe("GitHub Actions workflow generation", () => {
   it("uses npm ci for the Functions workflow when the project was initialized with pnpm", () => {
     const workflow = getGitHubFunctionsWorkflow("npm", "typescript", "pnpm");
 
+    expect(workflow).toContain("Normalize pnpm workspace for npm CI");
+    expect(workflow).toContain("replaceSharedWorkspaceDep(functionsPkg, 'file:../shared')");
+    expect(workflow).toContain("functionsPkg.scripts.prestart = 'npm run build'");
+    expect(workflow).toContain("npm install --package-lock-only --ignore-scripts");
     expect(workflow).toContain("- name: Install dependencies\n        run: |\n          npm ci");
     expect(workflow).toContain("npm run --workspace=shared build");
     expect(workflow).toContain("npm run --workspace=functions build");
@@ -180,8 +189,13 @@ describe("GitHub Actions workflow generation", () => {
   it("uses npm ci for the SWA pipeline when the project was initialized with pnpm", () => {
     const pipeline = buildAzureSwaPipeline("npm", "pnpm");
 
+    expect(pipeline).toContain("Normalize pnpm workspace for npm CI");
+    expect(pipeline).toContain("root.workspaces = ['shared', 'functions']");
+    expect(pipeline).toContain("replaceSharedWorkspaceDep(root, 'file:shared')");
+    expect(pipeline).toContain("root.scripts.build = \"npm run --workspace=shared build");
+    expect(pipeline).toContain("npm install --package-lock-only --ignore-scripts");
     expect(pipeline).toContain("npm ci");
-    expect(pipeline).not.toContain("npm install");
+    expect(pipeline).not.toContain("- script: |\n      npm install\n    displayName: 'Install dependencies'");
     expect(pipeline).toContain("npm run build");
     expect(pipeline).not.toContain("corepack enable");
     expect(pipeline).not.toContain("pnpm install --frozen-lockfile");
@@ -190,6 +204,10 @@ describe("GitHub Actions workflow generation", () => {
   it("uses npm ci for the Functions pipeline when the project was initialized with pnpm", () => {
     const pipeline = getAzureFunctionsPipeline("npm", "typescript", "pnpm");
 
+    expect(pipeline).toContain("Normalize pnpm workspace for npm CI");
+    expect(pipeline).toContain("replaceSharedWorkspaceDep(functionsPkg, 'file:../shared')");
+    expect(pipeline).toContain("functionsPkg.scripts.prestart = 'npm run build'");
+    expect(pipeline).toContain("npm install --package-lock-only --ignore-scripts");
     expect(pipeline).toContain("- script: |\n      npm ci\n    displayName: 'Install workspace dependencies'");
     expect(pipeline).toContain("npm run --workspace=shared build");
     expect(pipeline).toContain("npm run --workspace=functions build");
