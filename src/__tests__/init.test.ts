@@ -108,7 +108,7 @@ module.exports = nextConfig;
     });
   });
 
-  it("builds a project-scoped MCP config that launches the local swallowkit-mcp entrypoint", () => {
+  it("builds a project-scoped MCP config that resolves the configured swallowkit-mcp version", () => {
     const source = buildSwallowKitMcpProjectConfigSource();
     const parsed = JSON.parse(source) as {
       mcpServers: {
@@ -116,15 +116,20 @@ module.exports = nextConfig;
           command: string;
           args: string[];
           cwd?: string;
+          env?: Record<string, string>;
         };
       };
     };
 
-    expect(parsed.mcpServers.swallowkit.command).toBe("node");
+    expect(parsed.mcpServers.swallowkit.command).toBe("pnpm");
     expect(parsed.mcpServers.swallowkit.args).toEqual([
-      expect.stringMatching(/^\.\/node_modules\/swallowkit\/dist\/mcp\/index\.js$/),
+      "dlx",
+      "--package",
+      "swallowkit@${SWALLOWKIT_MCP_VERSION}",
+      "swallowkit-mcp",
     ]);
     expect(parsed.mcpServers.swallowkit.cwd).toBe(".");
+    expect(parsed.mcpServers.swallowkit.env).toEqual({ SWALLOWKIT_MCP_VERSION: "latest" });
   });
 });
 

@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import type { MachineResponse } from "../machine/contracts";
+import { getSwallowKitVersion } from "../version";
 
 interface MachineSuccessPayload<TData> {
   ok: true;
@@ -75,6 +76,21 @@ function jsonTextContent(value: unknown): { content: Array<{ type: "text"; text:
   };
 }
 
+function withSwallowKitMetadata<TData>(data: TData): TData & { metadata: Record<string, unknown> } {
+  const value = data && typeof data === "object" ? data as Record<string, unknown> : { data };
+  const metadata = value.metadata && typeof value.metadata === "object"
+    ? value.metadata as Record<string, unknown>
+    : {};
+
+  return {
+    ...value,
+    metadata: {
+      ...metadata,
+      swallowkitVersion: getSwallowKitVersion(),
+    },
+  } as TData & { metadata: Record<string, unknown> };
+}
+
 export function buildSwallowKitToolDefinitions(
   runMachineCli: MachineCliRunner = defaultMachineCliRunner
 ): ToolDefinition[] {
@@ -85,7 +101,7 @@ export function buildSwallowKitToolDefinitions(
       inputSchema: z.object({}),
       handler: async () => {
       const response = await executeMachineCommand(["inspect", "project"], runMachineCli);
-      return jsonTextContent(response.data);
+      return jsonTextContent(withSwallowKitMetadata(response.data));
       },
     },
     {
@@ -112,7 +128,7 @@ export function buildSwallowKitToolDefinitions(
       inputSchema: z.object({}),
       handler: async () => {
       const response = await executeMachineCommand(["validate", "project"], runMachineCli);
-      return jsonTextContent(response.data);
+      return jsonTextContent(withSwallowKitMetadata(response.data));
       },
     },
     {
@@ -158,9 +174,10 @@ export function buildSwallowKitToolDefinitions(
 }
 
 export function createSwallowKitMcpServer(runMachineCli: MachineCliRunner = defaultMachineCliRunner): McpServer {
+  const version = getSwallowKitVersion();
   const server = new McpServer({
     name: "swallowkit-mcp",
-    version: process.env.npm_package_version || "0.0.0",
+    version,
   });
 
   for (const tool of buildSwallowKitToolDefinitions(runMachineCli)) {
@@ -178,6 +195,7 @@ export function createSwallowKitMcpServer(runMachineCli: MachineCliRunner = defa
 }
 
 export async function runMcpServer(): Promise<void> {
+  console.error(`[swallowkit-mcp] version: ${getSwallowKitVersion()}`);
   const server = createSwallowKitMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);

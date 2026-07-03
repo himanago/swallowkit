@@ -143,7 +143,7 @@ The MCP layer does not implement framework logic on its own. It delegates each t
 
 ## Generated Project Bootstrap
 
-`swallowkit init` writes a project-scoped `.mcp.json` file at the repository root. It launches the locally installed SwallowKit MCP entrypoint and is designed for agent runtimes that support repository-level MCP discovery.
+`swallowkit init` writes a project-scoped `.mcp.json` file at the repository root. It resolves and launches the latest SwallowKit MCP entrypoint on each start; set `SWALLOWKIT_MCP_VERSION` in the file to pin a version.
 
 Example shape:
 
@@ -162,10 +162,10 @@ Example shape:
 Practical behavior:
 
 - **Claude Code** can load project-scoped MCP servers from `.mcp.json`
-- **GitHub Copilot CLI** can also discover workspace `.mcp.json` servers; using a local installed entrypoint avoids the first-run `npx --package ...` timeout risk
+- **GitHub Copilot CLI** can also discover workspace `.mcp.json` servers
 - **Other agents / Codex-style runtimes** can reuse the same launcher when their MCP client supports project-level config; otherwise they should use the machine CLI fallback
 
-The generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) explicitly tell agents to prefer MCP tools when available and fall back to `swallowkit machine ...` when they are not. The local MCP bootstrap expects project dependencies to already be installed.
+The generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) explicitly tell agents to prefer MCP tools when available and fall back to `swallowkit machine ...` when they are not. The MCP bootstrap requires pnpm and network access when the selected version is not cached.
 
 ## Recommended Usage
 

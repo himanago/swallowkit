@@ -678,9 +678,12 @@ export function buildSwallowKitMcpProjectConfigSource(): string {
     {
       mcpServers: {
         swallowkit: {
-          command: "node",
-          args: [`./node_modules/${name}/dist/mcp/index.js`],
+          command: "pnpm",
+          args: ["dlx", "--package", `${name}@\${SWALLOWKIT_MCP_VERSION}`, "swallowkit-mcp"],
           cwd: ".",
+          env: {
+            SWALLOWKIT_MCP_VERSION: "latest",
+          },
         },
       },
     },
@@ -1915,20 +1918,20 @@ ${functionsStructureLine}
 ├── infra/                 # Bicep infrastructure-as-code files
 │   ├── main.bicep
 │   └── modules/
-├── .mcp.json              # Project-scoped MCP bootstrap using local installed SwallowKit
+├── .mcp.json              # Project-scoped MCP bootstrap resolving SwallowKit on each launch
 └── .github/workflows/     # CI/CD workflows (if configured)
 \`\`\`
 
 ## SwallowKit MCP / Machine Workflow
 
-- This repository includes a project-scoped \`.mcp.json\` file that starts the locally installed SwallowKit MCP server on runtimes that auto-load project MCP configurations.
+- This repository includes a project-scoped \`.mcp.json\` file that resolves and starts the latest SwallowKit MCP server on each launch. Set \`SWALLOWKIT_MCP_VERSION\` in that file to pin a specific version.
 - Prefer the \`swallowkit_*\` MCP tools for framework-owned inspection, validation, and generation when they are available.
 - If MCP is unavailable in your runtime, fall back to the machine CLI:
   - \`${runCmd} swallowkit machine inspect project\`
   - \`${runCmd} swallowkit machine validate project\`
   - \`${runCmd} swallowkit machine generate scaffold <name> --api-only\`
 - Do not hand-edit framework-owned artifacts when the MCP or machine interface can generate or validate them for you.
-- The local MCP bootstrap depends on project dependencies already being installed.
+- The MCP bootstrap requires pnpm and network access when the selected version is not cached.
 - **Always invoke SwallowKit via \`${runCmd}\`.** Do not mix package manager commands.
 
 ## Critical Design Principles
@@ -2134,7 +2137,7 @@ This file is for Claude Code. Read AGENTS.md in the project root for the full ar
 
 ## SwallowKit MCP
 
-- This repository includes a project-scoped \`.mcp.json\` that registers the locally installed SwallowKit MCP server for runtimes that support project MCP files.
+- This repository includes a project-scoped \`.mcp.json\` that resolves and starts the latest SwallowKit MCP server on each launch. Set \`SWALLOWKIT_MCP_VERSION\` in that file to pin a specific version.
 - When the \`swallowkit_*\` tools are available, prefer them for inspect / validate / generate tasks.
 - If MCP is unavailable, use \`${runCmd} swallowkit machine ...\` instead.
 - **Always invoke SwallowKit via \`${runCmd}\`.** Do not mix package manager commands.

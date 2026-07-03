@@ -187,7 +187,7 @@ my-app/
 ├── next.config.js
 ├── swallowkit.config.js
 ├── staticwebapp.config.json
-├── .mcp.json                # Project-scoped MCP bootstrap using local installed SwallowKit
+├── .mcp.json                # Project-scoped MCP bootstrap resolving SwallowKit on each launch
 ├── AGENTS.md                 # Coding agent instructions (Codex)
 ├── CLAUDE.md                 # Claude Code instructions
 └── package.json
@@ -203,7 +203,7 @@ The `init` command automatically generates instruction files for multiple AI cod
 |------|-------------|-------------|
 | `AGENTS.md` | OpenAI Codex / generic agents | Full architecture spec, conventions, naming rules, CLI skills |
 | `CLAUDE.md` | Claude Code | Quick reference + CLI commands (references `AGENTS.md` for full spec) |
-| `.mcp.json` | Claude Code / project MCP runtimes | Project-scoped launcher for the locally installed `swallowkit-mcp` entrypoint |
+| `.mcp.json` | Claude Code / project MCP runtimes | Launcher resolving `swallowkit-mcp` on each start; `SWALLOWKIT_MCP_VERSION` can pin it |
 | `.github/copilot-instructions.md` | GitHub Copilot | Summary of key rules (auto-loaded by Copilot) |
 | `.github/instructions/shared-models.instructions.md` | GitHub Copilot | Layer-specific rules for `shared/models/**` |
 | `.github/instructions/bff-routes.instructions.md` | GitHub Copilot | Layer-specific rules for `app/api/**` |
@@ -249,21 +249,21 @@ my-app/
 ├── infra/                 # Bicep infrastructure-as-code files
 │   ├── main.bicep
 │   └── modules/
-├── .mcp.json              # Project-scoped MCP bootstrap using local installed SwallowKit
+├── .mcp.json              # Project-scoped MCP bootstrap resolving SwallowKit on each launch
 └── .github/workflows/     # CI/CD workflows (if configured)
 ```
 
 ## SwallowKit MCP / Machine Workflow
 <!-- SwallowKit MCP / Machine ワークフロー -->
 
-- This repository includes a project-scoped `.mcp.json` file that starts the locally installed SwallowKit MCP server on runtimes that auto-load project MCP configurations.
+- This repository includes a project-scoped `.mcp.json` file that resolves and starts the latest SwallowKit MCP server on each launch. Set `SWALLOWKIT_MCP_VERSION` in that file to pin a version.
 - Prefer the `swallowkit_*` MCP tools for framework-owned inspection, validation, and generation when they are available.
 - If MCP is unavailable in your runtime, fall back to the machine CLI:
   - `npx swallowkit machine inspect project`
   - `npx swallowkit machine validate project`
   - `npx swallowkit machine generate scaffold <name> --api-only`
 - Do not hand-edit framework-owned artifacts when the MCP or machine interface can generate or validate them for you.
-- The local MCP bootstrap expects project dependencies to already be installed.
+- The MCP bootstrap requires pnpm and network access when the selected version is not cached.
 
 <!--
 - このリポジトリには、project-scoped な `.mcp.json` が含まれており、project MCP 設定を自動読込する runtime では同梱の SwallowKit MCP server を起動できます。
@@ -484,7 +484,7 @@ architecture, conventions, and rules.
 
 ## SwallowKit MCP
 
-- This repository includes a project-scoped `.mcp.json` that registers the locally installed SwallowKit MCP server for runtimes that support project MCP files.
+- This repository includes a project-scoped `.mcp.json` that resolves and starts the latest SwallowKit MCP server on each launch. Set `SWALLOWKIT_MCP_VERSION` in that file to pin a version.
 - When the `swallowkit_*` tools are available, prefer them for inspect / validate / generate tasks.
 - If MCP is unavailable, use `npx swallowkit machine ...` instead.
 

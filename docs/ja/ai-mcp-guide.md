@@ -143,7 +143,7 @@ MCP 層は framework ロジックを持たず、各 Tool 呼び出しを machine
 
 ## 生成プロジェクトでの bootstrap
 
-`swallowkit init` は、repository root に project-scoped な `.mcp.json` を出力します。これはローカルに install された SwallowKit MCP entrypoint を起動する設定で、repository-level の MCP 自動検出に対応した agent runtime を想定しています。
+`swallowkit init` は、repository root に project-scoped な `.mcp.json` を出力します。起動ごとに最新の SwallowKit MCP entrypoint を解決し、固定する場合はファイル内の `SWALLOWKIT_MCP_VERSION` を変更します。
 
 例:
 
@@ -162,10 +162,10 @@ MCP 層は framework ロジックを持たず、各 Tool 呼び出しを machine
 実際の挙動:
 
 - **Claude Code** は `.mcp.json` の project-scoped MCP server を読み込めます
-- **GitHub Copilot CLI** も workspace の `.mcp.json` server を検出でき、ローカル install 済み entrypoint を使うことで first-run の `npx --package ...` timeout リスクを避けられます
+- **GitHub Copilot CLI** も workspace の `.mcp.json` server を検出できます
 - **その他の agent / Codex 系 runtime** も、project-level config をサポートしていれば同じ launcher を再利用でき、未対応なら machine CLI fallback を使います
 
-生成される instruction files（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）は、MCP Tool が使えるときはそれを優先し、使えないときは `swallowkit machine ...` にフォールバックするよう案内します。ローカル MCP bootstrap は、project 依存関係が install 済みであることを前提にします。
+生成される instruction files（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）は、MCP Tool が使えるときはそれを優先し、使えないときは `swallowkit machine ...` にフォールバックするよう案内します。MCP bootstrap には pnpm が必要で、選択したバージョンが cache にない場合は network access も必要です。
 
 ## 推奨フロー
 

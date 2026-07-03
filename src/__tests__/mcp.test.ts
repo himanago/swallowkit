@@ -24,7 +24,27 @@ describe("SwallowKit MCP tool definitions", () => {
 
     const result = await tool!.handler({});
     expect(runner).toHaveBeenCalledWith(["inspect", "project"]);
-    expect(JSON.parse(result.content[0].text)).toEqual({ manifestSource: "file" });
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      manifestSource: "file",
+      metadata: { swallowkitVersion: expect.stringMatching(/^\d+\.\d+\.\d+/) },
+    });
+  });
+
+  it("includes the MCP version in validate_project metadata", async () => {
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({ ok: true, command: "validate-project", data: { valid: true } }),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const tool = buildSwallowKitToolDefinitions(runner as MachineCliRunner).find(
+      (candidate) => candidate.name === "swallowkit_validate_project"
+    );
+
+    const result = await tool!.handler({});
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      valid: true,
+      metadata: { swallowkitVersion: expect.stringMatching(/^\d+\.\d+\.\d+/) },
+    });
   });
 
   it("delegates scaffold_model with explicit args", async () => {
@@ -103,6 +123,7 @@ describe("SwallowKit MCP tool definitions", () => {
         clearTimeout(timer);
 
         if (expectedShutdown) {
+          expect(stderr).toMatch(/\[swallowkit-mcp\] version: \d+\.\d+\.\d+/);
           finishResolve();
           return;
         }
