@@ -1,3 +1,7 @@
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+
 import {
   buildGeneratedProjectDependencies,
   buildGeneratedProjectDevDependencies,
@@ -13,6 +17,7 @@ import {
   injectSwallowKitNextConfig,
   parseIgnoredBuilds,
   buildCosmosDbFreeTierBicepSource,
+  withNpmLockfileSafeManifests,
 } from "../cli/commands/init";
 
 describe("injectSwallowKitNextConfig", () => {
@@ -130,6 +135,43 @@ module.exports = nextConfig;
     ]);
     expect(parsed.mcpServers.swallowkit.cwd).toBe(".");
     expect(parsed.mcpServers.swallowkit.env).toEqual({ SWALLOWKIT_MCP_VERSION: "latest" });
+  });
+
+  it("temporarily rewrites workspace protocol dependencies for npm lockfile generation", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-lockfile-"));
+    fs.mkdirSync(path.join(projectDir, "shared"));
+    fs.mkdirSync(path.join(projectDir, "functions"));
+
+    const rootPackageJson = {
+      name: "sample-app",
+      dependencies: {
+        "@sample-app/shared": "workspace:*",
+      },
+    };
+    const functionsPackageJson = {
+      name: "functions",
+      dependencies: {
+        "@sample-app/shared": "workspace:*",
+      },
+    };
+    const sharedPackageJson = {
+      name: "@sample-app/shared",
+    };
+
+    fs.writeFileSync(path.join(projectDir, "package.json"), JSON.stringify(rootPackageJson, null, 2));
+    fs.writeFileSync(path.join(projectDir, "functions", "package.json"), JSON.stringify(functionsPackageJson, null, 2));
+    fs.writeFileSync(path.join(projectDir, "shared", "package.json"), JSON.stringify(sharedPackageJson, null, 2));
+
+    await withNpmLockfileSafeManifests(projectDir, async () => {
+      const normalizedRoot = JSON.parse(fs.readFileSync(path.join(projectDir, "package.json"), "utf-8"));
+      const normalizedFunctions = JSON.parse(fs.readFileSync(path.join(projectDir, "functions", "package.json"), "utf-8"));
+
+      expect(normalizedRoot.dependencies["@sample-app/shared"]).toBe("file:shared");
+      expect(normalizedFunctions.dependencies["@sample-app/shared"]).toBe("file:../shared");
+    });
+
+    expect(JSON.parse(fs.readFileSync(path.join(projectDir, "package.json"), "utf-8"))).toEqual(rootPackageJson);
+    expect(JSON.parse(fs.readFileSync(path.join(projectDir, "functions", "package.json"), "utf-8"))).toEqual(functionsPackageJson);
   });
 });
 

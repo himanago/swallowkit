@@ -421,15 +421,87 @@ async function installDependencies(projectDir: string, pm: PackageManager = 'pnp
 
   if (pm === 'pnpm') {
     console.log('\n📦 Generating npm lockfile for CI/CD...\n');
-    await runPackageManagerCommand(
-      'npm',
-      ['install', '--package-lock-only', '--ignore-scripts'],
-      projectDir,
-      'npm install --package-lock-only'
-    );
+    await withNpmLockfileSafeManifests(projectDir, async () => {
+      await runPackageManagerCommand(
+        'npm',
+        ['install', '--package-lock-only', '--ignore-scripts'],
+        projectDir,
+        'npm install --package-lock-only'
+      );
+    });
   }
 
   console.log('\n✅ Dependencies installed\n');
+}
+
+type PackageJson = {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  [key: string]: unknown;
+};
+
+export async function withNpmLockfileSafeManifests(projectDir: string, action: () => Promise<void>): Promise<void> {
+  const packageJsonPath = path.join(projectDir, 'package.json');
+  const functionsPackageJsonPath = path.join(projectDir, 'functions', 'package.json');
+  const sharedPackageJsonPath = path.join(projectDir, 'shared', 'package.json');
+  const originalFiles = new Map<string, string>();
+
+  function rememberOriginal(filePath: string): void {
+    if (!originalFiles.has(filePath)) {
+      originalFiles.set(filePath, fs.readFileSync(filePath, 'utf-8'));
+    }
+  }
+
+  function readJson(filePath: string): PackageJson {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  }
+
+  function writeJson(filePath: string, value: PackageJson): void {
+    fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
+  }
+
+  const sharedPackageName = fs.existsSync(sharedPackageJsonPath)
+    ? (readJson(sharedPackageJsonPath).name as string | undefined)
+    : undefined;
+
+  function replaceSharedWorkspaceDependency(packageJson: PackageJson, replacement: string): boolean {
+    let changed = false;
+
+    for (const section of ['dependencies', 'devDependencies', 'optionalDependencies'] as const) {
+      const dependencies = packageJson[section];
+      if (!dependencies) continue;
+
+      for (const [name, version] of Object.entries(dependencies)) {
+        if (version.startsWith('workspace:') && (name === sharedPackageName || name.endsWith('/shared'))) {
+          dependencies[name] = replacement;
+          changed = true;
+        }
+      }
+    }
+
+    return changed;
+  }
+
+  function normalizePackageJson(filePath: string, replacement: string): void {
+    if (!fs.existsSync(filePath)) return;
+
+    const packageJson = readJson(filePath);
+    if (!replaceSharedWorkspaceDependency(packageJson, replacement)) return;
+
+    rememberOriginal(filePath);
+    writeJson(filePath, packageJson);
+  }
+
+  try {
+    normalizePackageJson(packageJsonPath, 'file:shared');
+    normalizePackageJson(functionsPackageJsonPath, 'file:../shared');
+    await action();
+  } finally {
+    for (const [filePath, content] of originalFiles) {
+      fs.writeFileSync(filePath, content);
+    }
+  }
 }
 
 /**
