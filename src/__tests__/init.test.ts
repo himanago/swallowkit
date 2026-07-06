@@ -141,6 +141,10 @@ module.exports = nextConfig;
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-lockfile-"));
     fs.mkdirSync(path.join(projectDir, "shared"));
     fs.mkdirSync(path.join(projectDir, "functions"));
+    fs.mkdirSync(path.join(projectDir, "node_modules"));
+    fs.mkdirSync(path.join(projectDir, "shared", "node_modules"));
+    fs.writeFileSync(path.join(projectDir, "node_modules", ".pnpm-marker"), "root");
+    fs.writeFileSync(path.join(projectDir, "shared", "node_modules", ".pnpm-marker"), "shared");
 
     const rootPackageJson = {
       name: "sample-app",
@@ -168,10 +172,14 @@ module.exports = nextConfig;
 
       expect(normalizedRoot.dependencies["@sample-app/shared"]).toBe("file:shared");
       expect(normalizedFunctions.dependencies["@sample-app/shared"]).toBe("file:../shared");
+      expect(fs.existsSync(path.join(projectDir, "node_modules"))).toBe(false);
+      expect(fs.existsSync(path.join(projectDir, "shared", "node_modules"))).toBe(false);
     });
 
     expect(JSON.parse(fs.readFileSync(path.join(projectDir, "package.json"), "utf-8"))).toEqual(rootPackageJson);
     expect(JSON.parse(fs.readFileSync(path.join(projectDir, "functions", "package.json"), "utf-8"))).toEqual(functionsPackageJson);
+    expect(fs.readFileSync(path.join(projectDir, "node_modules", ".pnpm-marker"), "utf-8")).toBe("root");
+    expect(fs.readFileSync(path.join(projectDir, "shared", "node_modules", ".pnpm-marker"), "utf-8")).toBe("shared");
   });
 });
 

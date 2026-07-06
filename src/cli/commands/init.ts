@@ -446,6 +446,7 @@ export async function withNpmLockfileSafeManifests(projectDir: string, action: (
   const functionsPackageJsonPath = path.join(projectDir, 'functions', 'package.json');
   const sharedPackageJsonPath = path.join(projectDir, 'shared', 'package.json');
   const originalFiles = new Map<string, string>();
+  const hiddenNodeModules = new Map<string, string>();
 
   function rememberOriginal(filePath: string): void {
     if (!originalFiles.has(filePath)) {
@@ -493,11 +494,30 @@ export async function withNpmLockfileSafeManifests(projectDir: string, action: (
     writeJson(filePath, packageJson);
   }
 
+  function hideNodeModules(directory: string): void {
+    const nodeModulesPath = path.join(directory, 'node_modules');
+    if (!fs.existsSync(nodeModulesPath)) return;
+
+    const hiddenPath = path.join(directory, `.node_modules.swallowkit-npm-lockfile-${process.pid}`);
+    fs.renameSync(nodeModulesPath, hiddenPath);
+    hiddenNodeModules.set(nodeModulesPath, hiddenPath);
+  }
+
   try {
     normalizePackageJson(packageJsonPath, 'file:shared');
     normalizePackageJson(functionsPackageJsonPath, 'file:../shared');
+    hideNodeModules(projectDir);
+    hideNodeModules(path.join(projectDir, 'shared'));
+    hideNodeModules(path.join(projectDir, 'functions'));
     await action();
   } finally {
+    for (const [nodeModulesPath, hiddenPath] of hiddenNodeModules) {
+      if (fs.existsSync(nodeModulesPath)) {
+        fs.rmSync(nodeModulesPath, { recursive: true, force: true });
+      }
+      fs.renameSync(hiddenPath, nodeModulesPath);
+    }
+
     for (const [filePath, content] of originalFiles) {
       fs.writeFileSync(filePath, content);
     }
