@@ -1272,3 +1272,6 @@ Control CLI behavior with environment variables:
 
 - [Deployment Guide](./deployment-guide.md) - Deploy to Azure
 - [Scaffold Guide](./scaffold-guide.md) - CRUD code generation details
+## add-auth with named schemes
+
+`swallowkit add-auth --scheme admin --provider swa` and `swallowkit add-auth --scheme lineUser --provider external-token` add isolated scheme directories. Existing scheme names stop safely, and verifier/adapter files are never overwritten. Omitting `--scheme` retains the legacy single-provider flow.

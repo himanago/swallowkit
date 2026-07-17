@@ -779,14 +779,20 @@ export function parseAuthPolicy(content: string): ModelAuthPolicy | undefined {
   const read = extractRoles('read');
   const write = extractRoles('write');
 
-  if (!roles && !read && !write) {
+  const extractName = (key: string): string | undefined => objectStr.match(new RegExp(`${key}\\s*:\\s*['"]([^'"]+)['"]`))?.[1];
+  const namedPolicy = extractName('policy');
+  const namedRead = extractName('read');
+  const namedWrite = extractName('write');
+
+  if (!roles && !read && !write && !namedPolicy && !namedRead && !namedWrite) {
     return undefined;
   }
 
   return {
     ...(roles ? { roles } : {}),
-    ...(read ? { read } : {}),
-    ...(write ? { write } : {}),
+    ...(namedRead ? { read: namedRead } : read ? { read } : {}),
+    ...(namedWrite ? { write: namedWrite } : write ? { write } : {}),
+    ...(namedPolicy ? { policy: namedPolicy } : {}),
   };
 }
 

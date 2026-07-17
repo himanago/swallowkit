@@ -1,7 +1,28 @@
-import { validateConfig, loadConfigFromEnv } from "../core/config";
+import { validateConfig, loadConfigFromEnv, normalizeAuthConfig } from "../core/config";
 import { SwallowKitConfig } from "../types";
 
 describe("validateConfig", () => {
+  it("normalizes a legacy provider as the default scheme", () => {
+    const auth = normalizeAuthConfig({ provider: "external-token", authorization: { defaultPolicy: "authenticated" } });
+    expect(auth?.schemes.default.provider).toBe("external-token");
+    expect(auth?.authorization.defaultPolicy).toBe("authenticated");
+  });
+
+  it("accepts SWA and external token named schemes", () => {
+    const result = validateConfig({ auth: { schemes: { admin: { provider: "swa" }, lineUser: { provider: "external-token" } }, authorization: { defaultPolicy: "anonymous", policies: { adminOnly: { schemes: ["admin"] }, lineUserOnly: { schemes: ["lineUser"] } } } } });
+    expect(result).toEqual({ valid: true, errors: [] });
+  });
+
+  it("rejects undefined scheme references and ambiguous bearer schemes", () => {
+    const missing = validateConfig({ auth: { schemes: { admin: { provider: "swa" } }, authorization: { defaultPolicy: "anonymous", policies: { bad: { schemes: ["missing"] } } } } });
+    expect(missing.errors.join("\n")).toContain("auth.authorization.policies.bad.schemes");
+    const ambiguous = validateConfig({ auth: { schemes: { a: { provider: "external-token" }, b: { provider: "external-token" } }, authorization: { defaultPolicy: "anonymous", policies: { bad: { schemes: ["a", "b"] } } } } });
+    expect(ambiguous.errors.join("\n")).toContain("deterministic");
+  });
+
+  it("normalizes public to anonymous", () => {
+    expect(normalizeAuthConfig({ provider: "none", authorization: { defaultPolicy: "public" } })?.authorization.defaultPolicy).toBe("anonymous");
+  });
   it("returns valid for a complete config", () => {
     const config: SwallowKitConfig = {
       database: { connectionString: "AccountEndpoint=https://..." },

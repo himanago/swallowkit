@@ -22,7 +22,8 @@ export function generateCompactAzureFunctionsCRUD(model: ModelInfo, sharedPackag
   const isIdPartition = partitionKeyField === 'id';
 
   const hasAuth = !!authPolicy;
-  const authImport = hasAuth ? `\n${generateAuthImportTS()}\n` : '';
+  const namedAuth = Boolean(authPolicy && (authPolicy.policy || typeof authPolicy.read === 'string' || typeof authPolicy.write === 'string'));
+  const authImport = hasAuth ? `\n${generateAuthImportTS(namedAuth)}\n` : '';
   const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read', authProvider)}\n` : '';
   const writeGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'write', authProvider)}\n` : '';
   const authCatchBlock = hasAuth
@@ -779,7 +780,8 @@ export function generatePythonAzureFunctionsCRUD(model: ModelInfo, authPolicy?: 
   const isIdPartition = partitionKeyField === 'id';
 
   const hasAuth = !!authPolicy;
-  const authImport = hasAuth ? '\nfrom auth.jwt_helper import require_auth, require_roles, handle_auth_error\n' : '';
+  const namedAuth = Boolean(authPolicy && (authPolicy.policy || typeof authPolicy.read === 'string' || typeof authPolicy.write === 'string'));
+  const authImport = hasAuth ? `\nfrom auth.${namedAuth ? 'auth_router' : 'jwt_helper'} import require_auth, require_roles, handle_auth_error\n` : '';
   // generateAuthGuardPython outputs at 4-space indent; inside try: we need 8-space
   const readGuardRaw = hasAuth ? generateAuthGuardPython(authPolicy!, 'read') : '';
   const writeGuardRaw = hasAuth ? generateAuthGuardPython(authPolicy!, 'write') : '';

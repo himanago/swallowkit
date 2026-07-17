@@ -124,7 +124,8 @@ export function generateRdbConnectorFunctionTS(
 
   // Auth guard setup
   const hasAuth = !!authPolicy;
-  const authImport = hasAuth ? `\n${generateAuthImportTS()}\n` : '';
+  const namedAuth = Boolean(authPolicy && (authPolicy.policy || typeof authPolicy.read === 'string' || typeof authPolicy.write === 'string'));
+  const authImport = hasAuth ? `\n${generateAuthImportTS(namedAuth)}\n` : '';
   const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read', authProvider)}\n` : '';
   const authCatchBlock = hasAuth
     ? `      const authErr = handleAuthError(error);
@@ -205,7 +206,8 @@ export function generateApiConnectorFunctionTS(
 
   // Auth guard setup (user access control, separate from connector auth to external APIs)
   const hasAuth = !!authPolicy;
-  const authImportLine = hasAuth ? `\n${generateAuthImportTS()}\n` : '';
+  const namedAuth = Boolean(authPolicy && (authPolicy.policy || typeof authPolicy.read === 'string' || typeof authPolicy.write === 'string'));
+  const authImportLine = hasAuth ? `\n${generateAuthImportTS(namedAuth)}\n` : '';
   const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read', authProvider)}\n` : '';
   const writeGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'write', authProvider)}\n` : '';
   const authCatchBlock = hasAuth

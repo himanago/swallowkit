@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as net from 'net';
 import { CosmosClient, PartitionKeyKind } from '@azure/cosmos';
-import { ensureSwallowKitProject, getBackendLanguage, getAuthConfig } from '../../core/config';
+import { ensureSwallowKitProject, getBackendLanguage, getAuthConfig, normalizeAuthConfig } from '../../core/config';
 import { ModelInfo } from '../../core/scaffold/model-parser';
 import {
   applyDevSeedEnvironment,
@@ -648,7 +648,8 @@ async function startDevEnvironment(options: DevOptions) {
   const pmCmd = getCommands(pm);
   const backendLanguage = getBackendLanguage();
   const authConfig = getAuthConfig();
-  const useSwaEmulator = authConfig?.provider === 'swa' && !options.noSwa;
+  const normalizedAuth = normalizeAuthConfig(authConfig);
+  const useSwaEmulator = Boolean(normalizedAuth && Object.values(normalizedAuth.schemes).some(scheme => scheme.provider === 'swa')) && !options.noSwa;
   const swaCommand = useSwaEmulator ? await resolveSwaCliCommand(process.cwd()) : null;
 
   if (useSwaEmulator && !swaCommand) {
@@ -981,7 +982,9 @@ async function startDevEnvironment(options: DevOptions) {
             passwordHashColumn: authConfig.customJwt.passwordHashColumn,
             rolesColumn: authConfig.customJwt.rolesColumn,
           },
-          defaultPolicy: authConfig.authorization?.defaultPolicy,
+          defaultPolicy: authConfig.authorization?.defaultPolicy === "public" ? "anonymous" :
+            authConfig.authorization?.defaultPolicy === "authenticated" || authConfig.authorization?.defaultPolicy === "anonymous"
+              ? authConfig.authorization.defaultPolicy : undefined,
         };
       }
 

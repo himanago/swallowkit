@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { getBackendLanguage, getFullConfig, validateConfig } from "../config";
+import { getBackendLanguage, getFullConfig, normalizeAuthConfig, validateConfig } from "../config";
 import { getAllModels, toCamelCase, toKebabCase } from "../scaffold/model-parser";
 import { AuthConfig, BackendLanguage, ConnectorDefinition, ModelAuthPolicy, ModelConnectorConfig } from "../../types";
 import { captureConsoleMessages, withWorkingDirectory } from "../operations/runtime";
@@ -340,7 +340,7 @@ export async function buildProjectManifest(projectRoot: string = process.cwd()):
       connectors: Object.entries(config.connectors || {})
         .map(([name, definition]) => ({ name, definition }))
         .sort((left, right) => left.name.localeCompare(right.name)),
-      auth: config.auth || null,
+      auth: normalizeAuthConfig(config.auth) || null,
       entities: entities.sort((left, right) => left.name.localeCompare(right.name)),
       routes,
       modules: buildModules(projectRoot),
@@ -356,7 +356,7 @@ export async function buildProjectManifest(projectRoot: string = process.cwd()):
         ],
         hasSharedWorkspace: fs.existsSync(path.join(projectRoot, "shared", "package.json")),
         hasConnectors: Object.keys(config.connectors || {}).length > 0,
-        hasAuth: Boolean(config.auth && config.auth.provider !== "none"),
+        hasAuth: Boolean(config.auth && (config.auth.provider !== "none" || Object.keys(config.auth.schemes ?? {}).length > 0)),
       },
     };
 

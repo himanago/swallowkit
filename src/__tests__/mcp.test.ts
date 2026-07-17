@@ -9,7 +9,7 @@ const itWhenBuiltEntrypointExists = fs.existsSync(builtMcpEntrypoint) ? it : it.
 
 describe("SwallowKit MCP tool definitions", () => {
   it("delegates inspect_project to the machine CLI", async () => {
-    const runner = jest.fn(async (_args: Parameters<MachineCliRunner>[0]) => ({
+    const runner = jest.fn(async () => ({
       stdout: JSON.stringify({
         ok: true,
         command: "inspect-project",
@@ -48,7 +48,7 @@ describe("SwallowKit MCP tool definitions", () => {
   });
 
   it("delegates scaffold_model with explicit args", async () => {
-    const runner = jest.fn(async (_args: Parameters<MachineCliRunner>[0]) => ({
+    const runner = jest.fn(async () => ({
       stdout: JSON.stringify({
         ok: true,
         command: "generate-scaffold",

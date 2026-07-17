@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import { createRequire } from "module";
 import * as path from "path";
-import { AuthConfig, BackendLanguage, ConnectorDefinition, SwallowKitConfig } from "../types";
+import { AuthConfig, AuthProvider, BackendLanguage, ConnectorDefinition, NormalizedAuthConfig, SwallowKitConfig } from "../types";
 import { detectFromProject, getCommands } from "../utils/package-manager";
 
 const requireFromHere = createRequire(__filename);
@@ -37,7 +37,7 @@ const DEFAULT_CONFIG: SwallowKitConfig = {
 /**
  * 設定ファイルを読み込み
  */
-export function loadConfig(configPath?: string): SwallowKitConfig {
+export function loadConfig(configPath?: string, throwOnError = false): SwallowKitConfig {
   const defaultPaths = [
     "swallowkit.config.json",
     "swallowkit.config.js",
@@ -63,6 +63,7 @@ export function loadConfig(configPath?: string): SwallowKitConfig {
           return mergeConfig(DEFAULT_CONFIG, unwrapConfigModule(loadedConfig));
         }
       } catch (error) {
+        if (throwOnError) throw error;
         console.warn(`⚠️ 設定ファイルの読み込みに失敗: ${filePath}`, error);
       }
     }
@@ -200,6 +201,40 @@ export function getAuthConfig(configPath?: string): AuthConfig | undefined {
   return config.auth;
 }
 
+/** Load configuration for mutating/generation commands and fail instead of silently falling back. */
+export function getValidatedFullConfig(configPath?: string): SwallowKitConfig {
+  const config = mergeConfig(loadConfig(configPath, true), loadConfigFromEnv());
+  const validation = validateConfig(config);
+  if (!validation.valid) throw new Error(`Invalid SwallowKit configuration:\n${validation.errors.map(error => `- ${error}`).join("\n")}`);
+  return config;
+}
+
+const VALID_AUTH_PROVIDERS: AuthProvider[] = ["custom-jwt", "swa", "external-token", "swa-custom", "none"];
+const AUTH_NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+/** Convert the legacy single-provider shape to the canonical named-scheme shape. */
+export function normalizeAuthConfig(auth?: AuthConfig): NormalizedAuthConfig | undefined {
+  if (!auth) return undefined;
+  const schemes = { ...(auth.schemes ?? {}) };
+  if (auth.provider && auth.provider !== "none" && !schemes.default) {
+    schemes.default = { provider: auth.provider, customJwt: auth.customJwt, swa: auth.swa };
+  }
+  const rawDefault = auth.authorization?.defaultPolicy ?? (Object.keys(schemes).length ? "authenticated" : "anonymous");
+  return {
+    ...auth,
+    schemes,
+    authorization: {
+      ...auth.authorization,
+      defaultPolicy: rawDefault === "public" ? "anonymous" : rawDefault,
+      policies: { ...(auth.authorization?.policies ?? {}) },
+    },
+  };
+}
+
+export function getNormalizedAuthConfig(configPath?: string): NormalizedAuthConfig | undefined {
+  return normalizeAuthConfig(getAuthConfig(configPath));
+}
+
 /**
  * 設定の検証
  */
@@ -213,6 +248,38 @@ function hasConfiguredDatabase(config: SwallowKitConfig): boolean {
 
 export function validateConfig(config: SwallowKitConfig): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
+
+  const auth = normalizeAuthConfig(config.auth);
+  if (auth) {
+    for (const [name, scheme] of Object.entries(auth.schemes)) {
+      const base = `auth.schemes.${name}`;
+      if (!AUTH_NAME.test(name)) errors.push(`${base}: scheme name must match ${AUTH_NAME}; rename the scheme`);
+      if (!VALID_AUTH_PROVIDERS.includes(scheme.provider)) errors.push(`${base}.provider: unsupported provider '${scheme.provider}'; use ${VALID_AUTH_PROVIDERS.join(", ")}`);
+      if (scheme.provider === "none" || scheme.provider === "swa-custom") errors.push(`${base}.provider: '${scheme.provider}' cannot be used as a named scheme; use swa, external-token, or custom-jwt`);
+      if (scheme.provider === "custom-jwt") {
+        const jwt = scheme.customJwt ?? (name === "default" ? auth.customJwt : undefined);
+        for (const key of ["userConnector", "userTable", "loginIdColumn", "passwordHashColumn", "rolesColumn"] as const) {
+          if (!jwt?.[key]) errors.push(`${base}.customJwt.${key}: required for custom-jwt; configure this value`);
+        }
+      }
+    }
+    for (const [name, policy] of Object.entries(auth.authorization.policies)) {
+      const base = `auth.authorization.policies.${name}`;
+      if (!AUTH_NAME.test(name)) errors.push(`${base}: policy name must match ${AUTH_NAME}; rename the policy`);
+      if (!Array.isArray(policy.schemes) || policy.schemes.length === 0) errors.push(`${base}.schemes: provide at least one named scheme`);
+      for (const scheme of policy.schemes ?? []) if (!auth.schemes[scheme]) errors.push(`${base}.schemes: undefined scheme '${scheme}'; define auth.schemes.${scheme}`);
+      const sources = new Map<string, string>();
+      for (const schemeName of policy.schemes ?? []) {
+        const provider = auth.schemes[schemeName]?.provider;
+        const source = provider === "swa" ? "x-ms-client-principal" : provider === "custom-jwt" || provider === "external-token" ? "authorization-bearer" : provider;
+        if (source && sources.has(source)) errors.push(`${base}.schemes: '${sources.get(source)}' and '${schemeName}' both use ${source}; split the policy so credential selection is deterministic`);
+        else if (source) sources.set(source, schemeName);
+      }
+    }
+    const defaultPolicy = auth.authorization.defaultPolicy;
+    if (defaultPolicy === "authenticated" && !auth.schemes.default && Object.keys(auth.schemes).length !== 1) errors.push("auth.authorization.defaultPolicy: 'authenticated' requires auth.schemes.default (or exactly one scheme); set a default scheme or use a named policy");
+    else if (!["anonymous", "authenticated"].includes(defaultPolicy) && !auth.authorization.policies[defaultPolicy]) errors.push(`auth.authorization.defaultPolicy: undefined policy '${defaultPolicy}'; define auth.authorization.policies.${defaultPolicy}`);
+  }
 
   // データベース設定の検証
   if (hasConfiguredDatabase(config) && !config.database?.connectionString) {

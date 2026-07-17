@@ -503,9 +503,9 @@ export class ConnectorMockServer {
     if (!policy) return undefined; // defaultPolicy: authenticated → 認証のみ、ロールチェック不要
 
     if (isWrite) {
-      return policy.write || policy.roles;
+      return Array.isArray(policy.write) ? policy.write : policy.roles;
     }
-    return policy.read || policy.roles;
+    return Array.isArray(policy.read) ? policy.read : policy.roles;
   }
 
   private readBody(req: http.IncomingMessage, callback: (body: MockDocument) => void) {

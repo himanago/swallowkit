@@ -512,3 +512,43 @@ function Dashboard() {
 - **セッション管理 UI なし**: アクティブなセッション/トークンを表示・管理するための管理画面はありません
 
 💡 **参考情報**: CLI コマンドの詳細は **[CLI リファレンス](./cli-reference.md)** を、Connector の設定については **[Connector ガイド](./connector-guide.md)** を、モデルの Scaffold については **[Scaffold ガイド](./scaffold-guide.md)** をご参照ください。
+# 名前付き認証スキーム
+
+SwallowKit は認証方式を暗黙の順番で試さず、名前付きスキームと認可ポリシーを分離します。
+
+```js
+auth: {
+  schemes: {
+    admin: { provider: 'swa' },
+    lineUser: { provider: 'external-token' },
+  },
+  authorization: {
+    defaultPolicy: 'anonymous',
+    policies: {
+      adminOnly: { schemes: ['admin'], roles: ['authenticated'] },
+      lineUserOnly: { schemes: ['lineUser'], roles: ['authenticated'] },
+    },
+  },
+}
+```
+
+モデルは `authPolicy = { read: 'adminOnly', write: 'adminOnly' }` または `{ policy: 'adminOnly' }`、カスタム Functions は `await requireAuth(request, 'lineUserOnly')` を使用します。ポリシーに列挙したスキームだけを受理し、Bearer スキーム同士など credential source を区別できない構成は検証エラーです。
+
+標準 principal は `{ subject, scheme, issuer, roles, claims }` です。グローバルな identity key には `scheme + ':' + subject` を使用します。互換用 `userId` / `userDetails` は非推奨です。未検証のクライアント由来 ID、roles、profile は信用しません。
+
+BFF は Bearer/SWA credential を転送して `x-functions-key` を付与するだけで、最終判定は Functions が行います。credential はログへ出しません。External Token verifier は fail closed で生成され、署名・issuer・audience・期限を利用者実装で検証し、無効 token (401) と IdP 障害 (503) を区別します。
+
+旧 `auth.provider` は `default` スキームへ正規化され、旧ロール配列も維持されます。`public` は非推奨 alias として受理し、正規値は `anonymous` です。
+
+## SWA管理画面＋LINE系ユーザーAPIの完全例
+
+Campaign/Coupon 管理モデルには `adminOnly`、アンケート・クーポン受取モデルには `lineUserOnly` を指定します。`defaultPolicy: 'anonymous'` で `authPolicy` を省略したヘルスチェックは匿名になります。
+
+```bash
+swallowkit add-auth --scheme admin --provider swa
+swallowkit add-auth --scheme lineUser --provider external-token
+```
+
+生成された `functions/src/auth/schemes/line-user/verifier.ts` を実装してください。初期 stub は全 token を拒否します。管理系・一般ユーザー系の route group layout で、それぞれ `lib/auth/schemes/admin/auth-context` と `lib/auth/schemes/line-user/auth-context` の Provider をスコープします。LINE側UIはスキーム固有 authenticated fetch を使用します。UIのロール表示制御はUX用途だけで、Functionsがセキュリティ境界です。
+
+管理者SWA principalは`lineUserOnly`を選択できず、LINE Bearer tokenは`adminOnly`を選択できません。検証失敗後のprovider fallbackはありません。`swa-custom`は予約扱いで名前付きスキームには使用できないため、`swa`と別のcustom/externalスキームを組み合わせてください。

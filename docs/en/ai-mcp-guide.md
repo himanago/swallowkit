@@ -173,3 +173,6 @@ The generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-inst
 - Use **validate** to detect framework rule violations before or after generation
 - Use **generate** instead of editing framework-owned artifacts by hand
 - Keep custom logic in application files, but let SwallowKit own generated structure and metadata
+# Authentication data in machine/MCP output
+
+`inspect project` and the corresponding MCP project inspection return canonical `auth.schemes` and `auth.authorization.policies`. Legacy single-provider configuration appears as the `default` scheme, and `public` appears as `anonymous`. Validation diagnostics include the full configuration path and a suggested correction; consumers must never reinterpret an invalid or missing policy as anonymous.

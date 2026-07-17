@@ -95,12 +95,25 @@ export interface SwaAuthConfig {
 
 // 認可設定
 export interface AuthorizationConfig {
-  defaultPolicy?: "authenticated" | "anonymous";
+  defaultPolicy?: "authenticated" | "anonymous" | "public" | string;
+  policies?: Record<string, AuthorizationPolicy>;
+}
+
+export interface AuthorizationPolicy {
+  schemes: string[];
+  roles?: string[];
+}
+
+export interface AuthSchemeConfig {
+  provider: AuthProvider;
+  customJwt?: CustomJwtConfig;
+  swa?: SwaAuthConfig;
 }
 
 // 認証設定
 export interface AuthConfig {
-  provider: AuthProvider;
+  provider?: AuthProvider;
+  schemes?: Record<string, AuthSchemeConfig>;
   customJwt?: CustomJwtConfig;
   swa?: SwaAuthConfig;
   authorization?: AuthorizationConfig;
@@ -109,8 +122,26 @@ export interface AuthConfig {
 // モデルに付与する認可ポリシー
 export interface ModelAuthPolicy {
   roles?: string[];
-  read?: string[];
-  write?: string[];
+  read?: string[] | string;
+  write?: string[] | string;
+  policy?: string;
+}
+
+export interface NormalizedAuthConfig extends Omit<AuthConfig, "schemes" | "authorization"> {
+  schemes: Record<string, AuthSchemeConfig>;
+  authorization: AuthorizationConfig & { defaultPolicy: string; policies: Record<string, AuthorizationPolicy> };
+}
+
+export interface AuthPrincipal {
+  subject: string;
+  scheme: string;
+  issuer: string;
+  roles: string[];
+  claims: Record<string, unknown>;
+  /** @deprecated Use subject. */
+  userId?: string;
+  /** @deprecated Read provider data from claims. */
+  userDetails?: string;
 }
 
 // CLI設定の型

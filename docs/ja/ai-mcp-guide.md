@@ -173,3 +173,6 @@ MCP 層は framework ロジックを持たず、各 Tool 呼び出しを machine
 - 生成の前後で **validate** を実行して framework rule violation を確認する
 - framework-owned artifact は手書き編集より **generate** を優先する
 - アプリ固有ロジックは手書きしてよいが、生成構造と metadata は SwallowKit に管理させる
+# machine/MCP出力の認証情報
+
+`inspect project` と対応するMCP project inspectionは、正規化済みの `auth.schemes` と `auth.authorization.policies` を返します。旧単一provider設定は `default` スキーム、`public` は `anonymous` として現れます。validation診断には設定パスと修正方法が含まれます。利用側は不正または欠落したポリシーを匿名として解釈してはいけません。

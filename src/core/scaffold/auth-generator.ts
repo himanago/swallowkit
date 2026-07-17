@@ -3,9 +3,211 @@
  * add-auth コマンドおよび scaffold ロールガード挿入で使用するテンプレート群
  */
 
-import { AuthProvider, CustomJwtConfig, ModelAuthPolicy, RdbConnectorConfig } from "../../types";
+import { AuthProvider, CustomJwtConfig, ModelAuthPolicy, NormalizedAuthConfig, RdbConnectorConfig } from "../../types";
 
 type RdbProvider = RdbConnectorConfig["provider"]; // "mysql" | "postgres" | "sqlserver"
+
+export function generateNamedAuthRouterTS(config: NormalizedAuthConfig): string {
+  const external = Object.entries(config.schemes).filter(([, s]) => s.provider === "external-token");
+  const custom = Object.entries(config.schemes).filter(([, s]) => s.provider === "custom-jwt");
+  const imports = external.map(([name]) => {
+    const slug = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
+    const id = safeIdentifier(name);
+    return `import { verifyExternalToken as verify_${id}, ExternalTokenVerificationError as Error_${id} } from './schemes/${slug}/verifier';`;
+  }).concat(custom.map(([name]) => {
+    const slug = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
+    return `import { requireAuth as verify_${safeIdentifier(name)} } from './schemes/${slug}/jwt-helper';`;
+  })).join("\n");
+  const verifiers = external.map(([name]) => { const id = safeIdentifier(name); return `${JSON.stringify(name)}: async (token: string) => { try { return await verify_${id}(token); } catch (e) { if (e instanceof Error_${id}) throw new AuthError(e.status, e.message); throw e; } }`; }).join(",\n  ");
+  return `import type { HttpRequest, HttpResponseInit } from '@azure/functions';
+${imports}
+export type AuthPrincipal = { subject: string; scheme: string; issuer: string; roles: string[]; claims: Record<string, unknown>; /** @deprecated */ userId?: string; /** @deprecated */ userDetails?: string };
+export class AuthError extends Error { constructor(public status: 401 | 403 | 503, message: string) { super(message); } }
+const schemes = ${JSON.stringify(Object.fromEntries(Object.entries(config.schemes).map(([n,s]) => [n,{provider:s.provider,allowedProviders:s.swa?.allowedProviders??[]}])))} as const;
+const policies = ${JSON.stringify(config.authorization.policies)} as Record<string, { schemes: string[]; roles?: string[] }>;
+const externalVerifiers: Record<string, (token: string) => Promise<any>> = { ${verifiers} };
+const customVerifiers: Record<string, (request: HttpRequest) => any> = { ${custom.map(([name]) => `${JSON.stringify(name)}: verify_${safeIdentifier(name)}`).join(", ")} };
+function swa(request: HttpRequest, scheme: string): AuthPrincipal {
+  const encoded = request.headers.get('x-ms-client-principal');
+  if (!encoded) throw new AuthError(401, 'Authentication required');
+  try { const value = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as Record<string, unknown>;
+    const roles = Array.isArray(value.userRoles) ? value.userRoles.filter((r): r is string => typeof r === 'string') : [];
+    if (typeof value.userId !== 'string' || !value.userId || !roles.includes('authenticated')) throw new Error();
+    const allowed = (schemes as any)[scheme]?.allowedProviders as string[] | undefined;
+    if (allowed?.length && (typeof value.identityProvider !== 'string' || !allowed.includes(value.identityProvider))) throw new Error();
+    return { subject: value.userId, scheme, issuer: typeof value.identityProvider === 'string' ? 'swa:' + value.identityProvider : 'swa', roles, claims: value, userId: value.userId, userDetails: typeof value.userDetails === 'string' ? value.userDetails : undefined };
+  } catch (e) { if (e instanceof AuthError) throw e; throw new AuthError(401, 'Invalid SWA client principal'); }
+}
+export async function requireAuth(request: HttpRequest, policyName: string): Promise<AuthPrincipal> {
+  const policy = policies[policyName]; if (!policy) throw new AuthError(401, 'Undefined authorization policy');
+  const bearer = request.headers.get('authorization'); const hasSwa = Boolean(request.headers.get('x-ms-client-principal'));
+  const candidates = policy.schemes.filter(name => { const p=(schemes as any)[name]?.provider; return p === 'swa' ? hasSwa : (p === 'external-token' || p === 'custom-jwt') ? Boolean(bearer?.startsWith('Bearer ')) : false; });
+  if (candidates.length !== 1) throw new AuthError(401, candidates.length ? 'Ambiguous credentials' : 'Authentication required');
+  const scheme = candidates[0]; const provider = (schemes as any)[scheme]?.provider; let principal: AuthPrincipal;
+  if (provider === 'swa') principal = swa(request, scheme);
+  else if (provider === 'external-token') { const token=bearer!.slice(7); try { const p=await externalVerifiers[scheme](token); const subject=p?.subject ?? p?.userId; if (typeof subject !== 'string' || !subject || !Array.isArray(p.roles)) throw new AuthError(401,'Invalid external principal'); principal={subject,scheme,issuer:typeof p.issuer==='string'?p.issuer:scheme,roles:p.roles,claims:p.claims && typeof p.claims==='object'?p.claims:p,userId:subject,userDetails:p.userDetails}; } catch(e) { if(e instanceof AuthError) throw e; throw new AuthError(503,'Identity provider unavailable'); } }
+  else if (provider === 'custom-jwt') { try { const p=customVerifiers[scheme](request); const subject=p?.sub ?? p?.userId; if(typeof subject !== 'string' || !subject || !Array.isArray(p.roles)) throw new Error(); principal={subject,scheme,issuer:scheme,roles:p.roles,claims:p,userId:subject,userDetails:p.loginId}; } catch { throw new AuthError(401,'Invalid or expired token'); } }
+  else throw new AuthError(401, 'Authentication adapter is not configured');
+  requireRoles(principal, policy.roles || []); return principal;
+}
+export function requireRoles(principal: AuthPrincipal, roles: string[]): void { if (roles.length && !roles.some(r => principal.roles.includes(r))) throw new AuthError(403, 'Insufficient permissions'); }
+export function identityKey(principal: AuthPrincipal): string { return principal.scheme + ':' + principal.subject; }
+export function handleAuthError(error: unknown): HttpResponseInit | null { return error instanceof AuthError ? { status:error.status, jsonBody:{error:error.message} } : null; }
+`;
+}
+
+function safeIdentifier(name: string): string {
+  return name.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+function schemeSlug(name: string): string {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
+}
+
+export function generateNamedExternalTokenVerifierCSharp(scheme: string): string {
+  const id = safeIdentifier(scheme);
+  return `namespace Functions.Auth.Schemes;
+public record ExternalPrincipal_${id}(string Subject, string Issuer, string[] Roles, IReadOnlyDictionary<string, object?> Claims);
+public sealed class ExternalTokenVerificationException_${id} : Exception
+{
+    public bool IsIdentityProviderUnavailable { get; }
+    public ExternalTokenVerificationException_${id}(string message, bool unavailable = false) : base(message) => IsIdentityProviderUnavailable = unavailable;
+}
+public static class ExternalTokenVerifier_${id}
+{
+    // Validate signature, issuer, audience and expiry. This stub deliberately fails closed.
+    public static Task<ExternalPrincipal_${id}> VerifyAsync(string token) => throw new InvalidOperationException("External token verifier for ${scheme} is not configured");
+}
+`;
+}
+
+export function generateNamedExternalTokenVerifierPython(scheme: string): string {
+  return `class ExternalTokenVerificationError(Exception):
+    def __init__(self, message: str, identity_provider_unavailable: bool = False):
+        super().__init__(message)
+        self.identity_provider_unavailable = identity_provider_unavailable
+
+def verify_external_token(token: str) -> dict:
+    # Validate signature, issuer, audience and expiry. This stub deliberately fails closed.
+    raise RuntimeError("External token verifier for ${scheme} is not configured")
+`;
+}
+
+export function generateNamedAuthRouterCSharp(config: NormalizedAuthConfig): string {
+  const externalCases = Object.entries(config.schemes).filter(([,s]) => s.provider === "external-token").map(([name]) => {
+    const id = safeIdentifier(name);
+    return `            case "${name}":
+                try
+                {
+                    var external = await ExternalTokenVerifier_${id}.VerifyAsync(bearer!);
+                    principal = new AuthPrincipal(external.Subject, "${name}", external.Issuer, external.Roles, external.Claims);
+                }
+                catch (ExternalTokenVerificationException_${id} ex) when (ex.IsIdentityProviderUnavailable) { return (null, await Error(request, HttpStatusCode.ServiceUnavailable, "Identity provider unavailable")); }
+                catch (ExternalTokenVerificationException_${id}) { return (null, await Error(request, HttpStatusCode.Unauthorized, "Invalid token")); }
+                catch { return (null, await Error(request, HttpStatusCode.ServiceUnavailable, "External token verifier unavailable")); }
+                break;`;
+  }).join("\n");
+  return `using System.Net;
+using System.Text;
+using System.Text.Json;
+using Microsoft.Azure.Functions.Worker.Http;
+using Functions.Auth.Schemes;
+namespace Functions.Auth;
+public record AuthPrincipal(string Subject, string Scheme, string Issuer, string[] Roles, IReadOnlyDictionary<string, object?> Claims)
+{
+    [Obsolete("Use Subject")] public string UserId => Subject;
+    public string IdentityKey => $"{Scheme}:{Subject}";
+}
+public static class AuthRouter
+{
+    private static readonly Dictionary<string, (string[] Schemes, string[] Roles)> Policies = new()
+    {
+${Object.entries(config.authorization.policies).map(([n,p]) => `        ["${n}"] = (new[] { ${p.schemes.map(s=>`"${s}"`).join(", ")} }, new[] { ${(p.roles??[]).map(r=>`"${r}"`).join(", ")} }),`).join("\n")}
+    };
+    private static readonly Dictionary<string,string> Providers = new() { ${Object.entries(config.schemes).map(([n,s])=>`["${n}"]="${s.provider}"`).join(", ")} };
+    private static readonly Dictionary<string,string[]> AllowedProviders = new() { ${Object.entries(config.schemes).map(([n,s])=>`["${n}"]=new[] { ${(s.swa?.allowedProviders??[]).map(p=>`"${p}"`).join(", ")} }`).join(", ")} };
+    public static async Task<(AuthPrincipal? Principal, HttpResponseData? ErrorResponse)> Authorize(HttpRequestData request, string policyName)
+    {
+        if (!Policies.TryGetValue(policyName, out var policy)) return (null, await Error(request, HttpStatusCode.Unauthorized, "Undefined authorization policy"));
+        var bearerHeader = request.Headers.TryGetValues("Authorization", out var authValues) ? authValues.FirstOrDefault() : null;
+        var bearer = bearerHeader?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true ? bearerHeader[7..] : null;
+        var swa = request.Headers.TryGetValues("x-ms-client-principal", out var swaValues) ? swaValues.FirstOrDefault() : null;
+        var candidates = policy.Schemes.Where(s => Providers[s] == "swa" ? swa != null : Providers[s] is "external-token" or "custom-jwt" ? bearer != null : false).ToArray();
+        if (candidates.Length != 1) return (null, await Error(request, HttpStatusCode.Unauthorized, candidates.Length == 0 ? "Authentication required" : "Ambiguous credentials"));
+        var scheme = candidates[0]; AuthPrincipal principal;
+        switch (scheme)
+        {
+${externalCases}
+            default:
+                if (Providers[scheme] != "swa") return (null, await Error(request, HttpStatusCode.Unauthorized, "Authentication adapter is not configured"));
+                try
+                {
+                    using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(swa!)));
+                    var root = doc.RootElement; var subject = root.GetProperty("userId").GetString();
+                    var roles = root.TryGetProperty("userRoles", out var rv) ? rv.EnumerateArray().Where(v=>v.ValueKind==JsonValueKind.String).Select(v=>v.GetString()!).ToArray() : Array.Empty<string>();
+                    if (string.IsNullOrEmpty(subject) || !roles.Contains("authenticated")) throw new InvalidOperationException();
+                    var identityProvider = root.TryGetProperty("identityProvider", out var iv) ? iv.GetString() : null;
+                    if (AllowedProviders[scheme].Length > 0 && (identityProvider == null || !AllowedProviders[scheme].Contains(identityProvider))) throw new InvalidOperationException();
+                    var issuer = identityProvider == null ? "swa" : "swa:" + identityProvider;
+                    principal = new AuthPrincipal(subject!, scheme, issuer, roles, new Dictionary<string,object?> { ["clientPrincipal"] = root.Clone() });
+                }
+                catch { return (null, await Error(request, HttpStatusCode.Unauthorized, "Invalid SWA client principal")); }
+                break;
+        }
+        if (policy.Roles.Length > 0 && !policy.Roles.Any(principal.Roles.Contains)) return (null, await Error(request, HttpStatusCode.Forbidden, "Insufficient permissions"));
+        return (principal, null);
+    }
+    private static async Task<HttpResponseData> Error(HttpRequestData request, HttpStatusCode status, string message) { var response=request.CreateResponse(status); await response.WriteAsJsonAsync(new { error=message }); return response; }
+}
+`;
+}
+
+export function generateNamedAuthRouterPython(config: NormalizedAuthConfig): string {
+  const external = Object.entries(config.schemes).filter(([,s])=>s.provider === "external-token");
+  const imports = external.map(([n])=>`from auth.schemes.${schemeSlug(n).replace(/-/g,"_")}.verifier import verify_external_token as verify_${safeIdentifier(n)}, ExternalTokenVerificationError as Error_${safeIdentifier(n)}`).join("\n");
+  const cases = external.map(([n], index)=>`        ${index === 0 ? "if" : "elif"} scheme == ${JSON.stringify(n)}:
+            try:
+                value = verify_${safeIdentifier(n)}(bearer)
+            except Error_${safeIdentifier(n)} as exc:
+                raise AuthError(503 if exc.identity_provider_unavailable else 401, "Identity provider unavailable" if exc.identity_provider_unavailable else "Invalid token")
+            except Exception:
+                raise AuthError(503, "External token verifier unavailable")
+            if not value.get("subject") or not isinstance(value.get("roles"), list): raise AuthError(401, "Invalid external principal")
+            principal = {"subject": value["subject"], "scheme": scheme, "issuer": value.get("issuer", scheme), "roles": value["roles"], "claims": value.get("claims", {}), "userId": value["subject"]}`).join("\n");
+  return `import base64
+import json
+import azure.functions as func
+${imports}
+POLICIES = ${JSON.stringify(config.authorization.policies)}
+PROVIDERS = ${JSON.stringify(Object.fromEntries(Object.entries(config.schemes).map(([n,s])=>[n,s.provider])))}
+ALLOWED_PROVIDERS = ${JSON.stringify(Object.fromEntries(Object.entries(config.schemes).map(([n,s])=>[n,s.swa?.allowedProviders??[]])))}
+class AuthError(Exception):
+    def __init__(self, status, message): self.status, self.message = status, message
+def require_auth(req: func.HttpRequest, policy_name: str):
+    policy = POLICIES.get(policy_name)
+    if not policy: raise AuthError(401, "Undefined authorization policy")
+    header = req.headers.get("authorization", "")
+    bearer = header[7:] if header.lower().startswith("bearer ") else None
+    swa = req.headers.get("x-ms-client-principal")
+    candidates = [s for s in policy["schemes"] if (PROVIDERS[s] == "swa" and swa) or (PROVIDERS[s] in ("external-token", "custom-jwt") and bearer)]
+    if len(candidates) != 1: raise AuthError(401, "Authentication required" if not candidates else "Ambiguous credentials")
+    scheme = candidates[0]
+${cases}
+        ${external.length ? "elif" : "if"} PROVIDERS[scheme] == "swa":
+            try:
+                value=json.loads(base64.b64decode(swa).decode("utf-8")); roles=[r for r in value.get("userRoles",[]) if isinstance(r,str)]
+                if not value.get("userId") or "authenticated" not in roles: raise ValueError()
+                if ALLOWED_PROVIDERS[scheme] and value.get("identityProvider") not in ALLOWED_PROVIDERS[scheme]: raise ValueError()
+                principal={"subject":value["userId"],"scheme":scheme,"issuer":"swa:"+value.get("identityProvider", "unknown"),"roles":roles,"claims":value,"userId":value["userId"]}
+            except Exception: raise AuthError(401,"Invalid SWA client principal")
+        else: raise AuthError(401,"Authentication adapter is not configured")
+    require_roles(principal, policy.get("roles", [])); return principal
+def require_roles(principal, roles):
+    if roles and not any(role in principal.get("roles",[]) for role in roles): raise AuthError(403,"Insufficient permissions")
+def identity_key(principal): return principal["scheme"] + ":" + principal["subject"]
+def handle_auth_error(error): return func.HttpResponse(json.dumps({"error":error.message}),status_code=error.status,mimetype="application/json") if isinstance(error,AuthError) else None
+`;
+}
 
 // ============================================================
 // 1. shared/models/auth.ts（Zod スキーマ）
@@ -1249,8 +1451,9 @@ export function generateBFFCallFunctionWithSwaAuth(): string {
       if (authorization) {
         fetchHeaders['Authorization'] = authorization;
       }`,
-      `      let principal = reqHeaders.get('x-ms-client-principal');
-      if (!principal) {
+      `      // Never forward a browser-supplied principal header. Resolve it from the SWA session endpoint.
+      let principal: string | null = null;
+      {
         const cookie = reqHeaders.get('cookie');
         const host = reqHeaders.get('host');
         if (cookie && host) {
@@ -1280,6 +1483,16 @@ export function generateBFFCallFunctionWithSwaAuth(): string {
         }
       }`
     );
+}
+
+/** Combined transport for named schemes. Functions still performs all verification. */
+export function generateBFFCallFunctionWithMultipleAuth(): string {
+  return generateBFFCallFunctionWithSwaAuth().replace(
+    `      // Never forward a browser-supplied principal header. Resolve it from the SWA session endpoint.`,
+    `      const authorization = reqHeaders.get('authorization');
+      if (authorization?.startsWith('Bearer ')) fetchHeaders['Authorization'] = authorization;
+      // Never forward a browser-supplied principal header. Resolve it from the SWA session endpoint.`
+  );
 }
 
 export function generateSwaAuthHelperTS(): string {
@@ -1485,17 +1698,20 @@ public static class JwtHelper
 /**
  * TypeScript Functions のハンドラーにロールガードを挿入するためのインポート文を生成
  */
-export function generateAuthImportTS(): string {
-  return `import { requireAuth, requireRoles, handleAuthError } from './auth/jwt-helper';`;
+export function generateAuthImportTS(namedPolicy = false): string {
+  return `import { requireAuth, requireRoles, handleAuthError } from './auth/${namedPolicy ? "auth-router" : "jwt-helper"}';`;
 }
 
 /**
  * TypeScript Functions のハンドラー先頭に挿入する認証チェックコードを生成
  */
 export function generateAuthGuardTS(policy: ModelAuthPolicy, operation: 'read' | 'write', provider?: AuthProvider): string {
-  const roles = operation === 'read'
-    ? (policy.read || policy.roles || [])
-    : (policy.write || policy.roles || []);
+  const selected = operation === 'read' ? policy.read : policy.write;
+  if (typeof selected === 'string' || policy.policy) {
+    const name = typeof selected === 'string' ? selected : policy.policy!;
+    return `      const authUser = await requireAuth(request, ${JSON.stringify(name)});`;
+  }
+  const roles = selected || policy.roles || [];
 
   if (roles.length > 0) {
     return `      const authUser = ${provider === 'external-token' ? 'await ' : ''}requireAuth(request);
@@ -1508,9 +1724,12 @@ export function generateAuthGuardTS(policy: ModelAuthPolicy, operation: 'read' |
  * C# Functions のハンドラーに挿入するロールガードコードを生成
  */
 export function generateAuthGuardCSharp(policy: ModelAuthPolicy, operation: 'read' | 'write'): string {
-  const roles = operation === 'read'
-    ? (policy.read || policy.roles || [])
-    : (policy.write || policy.roles || []);
+  const selected = operation === 'read' ? policy.read : policy.write;
+  if (typeof selected === 'string' || policy.policy) {
+    const name = typeof selected === 'string' ? selected : policy.policy!;
+    return `            var (principal, errorResponse) = await AuthRouter.Authorize(request, ${JSON.stringify(name)});\n            if (errorResponse != null) return errorResponse;`;
+  }
+  const roles = selected || policy.roles || [];
 
   if (roles.length > 0) {
     const rolesStr = roles.map(r => `"${r}"`).join(', ');
@@ -1525,9 +1744,12 @@ export function generateAuthGuardCSharp(policy: ModelAuthPolicy, operation: 'rea
  * Python Functions のハンドラーに挿入するロールガードコードを生成
  */
 export function generateAuthGuardPython(policy: ModelAuthPolicy, operation: 'read' | 'write'): string {
-  const roles = operation === 'read'
-    ? (policy.read || policy.roles || [])
-    : (policy.write || policy.roles || []);
+  const selected = operation === 'read' ? policy.read : policy.write;
+  if (typeof selected === 'string' || policy.policy) {
+    const name = typeof selected === 'string' ? selected : policy.policy!;
+    return `    user = require_auth(req, ${JSON.stringify(name)})`;
+  }
+  const roles = selected || policy.roles || [];
 
   if (roles.length > 0) {
     const rolesStr = roles.map(r => `"${r}"`).join(', ');

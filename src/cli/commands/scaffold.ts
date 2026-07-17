@@ -6,7 +6,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { spawnSync } from "child_process";
-import { getBackendLanguage, getConnectorDefinition, getAuthConfig, ensureSwallowKitProject } from "../../core/config";
+import { getBackendLanguage, getConnectorDefinition, getAuthConfig, getFullConfig, getNormalizedAuthConfig, ensureSwallowKitProject, normalizeAuthConfig, validateConfig } from "../../core/config";
 import { ModelInfo, parseModelFile, toKebabCase, toPascalCase, toCamelCase } from "../../core/scaffold/model-parser";
 import {
   generateCSharpAzureFunctionsCRUD,
@@ -42,6 +42,7 @@ import {
   AuthConfig,
 } from "../../types";
 import { syncProjectManifest } from "../../core/project/manifest";
+import { generateBFFCallFunctionWithAuth, generateBFFCallFunctionWithMultipleAuth, generateBFFCallFunctionWithSwaAuth, generateNamedAuthRouterCSharp, generateNamedAuthRouterPython, generateNamedAuthRouterTS } from "../../core/scaffold/auth-generator";
 
 interface ScaffoldOptions {
   model: string; // モデルファイルのパス（例: "lib/models/todo.ts" or "todo"）
@@ -73,6 +74,9 @@ function runSpawnSyncCommand(command: string, args: string[], cwd: string): void
 export async function scaffoldCommand(options: ScaffoldOptions) {
   // SwallowKit プロジェクトディレクトリかどうかを検証
   ensureSwallowKitProject("scaffold");
+
+  const configValidation = validateConfig(getFullConfig());
+  if (!configValidation.valid) throw new Error(`Invalid SwallowKit configuration:\n${configValidation.errors.map(error => `- ${error}`).join("\n")}`);
 
   console.log("🏗️  SwallowKit Scaffold: Generating CRUD operations...\n");
 
@@ -159,11 +163,11 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
       const uiAuthPolicy = resolveAuthPolicy(modelInfo, uiAuthConfig);
       const uiAuthOptions: UIAuthOptions | undefined =
         uiAuthPolicy && uiAuthConfig && uiAuthConfig.provider !== 'none'
-          ? { authPolicy: uiAuthPolicy }
+          ? createUIAuthOptions(uiAuthPolicy, uiAuthConfig)
           : undefined;
       await generateUIComponents(modelInfo, sharedPackageName, uiAuthOptions);
-      if (uiAuthConfig?.provider === 'external-token') {
-        applyExternalTokenFetchToGeneratedUi(modelInfo);
+      if (uiAuthOptions?.authenticatedFetchImport) {
+        applyExternalTokenFetchToGeneratedUi(modelInfo, uiAuthOptions.authenticatedFetchImport);
       }
       await updateNavigationMenu(modelInfo);
     }
@@ -193,7 +197,7 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
   }
 }
 
-function applyExternalTokenFetchToGeneratedUi(modelInfo: ModelInfo): void {
+function applyExternalTokenFetchToGeneratedUi(modelInfo: ModelInfo, importPath = '@/lib/auth/authenticated-fetch'): void {
   const uiRoot = path.join(process.cwd(), 'app', toKebabCase(modelInfo.name));
   if (!fs.existsSync(uiRoot)) return;
   const visit = (dir: string): void => {
@@ -208,9 +212,9 @@ function applyExternalTokenFetchToGeneratedUi(modelInfo: ModelInfo): void {
         /(if \(!res\.ok\) throw new Error\([^\n]+\);)/g,
         `if (res.status === 401) throw new Error('Authentication required');\n        $1`
       );
-      if (!content.includes("@/lib/auth/authenticated-fetch")) {
+      if (!content.includes(importPath)) {
         const directive = content.match(/^'use client';\s*\r?\n/)?.[0] ?? '';
-        content = `${directive}import { authenticatedFetch } from '@/lib/auth/authenticated-fetch';\n${content.slice(directive.length)}`;
+        content = `${directive}import { authenticatedFetch } from '${importPath}';\n${content.slice(directive.length)}`;
       }
       fs.writeFileSync(target, content, 'utf-8');
     }
@@ -224,9 +228,13 @@ function applyExternalTokenFetchToGeneratedUi(modelInfo: ModelInfo): void {
  * - なければ auth.authorization.defaultPolicy に従う
  * - auth 設定がなければ undefined（ガードなし）
  */
-function resolveAuthPolicy(modelInfo: ModelInfo, authConfig: AuthConfig | undefined): ModelAuthPolicy | undefined {
+export function resolveAuthPolicy(modelInfo: ModelInfo, authConfig: AuthConfig | undefined): ModelAuthPolicy | undefined {
   // モデルに明示的な authPolicy がある場合はそれを使用
   if (modelInfo.authPolicy) {
+    const normalized = normalizeAuthConfig(authConfig);
+    for (const policyName of [modelInfo.authPolicy.policy, typeof modelInfo.authPolicy.read === 'string' ? modelInfo.authPolicy.read : undefined, typeof modelInfo.authPolicy.write === 'string' ? modelInfo.authPolicy.write : undefined].filter((value): value is string => Boolean(value))) {
+      if (!normalized?.authorization.policies[policyName]) throw new Error(`Model '${modelInfo.name}' references undefined auth policy '${policyName}'. Define auth.authorization.policies.${policyName}.`);
+    }
     return modelInfo.authPolicy;
   }
 
@@ -236,10 +244,12 @@ function resolveAuthPolicy(modelInfo: ModelInfo, authConfig: AuthConfig | undefi
   }
 
   // defaultPolicy が 'authenticated' なら認証のみ（ロール指定なし）のポリシーを返す
-  const defaultPolicy = authConfig.authorization?.defaultPolicy ?? 'authenticated';
+  const defaultPolicy = authConfig.authorization?.defaultPolicy === 'public' ? 'anonymous' : authConfig.authorization?.defaultPolicy ?? 'authenticated';
   if (defaultPolicy === 'authenticated') {
     return {}; // 空のポリシー = 認証のみ、ロール制限なし
   }
+
+  if (defaultPolicy !== 'anonymous') return { policy: defaultPolicy };
 
   // defaultPolicy が 'anonymous' なら認証不要
   return undefined;
@@ -330,13 +340,14 @@ async function generateCallFunctionHelper(): Promise<void> {
 
   // auth 設定がある場合は Authorization ヘッダー転送版を生成
   const authConfig = getAuthConfig();
-  const hasAuth = authConfig && authConfig.provider !== 'none';
+  const normalizedAuth = normalizeAuthConfig(authConfig);
+  const hasAuth = Boolean(normalizedAuth && Object.keys(normalizedAuth.schemes).length > 0);
   let helperCode: string;
   if (hasAuth) {
-    const { generateBFFCallFunctionWithAuth, generateBFFCallFunctionWithSwaAuth } = await import("../../core/scaffold/auth-generator");
-    helperCode = authConfig?.provider === "swa"
-      ? generateBFFCallFunctionWithSwaAuth()
-      : generateBFFCallFunctionWithAuth();
+    const providers = new Set(Object.values(normalizedAuth!.schemes).map(scheme => scheme.provider));
+    helperCode = normalizedAuth!.schemes.default && Object.keys(normalizedAuth!.schemes).length === 1
+      ? authConfig?.provider === "swa" ? generateBFFCallFunctionWithSwaAuth() : generateBFFCallFunctionWithAuth()
+      : providers.has("swa") ? generateBFFCallFunctionWithMultipleAuth() : generateBFFCallFunctionWithAuth();
   } else {
     helperCode = generateBFFCallFunction();
   }
@@ -365,6 +376,12 @@ async function generateFunctionsCode(
 
   const modelKebab = toKebabCase(modelInfo.name);
   if (backendLanguage === "typescript") {
+    const normalizedAuth = getNormalizedAuthConfig();
+    if (normalizedAuth && Object.keys(normalizedAuth.schemes).some(name => name !== "default")) {
+      const routerPath = path.join(process.cwd(), functionsDir, "src", "auth", "auth-router.ts");
+      fs.mkdirSync(path.dirname(routerPath), { recursive: true });
+      fs.writeFileSync(routerPath, generateNamedAuthRouterTS(normalizedAuth), "utf-8");
+    }
     const functionFilePath = path.join(
       process.cwd(),
       functionsDir,
@@ -384,6 +401,12 @@ async function generateFunctionsCode(
   }
 
   if (backendLanguage === "csharp") {
+    const normalizedAuth = getNormalizedAuthConfig();
+    if (normalizedAuth && Object.keys(normalizedAuth.schemes).some(name => name !== "default")) {
+      const routerPath = path.join(process.cwd(), functionsDir, "Auth", "AuthRouter.cs");
+      fs.mkdirSync(path.dirname(routerPath), { recursive: true });
+      fs.writeFileSync(routerPath, generateNamedAuthRouterCSharp(normalizedAuth), "utf-8");
+    }
     const crudDir = path.join(process.cwd(), functionsDir, "Crud");
     const functionFilePath = path.join(crudDir, `${modelInfo.name}CrudFunctions.cs`);
     fs.mkdirSync(crudDir, { recursive: true });
@@ -400,6 +423,13 @@ async function generateFunctionsCode(
     return;
   }
 
+  const normalizedAuth = getNormalizedAuthConfig();
+  if (normalizedAuth && Object.keys(normalizedAuth.schemes).some(name => name !== "default")) {
+    const routerPath = path.join(process.cwd(), functionsDir, "auth", "auth_router.py");
+    fs.mkdirSync(path.dirname(routerPath), { recursive: true });
+    fs.writeFileSync(routerPath, generateNamedAuthRouterPython(normalizedAuth), "utf-8");
+  }
+
   const blueprintsDir = path.join(process.cwd(), functionsDir, "blueprints");
   const blueprintPath = path.join(blueprintsDir, `${modelKebab.replace(/-/g, "_")}.py`);
   fs.mkdirSync(blueprintsDir, { recursive: true });
@@ -408,6 +438,20 @@ async function generateFunctionsCode(
   fs.writeFileSync(blueprintPath, blueprint, "utf-8");
   updatePythonFunctionRegistrations(path.join(process.cwd(), functionsDir, "function_app.py"), registration);
   console.log(`✅ Created: ${blueprintPath}`);
+}
+
+function createUIAuthOptions(policy: ModelAuthPolicy, authConfig: AuthConfig): UIAuthOptions {
+  const normalized = normalizeAuthConfig(authConfig);
+  const readPolicyName = typeof policy.read === 'string' ? policy.read : policy.policy;
+  const writePolicyName = typeof policy.write === 'string' ? policy.write : policy.policy;
+  const readNamed = readPolicyName ? normalized?.authorization.policies[readPolicyName] : undefined;
+  const named = writePolicyName ? normalized?.authorization.policies[writePolicyName] : undefined;
+  const writeRoles = named?.roles ?? (Array.isArray(policy.write) ? policy.write : policy.roles) ?? [];
+  const externalScheme = [...(readNamed?.schemes ?? []), ...(named?.schemes ?? [])].find(name => normalized?.schemes[name]?.provider === 'external-token');
+  const authScheme = readNamed?.schemes[0] ?? named?.schemes[0];
+  const authenticatedFetchImport = externalScheme ? `@/lib/auth/schemes/${toKebabCase(externalScheme)}/authenticated-fetch` : authConfig.provider === 'external-token' ? '@/lib/auth/authenticated-fetch' : undefined;
+  const authContextImport = authScheme ? `@/lib/auth/schemes/${toKebabCase(authScheme)}/auth-context` : '@/lib/auth/auth-context';
+  return { authPolicy: policy, writeRoles, authenticatedFetchImport, authContextImport };
 }
 
 /**

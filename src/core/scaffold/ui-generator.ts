@@ -10,6 +10,9 @@ import { ModelAuthPolicy } from "../../types";
 export interface UIAuthOptions {
   /** モデル固有のロールポリシー */
   authPolicy: ModelAuthPolicy;
+  writeRoles?: string[];
+  authenticatedFetchImport?: string;
+  authContextImport?: string;
 }
 
 /**
@@ -21,7 +24,8 @@ export function generateListPage(model: ModelInfo, sharedPackageName: string, au
   const modelKebab = toKebabCase(modelName);
   
   const hasAuth = !!authOptions;
-  const writeRoles = authOptions?.authPolicy?.write || authOptions?.authPolicy?.roles;
+  const authContextImport = authOptions?.authContextImport ?? '@/lib/auth/auth-context';
+  const writeRoles = authOptions?.writeRoles ?? (Array.isArray(authOptions?.authPolicy?.write) ? authOptions.authPolicy.write : authOptions?.authPolicy?.roles);
   const hasWriteRoles = hasAuth && writeRoles && writeRoles.length > 0;
   
   // フィールドから表示するカラムを抽出（id以外の最初の3つ）
@@ -71,7 +75,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { z } from 'zod/v4';
 ${schemaImportLine}
-${hasAuth ? `import { useAuth } from '@/lib/auth/auth-context';` : ''}
+${hasAuth ? `import { useAuth } from '${authContextImport}';` : ''}
 
 type ${modelName} = z.infer<typeof ${localSchemaName}>;
 
@@ -266,7 +270,8 @@ export function generateDetailPage(model: ModelInfo, sharedPackageName: string, 
   const modelKebab = toKebabCase(modelName);
   
   const hasAuth = !!authOptions;
-  const writeRoles = authOptions?.authPolicy?.write || authOptions?.authPolicy?.roles;
+  const authContextImport = authOptions?.authContextImport ?? '@/lib/auth/auth-context';
+  const writeRoles = authOptions?.writeRoles ?? (Array.isArray(authOptions?.authPolicy?.write) ? authOptions.authPolicy.write : authOptions?.authPolicy?.roles);
   const hasWriteRoles = hasAuth && writeRoles && writeRoles.length > 0;
   
   // 外部キーフィールドを検出
@@ -311,7 +316,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod/v4';
 ${schemaImportLine}
-${hasAuth ? `import { useAuth } from '@/lib/auth/auth-context';` : ''}
+${hasAuth ? `import { useAuth } from '${authContextImport}';` : ''}
 
 type ${modelName} = z.infer<typeof ${localSchemaName}>;
 
@@ -910,7 +915,8 @@ export function generateNewPage(model: ModelInfo, authOptions?: UIAuthOptions): 
   const modelKebab = toKebabCase(modelName);
   
   const hasAuth = !!authOptions;
-  const writeRoles = authOptions?.authPolicy?.write || authOptions?.authPolicy?.roles;
+  const authContextImport = authOptions?.authContextImport ?? '@/lib/auth/auth-context';
+  const writeRoles = authOptions?.writeRoles ?? (Array.isArray(authOptions?.authPolicy?.write) ? authOptions.authPolicy.write : authOptions?.authPolicy?.roles);
   const hasWriteRoles = hasAuth && writeRoles && writeRoles.length > 0;
   
   if (!hasAuth) {
@@ -936,7 +942,7 @@ export default function New${modelName}Page() {
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import ${modelName}Form from '../_components/${modelName}Form';
-import { useAuth } from '@/lib/auth/auth-context';
+import { useAuth } from '${authContextImport}';
 
 export default function New${modelName}Page() {
   const router = useRouter();
@@ -979,7 +985,8 @@ export function generateEditPage(model: ModelInfo, sharedPackageName: string, au
   const modelKebab = toKebabCase(modelName);
   
   const hasAuth = !!authOptions;
-  const writeRoles = authOptions?.authPolicy?.write || authOptions?.authPolicy?.roles;
+  const authContextImport = authOptions?.authContextImport ?? '@/lib/auth/auth-context';
+  const writeRoles = authOptions?.writeRoles ?? (Array.isArray(authOptions?.authPolicy?.write) ? authOptions.authPolicy.write : authOptions?.authPolicy?.roles);
   const hasWriteRoles = hasAuth && writeRoles && writeRoles.length > 0;
   
   const schemaName = model.schemaName;
@@ -997,7 +1004,7 @@ import { useParams, useRouter } from 'next/navigation';
 import ${modelName}Form from '../../_components/${modelName}Form';
 import { z } from 'zod/v4';
 ${schemaImportLine}
-${hasAuth ? `import { useAuth } from '@/lib/auth/auth-context';` : ''}
+${hasAuth ? `import { useAuth } from '${authContextImport}';` : ''}
 
 type ${modelName} = z.infer<typeof ${localSchemaName}>;
 

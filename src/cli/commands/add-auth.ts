@@ -5,7 +5,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { ensureSwallowKitProject, getBackendLanguage, getConnectorDefinition, getFullConfig } from "../../core/config";
+import { ensureSwallowKitProject, getBackendLanguage, getConnectorDefinition, getValidatedFullConfig } from "../../core/config";
 import { AuthProvider, BackendLanguage, CustomJwtConfig, RdbConnectorConfig } from "../../types";
 import {
   generateAuthModels,
@@ -23,6 +23,7 @@ import {
   generateAuthContext,
   generateBFFCallFunctionWithAuth,
   generateBFFCallFunctionWithSwaAuth,
+  generateBFFCallFunctionWithMultipleAuth,
   generateSwaAuthHelperTS,
   generateSwaAuthHelperCSharp,
   generateSwaAuthHelperPython,
@@ -39,12 +40,15 @@ import {
   generateExternalTokenVerifierPython,
   generateExternalTokenHelperPython,
   generateExternalAuthMePython,
+  generateNamedExternalTokenVerifierCSharp,
+  generateNamedExternalTokenVerifierPython,
 } from "../../core/scaffold/auth-generator";
 import { syncProjectManifest } from "../../core/project/manifest";
 import { buildSharedTsConfig } from "./init";
 
 interface AddAuthOptions {
   provider?: string;
+  scheme?: string;
 }
 
 function writeIfMissing(filePath: string, content: string): void {
@@ -239,8 +243,17 @@ export async function addAuthCommand(options: AddAuthOptions) {
   }
 
   const backendLanguage = getBackendLanguage();
-  const config = getFullConfig();
+  const config = getValidatedFullConfig();
   const cwd = process.cwd();
+
+  if (options.scheme) {
+    if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(options.scheme)) throw new Error("--scheme must start with a letter and contain only letters, digits, '_' or '-'");
+    if (provider === "none" || provider === "swa-custom") throw new Error(`Provider '${provider}' cannot be added as a named scheme`);
+    addNamedScheme(cwd, options.scheme, provider, backendLanguage);
+    await syncProjectManifest();
+    console.log(`\n Named authentication scheme '${options.scheme}' added.`);
+    return;
+  }
 
   if (provider === "swa-custom") {
     throw new Error("The swa-custom provider is not implemented. Use --provider swa or --provider custom-jwt.");
@@ -362,6 +375,103 @@ export async function addAuthCommand(options: AddAuthOptions) {
     console.log("     export const authPolicy = { roles: ['admin'] };");
   }
   console.log(`  5. Run scaffold to regenerate functions with auth guards`);
+}
+
+function findObjectEnd(content: string, open: number): number {
+  let depth = 0, quote = "";
+  for (let i = open; i < content.length; i++) {
+    const ch = content[i];
+    if (quote) { if (ch === quote && content[i - 1] !== "\\") quote = ""; continue; }
+    if (ch === "'" || ch === '"' || ch === "`") { quote = ch; continue; }
+    if (ch === "{") depth++;
+    if (ch === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: AuthProvider): void {
+  const jsPath = path.join(cwd, "swallowkit.config.js");
+  const jsonPath = path.join(cwd, "swallowkit.config.json");
+  const configPath = fs.existsSync(jsPath) ? jsPath : jsonPath;
+  if (!fs.existsSync(configPath)) throw new Error("swallowkit.config.js or swallowkit.config.json is required");
+  if (configPath.endsWith(".json")) {
+    const value = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    value.auth ??= {};
+    value.auth.schemes ??= {};
+    if (value.auth.schemes[scheme]) throw new Error(`auth.schemes.${scheme} already exists; no files were changed`);
+    value.auth.schemes[scheme] = provider === "custom-jwt" ? { provider, customJwt: defaultCustomJwtConfig() } : { provider };
+    value.auth.authorization ??= { defaultPolicy: "anonymous", policies: {} };
+    fs.writeFileSync(configPath, JSON.stringify(value, null, 2) + "\n", "utf-8");
+    return;
+  }
+  let content = fs.readFileSync(configPath, "utf-8");
+  const authMatch = /\bauth\s*:\s*\{/.exec(content);
+  const customJwt = defaultCustomJwtConfig();
+  const entry = provider === "custom-jwt"
+    ? `\n      ${scheme}: { provider: 'custom-jwt', customJwt: ${JSON.stringify(customJwt)} },`
+    : `\n      ${scheme}: { provider: '${provider}' },`;
+  if (!authMatch) {
+    const rootEnd = content.lastIndexOf("}");
+    const beforeRootEnd = content.slice(0, rootEnd).trimEnd();
+    const separator = beforeRootEnd.endsWith(",") || beforeRootEnd.endsWith("{") ? "" : ",";
+    content = `${beforeRootEnd}${separator}\n  auth: {\n    schemes: {${entry}\n    },\n    authorization: { defaultPolicy: 'anonymous', policies: {} },\n  },\n${content.slice(rootEnd)}`;
+  } else {
+    const authOpen = content.indexOf("{", authMatch.index);
+    const authEnd = findObjectEnd(content, authOpen);
+    const authBody = content.slice(authOpen + 1, authEnd);
+    const schemesMatch = /\bschemes\s*:\s*\{/.exec(authBody);
+    if (schemesMatch) {
+      const schemesOpen = authOpen + 1 + authBody.indexOf("{", schemesMatch.index);
+      const schemesEnd = findObjectEnd(content, schemesOpen);
+      const existing = content.slice(schemesOpen + 1, schemesEnd);
+      if (new RegExp(`(^|[,\\s])${scheme}\\s*:`).test(existing)) throw new Error(`auth.schemes.${scheme} already exists; no files were changed`);
+      content = content.slice(0, schemesEnd) + entry + "\n    " + content.slice(schemesEnd);
+    } else {
+      content = content.slice(0, authOpen + 1) + `\n    schemes: {${entry}\n    },` + content.slice(authOpen + 1);
+    }
+  }
+  fs.writeFileSync(configPath, content, "utf-8");
+}
+
+function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, language: BackendLanguage): void {
+  // Validate/update config before creating files, so duplicate names stop safely.
+  updateConfigWithNamedScheme(cwd, scheme, provider);
+  const slug = scheme.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
+  if (language === "typescript") {
+    const dir = path.join(cwd, "functions", "src", "auth", "schemes", slug);
+    if (provider === "external-token") writeIfMissing(path.join(dir, "verifier.ts"), generateExternalTokenVerifierTS());
+    else if (provider === "swa") writeIfMissing(path.join(dir, "adapter.ts"), generateSwaAuthHelperTS());
+    else writeIfMissing(path.join(dir, "jwt-helper.ts"), generateJwtHelperTS());
+  } else if (language === "csharp") {
+    const dir = path.join(cwd, "functions", "Auth", "Schemes", slug);
+    if (provider === "external-token") writeIfMissing(path.join(dir, "ExternalTokenVerifier.cs"), generateNamedExternalTokenVerifierCSharp(scheme));
+    else if (provider === "swa") writeIfMissing(path.join(dir, "SwaAdapter.cs"), generateSwaAuthHelperCSharp());
+    else writeIfMissing(path.join(dir, "JwtHelper.cs"), generateJwtHelperCSharp());
+  } else {
+    const dir = path.join(cwd, "functions", "auth", "schemes", slug.replace(/-/g, "_"));
+    if (provider === "external-token") writeIfMissing(path.join(dir, "verifier.py"), generateNamedExternalTokenVerifierPython(scheme));
+    else if (provider === "swa") writeIfMissing(path.join(dir, "adapter.py"), generateSwaAuthHelperPython());
+    else writeIfMissing(path.join(dir, "jwt_helper.py"), generateJwtHelperPython());
+  }
+  const clientDir = path.join(cwd, "lib", "auth", "schemes", slug);
+  if (provider === "external-token") {
+    writeIfMissing(path.join(clientDir, "token-adapter.ts"), generateExternalTokenAdapter());
+    writeIfMissing(path.join(clientDir, "authenticated-fetch.ts"), generateAuthenticatedFetch().replace("'./external-token-adapter'", "'./token-adapter'"));
+    writeIfMissing(path.join(clientDir, "auth-context.tsx"), generateExternalTokenAuthContext().replace(/external-token-adapter/g, "token-adapter"));
+  } else if (provider === "swa") {
+    writeIfMissing(path.join(clientDir, "auth-context.tsx"), generateSwaAuthContext());
+  } else if (provider === "custom-jwt") {
+    writeIfMissing(path.join(clientDir, "auth-context.tsx"), generateAuthContext());
+  }
+  const callFunctionPath = path.join(cwd, "lib", "api", "call-function.ts");
+  if (!fs.existsSync(callFunctionPath)) writeIfMissing(callFunctionPath, generateBFFCallFunctionWithMultipleAuth());
+  else {
+    const current = fs.readFileSync(callFunctionPath, "utf-8");
+    if (!current.includes("x-ms-client-principal") || !current.includes("fetchHeaders['Authorization']")) {
+      if (current.includes("SwallowKit BFF Call Function Helper")) fs.writeFileSync(callFunctionPath, generateBFFCallFunctionWithMultipleAuth(), "utf-8");
+      else console.warn(" Existing customized lib/api/call-function.ts was preserved. Ensure it forwards Bearer and SWA credentials without logging them.");
+    }
+  }
 }
 
 /**

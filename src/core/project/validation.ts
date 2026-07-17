@@ -209,6 +209,22 @@ export async function validateProject(projectRoot: string = process.cwd()): Prom
     });
   }
 
+  const namedPolicies = loaded.manifest.auth?.authorization?.policies ?? {};
+  for (const entity of loaded.manifest.entities) {
+    const policy = entity.authPolicy;
+    if (!policy) continue;
+    const references = [policy.policy, typeof policy.read === "string" ? policy.read : undefined, typeof policy.write === "string" ? policy.write : undefined].filter((value): value is string => Boolean(value));
+    for (const name of references) {
+      if (!namedPolicies[name]) pushViolation(violations, {
+        code: "undefined-auth-policy",
+        severity: "error",
+        message: `Model '${entity.name}' references undefined authorization policy '${name}'.`,
+        location: { path: entity.filePath, entity: entity.name },
+        suggestedFix: `Define auth.authorization.policies.${name} or update the model authPolicy reference.`,
+      });
+    }
+  }
+
   for (const entity of loaded.manifest.entities) {
     validateSchemaNaming(entity, violations);
   }

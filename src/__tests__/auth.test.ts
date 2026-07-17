@@ -443,6 +443,10 @@ describe("generateAuthImportTS", () => {
 });
 
 describe("generateAuthGuardTS", () => {
+  it("generates a named read/write policy guard", () => {
+    expect(generateAuthGuardTS({ read: "adminOnly", write: "lineUserOnly" }, "read")).toContain("requireAuth(request, \"adminOnly\")");
+    expect(generateAuthGuardTS({ policy: "adminOnly" }, "write")).toContain("requireAuth(request, \"adminOnly\")");
+  });
   it("generates authentication-only guard for empty policy", () => {
     const policy: ModelAuthPolicy = {};
     const readGuard = generateAuthGuardTS(policy, "read");

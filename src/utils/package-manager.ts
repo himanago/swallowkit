@@ -178,6 +178,7 @@ export function getCiSetupStep(pm: PackageManager): string {
 }
 
 export function getCiInstallCommand(ciPm: PackageManager, projectPm: PackageManager = ciPm): string {
+  void projectPm; // Reserved for package-manager-specific CI bridging.
   if (ciPm === "pnpm") {
     return getCommands(ciPm).ci;
   }

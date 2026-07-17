@@ -512,3 +512,43 @@ The following are current limitations of the auth feature in v1:
 - **No session management UI**: There is no admin interface for viewing or managing active sessions/tokens
 
 💡 **Reference**: For CLI command details, see the **[CLI Reference](./cli-reference.md)**. For connector setup, see the **[Connector Guide](./connector-guide.md)**. For model scaffolding, see the **[Scaffold Guide](./scaffold-guide.md)**.
+# Named authentication schemes
+
+SwallowKit supports multiple authentication mechanisms without trying them in an implicit order. Define named schemes separately from authorization policies:
+
+```js
+auth: {
+  schemes: {
+    admin: { provider: 'swa', swa: { allowedProviders: ['github'], roleSource: 'swa-roles' } },
+    lineUser: { provider: 'external-token' },
+  },
+  authorization: {
+    defaultPolicy: 'anonymous',
+    policies: {
+      adminOnly: { schemes: ['admin'], roles: ['authenticated'] },
+      lineUserOnly: { schemes: ['lineUser'], roles: ['authenticated'] },
+    },
+  },
+}
+```
+
+Models may use `authPolicy = { read: 'adminOnly', write: 'adminOnly' }` or `{ policy: 'adminOnly' }`. Custom Functions use `await requireAuth(request, 'lineUserOnly')`. A policy accepts only its listed schemes. Multiple schemes are allowed only when their credential sources are distinguishable; ambiguous Bearer schemes are rejected during validation.
+
+The canonical principal is `{ subject, scheme, issuer, roles, claims }`. Use `scheme + ':' + subject` for a global identity key. Compatibility `userId` and `userDetails` fields are deprecated. Never trust identity, roles, or profiles supplied by an unverified client.
+
+The BFF remains a proxy: it forwards Bearer or SWA credentials and adds `x-functions-key`, but Functions perform final authentication and authorization. Credentials must not be logged. External-token verifiers are generated fail-closed and must validate signature, issuer, audience, and expiry while distinguishing invalid credentials (401) from IdP outages (503).
+
+Legacy `auth.provider` is normalized to a `default` scheme. Legacy role arrays remain supported. `public` is accepted as a deprecated alias; the canonical value is `anonymous`.
+
+## SWA administration and LINE-style user APIs
+
+Use `adminOnly` for Campaign/Coupon management models and `lineUserOnly` for survey or coupon-claim models. Keep health models anonymous by omitting `authPolicy` while `defaultPolicy` is `anonymous`. Run:
+
+```bash
+swallowkit add-auth --scheme admin --provider swa
+swallowkit add-auth --scheme lineUser --provider external-token
+```
+
+Implement `functions/src/auth/schemes/line-user/verifier.ts`; the generated stub rejects every token until then. Scope the generated providers from `lib/auth/schemes/admin/auth-context` and `lib/auth/schemes/line-user/auth-context` in the relevant route-group layouts. The line-user UI imports its scheme-specific authenticated fetch. UI role checks only improve UX—Functions remain the security boundary.
+
+An admin SWA principal cannot select `lineUserOnly`, and a LINE Bearer token cannot select `adminOnly`. No provider fallback occurs after a failed verification. `swa-custom` remains reserved and is rejected for named schemes; combine `swa` with a separate custom or external scheme instead.

@@ -1393,3 +1393,6 @@ CLI の動作を環境変数で制御:
 
 - [デプロイガイド](./deployment-guide) - Azure へのデプロイ
 - [Scaffold ガイド](./scaffold-guide) - CRUD コード生成の詳細
+## 名前付きスキームの add-auth
+
+`swallowkit add-auth --scheme admin --provider swa` と `swallowkit add-auth --scheme lineUser --provider external-token` はスキーム別ディレクトリへ生成します。同名スキームは安全に停止し、verifier/adapter は上書きしません。`--scheme` 省略時は従来の単一 provider フローです。
