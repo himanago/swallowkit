@@ -38,10 +38,13 @@ export interface DevOptions {
   noFunctions?: boolean;
   seedEnv?: string;
   mockConnectors?: boolean;
+  swaPort?: string;
+  noSwa?: boolean;
 }
 
 type ParsedDevActionOptions = DevOptions & {
   functions?: boolean;
+  swa?: boolean;
 };
 
 interface FunctionsCoreToolsCommand {
@@ -57,6 +60,7 @@ function normalizeParsedDevOptions(options: ParsedDevActionOptions): DevOptions 
   return {
     ...options,
     noFunctions: options.noFunctions ?? options.functions === false,
+    noSwa: options.noSwa ?? options.swa === false,
   };
 }
 
@@ -119,6 +123,23 @@ export function buildNextDevArgs(pm: string, port: string): string[] {
 
 export function buildFunctionsBaseUrl(host: string | undefined, functionsPort: string): string {
   return `http://${host || 'localhost'}:${functionsPort}`;
+}
+
+export function buildSwaStartArgs(host: string | undefined, nextPort: string, swaPort: string): string[] {
+  return [
+    'start',
+    `http://${host || 'localhost'}:${nextPort}`,
+    '--swa-config-location',
+    '.',
+    '--port',
+    swaPort,
+  ];
+}
+
+export function getSwaCliInstallCommand(pm: string): string {
+  return pm === 'pnpm'
+    ? 'pnpm add -Dw @azure/static-web-apps-cli'
+    : 'npm install -D @azure/static-web-apps-cli';
 }
 
 export function getFunctionsReadinessTimeoutMs(backendLanguage: BackendLanguage): number {
@@ -506,6 +527,8 @@ export function buildDevCommand(
     .option('--no-functions', 'Skip Azure Functions startup')
     .option('--seed-env <environment>', 'Replace Cosmos DB Emulator data from dev-seeds/<environment> before startup')
     .option('--mock-connectors', 'Start mock server for connector models (serves Zod-generated data)', false)
+    .option('--swa-port <port>', 'SWA authentication emulator port', '4280')
+    .option('--no-swa', 'Skip the SWA authentication emulator')
     .action(async (options: ParsedDevActionOptions) => {
       const normalizedOptions = normalizeParsedDevOptions(options);
 
@@ -618,11 +641,24 @@ async function initializeCosmosDB(databaseName: string): Promise<CosmosInitializ
 async function startDevEnvironment(options: DevOptions) {
   const port = options.port || '3000';
   const functionsPort = options.functionsPort || '7071';
+  const swaPort = options.swaPort || '4280';
   
   // Detect package manager from project lockfile
   const pm = detectFromProject();
   const pmCmd = getCommands(pm);
   const backendLanguage = getBackendLanguage();
+  const authConfig = getAuthConfig();
+  const useSwaEmulator = authConfig?.provider === 'swa' && !options.noSwa;
+  const swaCommand = useSwaEmulator ? await resolveSwaCliCommand(process.cwd()) : null;
+
+  if (useSwaEmulator && !swaCommand) {
+    const installCommand = getSwaCliInstallCommand(pm);
+    console.error('❌ SWA authentication requires Azure Static Web Apps CLI for local development.');
+    console.error('   Install it in this project and retry:');
+    console.error(`\n   ${installCommand}\n`);
+    process.exitCode = 1;
+    return;
+  }
   
   // プロセスを管理する配列
   const processes: ChildProcess[] = [];
@@ -925,7 +961,6 @@ async function startDevEnvironment(options: DevOptions) {
       const connectorModels = allModels.filter((m) => m.connectorConfig);
 
       // Resolve auth config — auth functions use RDB connectors, mocked alongside other models
-      const authConfig = getAuthConfig();
       let mockAuthConfig: { jwtSecret: string; tokenExpiry?: string; customJwt?: { userTable: string; loginIdColumn: string; passwordHashColumn: string; rolesColumn: string }; defaultPolicy?: "authenticated" | "anonymous" } | undefined;
       if (authConfig?.provider === 'custom-jwt' && authConfig.customJwt) {
         // Read JWT_SECRET from functions/local.settings.json if available
@@ -985,18 +1020,6 @@ async function startDevEnvironment(options: DevOptions) {
     // 5. Start Next.js development server
     const nextArgs = buildNextDevArgs(pm, port);
     
-    if (options.open) {
-      // Next.js 14+ deprecated --open option, so we open browser manually
-      setTimeout(() => {
-        const url = `http://${options.host || 'localhost'}:${port}`;
-        console.log(`\n🌐 Opening browser: ${url}`);
-        
-        const start = process.platform === 'darwin' ? 'open' :
-                      process.platform === 'win32' ? 'start' : 'xdg-open';
-        spawn(start, [url], { shell: true });
-      }, 3000);
-    }
-
     // Ensure .env.local points to bffTargetPort so Next.js reads the correct backend URL.
     // When --mock-connectors is active, bffTargetPort = mock port (7072); otherwise = Functions port (7071).
     // Next.js may load .env.local values that override spawn env vars, so we must keep them in sync.
@@ -1063,10 +1086,52 @@ async function startDevEnvironment(options: DevOptions) {
       }
     }
 
+    let swaReady = false;
+    if (useSwaEmulator && swaCommand) {
+      const nextUrl = `http://${options.host || 'localhost'}:${port}`;
+      console.log(`⏳ Waiting for Next.js before starting the SWA emulator at ${nextUrl}...`);
+      const nextReady = await waitForHttpServerReady(nextUrl);
+      if (!nextReady) {
+        throw new Error(`Next.js did not become ready at ${nextUrl}`);
+      }
+
+      console.log(`🔐 Starting SWA authentication emulator (port: ${swaPort})...`);
+      const swaProcess = spawn(swaCommand, buildSwaStartArgs(options.host, port, swaPort), {
+        cwd: process.cwd(),
+        shell: true,
+        stdio: 'inherit',
+        env: process.env,
+      });
+      processes.push(swaProcess);
+      swaProcess.on('error', (error) => {
+        console.error('❌ SWA CLI startup error:', error.message);
+      });
+
+      const swaUrl = `http://${options.host || 'localhost'}:${swaPort}`;
+      swaReady = await waitForHttpServerReady(swaUrl);
+      if (!swaReady) {
+        throw new Error(`SWA authentication emulator did not become ready at ${swaUrl}`);
+      }
+    }
+
     console.log('');
     console.log('✅ SwallowKit development environment is running!');
     console.log('');
-    console.log(`📱 Next.js: http://${options.host || 'localhost'}:${port}`);
+    if (useSwaEmulator) {
+      const swaUrl = `http://${options.host || 'localhost'}:${swaPort}`;
+      console.log('🔐 SWA authenticated app:');
+      console.log(`   ${swaUrl}`);
+      console.log('');
+      console.log('🔑 Local sign-in:');
+      console.log(`   ${swaUrl}/.auth/login/aad`);
+      console.log('   Enter any username and select Login.');
+      console.log('   The "authenticated" role is added automatically.');
+      console.log('');
+      console.log('📱 Next.js direct access (authentication is not emulated):');
+      console.log(`   http://${options.host || 'localhost'}:${port}`);
+    } else {
+      console.log(`📱 Next.js: http://${options.host || 'localhost'}:${port}`);
+    }
     if (hasFunctions && !options.noFunctions) {
       console.log(`${functionsReady ? '⚡ Azure Functions' : '⏳ Azure Functions (starting)'}: ${functionsBaseUrl}`);
     }
@@ -1082,7 +1147,22 @@ async function startDevEnvironment(options: DevOptions) {
     if (mockServer) {
       console.log('💡 Connector models served from mock server (Zod-generated data)');
     }
+    if (swaReady) {
+      console.log('💡 Open the app through the SWA port when testing authenticated pages and CRUD APIs.');
+    }
     console.log('');
+
+    if (options.open) {
+      const url = useSwaEmulator
+        ? `http://${options.host || 'localhost'}:${swaPort}`
+        : `http://${options.host || 'localhost'}:${port}`;
+      console.log(`🌐 Opening browser: ${url}`);
+      const start = process.platform === 'darwin' ? 'open' :
+                    process.platform === 'win32' ? 'start' : 'xdg-open';
+      spawn(start, [url], { shell: true });
+      console.log('');
+    }
+
     console.log('🛑 Press Ctrl+C to stop');
     console.log('');
 
@@ -1095,6 +1175,23 @@ async function startDevEnvironment(options: DevOptions) {
     });
     process.exit(1);
   }
+}
+
+async function resolveSwaCliCommand(projectRoot: string): Promise<string | null> {
+  const binaryName = process.platform === 'win32' ? 'swa.cmd' : 'swa';
+  const localCommand = path.join(projectRoot, 'node_modules', '.bin', binaryName);
+  if (fs.existsSync(localCommand) && await checkCommand(localCommand, ['--version'], {
+    cwd: projectRoot,
+    shell: process.platform === 'win32',
+  })) {
+    return localCommand;
+  }
+
+  if (await checkCommand('swa', ['--version'], { cwd: projectRoot })) {
+    return 'swa';
+  }
+
+  return null;
 }
 
 async function runCommand(

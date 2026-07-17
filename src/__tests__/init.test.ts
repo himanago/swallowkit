@@ -17,6 +17,8 @@ import {
   injectSwallowKitNextConfig,
   parseIgnoredBuilds,
   buildCosmosDbFreeTierBicepSource,
+  buildFunctionsHostKeyBicepExpression,
+  buildStaticWebAppConfigBicepSource,
   withNpmLockfileSafeManifests,
 } from "../cli/commands/init";
 
@@ -100,6 +102,7 @@ module.exports = nextConfig;
     expect(dependencies).toEqual({
       "@azure/cosmos": "^4.0.0",
       applicationinsights: "^3.3.0",
+      zod: "^4.0.0",
       "@sample-app/shared": "workspace:*",
     });
     expect(dependencies).not.toHaveProperty("swallowkit");
@@ -209,6 +212,22 @@ describe("buildCosmosDbFreeTierBicepSource", () => {
 
     expect(source).toContain("throughput: 1000");
     expect(source).not.toContain("containers");
+  });
+});
+
+describe("Functions host key infrastructure", () => {
+  it("reads the generated default host key without exposing a literal value", () => {
+    const expression = buildFunctionsHostKeyBicepExpression();
+    expect(expression).toContain("listKeys(");
+    expect(expression).toContain("functionKeys.default");
+  });
+
+  it("passes the key to SWA through a secure module parameter", () => {
+    const source = buildStaticWebAppConfigBicepSource();
+    expect(source).toContain("@secure()");
+    expect(source).toContain("param functionsHostKey string");
+    expect(source).toContain("BACKEND_FUNCTIONS_KEY: functionsHostKey");
+    expect(source).not.toContain("output functionsHostKey");
   });
 });
 

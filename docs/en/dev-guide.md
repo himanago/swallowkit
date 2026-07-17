@@ -13,9 +13,11 @@ pnpm swallowkit dev
 ```
 :::
 
-This starts both servers:
+This normally starts both servers:
 - Next.js at http://localhost:3000
 - Azure Functions at http://localhost:7071
+
+When `auth.provider` is `swa`, it also starts the SWA authentication emulator at http://localhost:4280. Use port 4280 for authenticated UI testing. If SWA CLI is not installed, `swallowkit dev` prints the project-local installation command and exits before starting any servers.
 
 ### Options
 
@@ -29,6 +31,8 @@ This starts both servers:
 | `-v, --verbose` | Verbose logging |
 | `--no-functions` | Skip Azure Functions startup |
 | `--mock-connectors` | Use mock connector server |
+| `--swa-port <port>` | SWA authentication emulator port (default: `4280`) |
+| `--no-swa` | Skip the SWA authentication emulator |
 
 ## Backend-specific behavior
 

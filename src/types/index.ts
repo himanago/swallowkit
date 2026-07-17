@@ -73,7 +73,7 @@ export interface ApiModelConnectorConfig {
 export type ModelConnectorConfig = RdbModelConnectorConfig | ApiModelConnectorConfig;
 
 // 認証プロバイダー種別
-export type AuthProvider = "custom-jwt" | "swa" | "swa-custom" | "none";
+export type AuthProvider = "custom-jwt" | "swa" | "external-token" | "swa-custom" | "none";
 
 // custom-jwt プロバイダー設定
 export interface CustomJwtConfig {

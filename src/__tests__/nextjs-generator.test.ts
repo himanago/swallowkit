@@ -21,6 +21,14 @@ describe("generateBFFCallFunction", () => {
     expect(code).toContain("export async function callFunction");
   });
 
+  it("uses a server-side Functions key and fails closed outside localhost", () => {
+    const code = generateBFFCallFunction();
+    expect(code).toContain("BACKEND_FUNCTIONS_KEY");
+    expect(code).toContain("'x-functions-key'");
+    expect(code).toContain("required for non-local Functions calls");
+    expect(code).not.toContain("?code=");
+  });
+
   it("includes z.ZodSchema typings", () => {
     const code = generateBFFCallFunction();
     expect(code).toContain("z.ZodSchema");

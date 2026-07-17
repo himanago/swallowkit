@@ -730,6 +730,7 @@ export function buildGeneratedProjectDependencies(projectName: string): Record<s
   return {
     '@azure/cosmos': '^4.0.0',
     'applicationinsights': '^3.3.0',
+    'zod': '^4.0.0',
     [`@${projectName}/shared`]: 'workspace:*',
   };
 }
@@ -892,6 +893,13 @@ function getFunctionsBaseUrl(): string {
   return process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
 }
 
+function getFunctionsKeyHeaders(functionsBaseUrl: string): Record<string, string> {
+  const key = process.env.BACKEND_FUNCTIONS_KEY;
+  if (key) return { 'x-functions-key': key };
+  if (functionsBaseUrl.startsWith('http://localhost:') || functionsBaseUrl.startsWith('http://127.0.0.1:')) return {};
+  throw new Error('BACKEND_FUNCTIONS_KEY is required for non-local Functions calls');
+}
+
 /**
  * Simple HTTP client for calling backend APIs
  * Use this to make requests to BFF API routes (which forward to Azure Functions)
@@ -903,6 +911,7 @@ async function request<T>(
   queryParams?: Record<string, string>
 ): Promise<T> {
   const functionsBaseUrl = getFunctionsBaseUrl();
+  const keyHeaders = getFunctionsKeyHeaders(functionsBaseUrl);
   let url = \`\${functionsBaseUrl}\${endpoint}\`;
   if (queryParams) {
     const params = new URLSearchParams(queryParams);
@@ -914,6 +923,7 @@ async function request<T>(
       method,
       headers: {
         'Content-Type': 'application/json',
+        ...keyHeaders,
       },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -997,6 +1007,7 @@ export const api = {
   // 6. Create .env.example
   const envExample = `# Azure Functions Backend URL
 BACKEND_FUNCTIONS_BASE_URL=http://localhost:7071
+BACKEND_FUNCTIONS_KEY=
 
 # Azure Configuration
 AZURE_RESOURCE_GROUP=your-resource-group
@@ -1082,6 +1093,7 @@ export async function register() {
   const envLocalContent = [
     '# Azure Functions Backend URL (Local)',
     'BACKEND_FUNCTIONS_BASE_URL=http://localhost:7071',
+    'BACKEND_FUNCTIONS_KEY=',
     ''
   ].join('\n');
   fs.writeFileSync(path.join(projectDir, '.env.local'), envLocalContent);
@@ -1378,7 +1390,7 @@ export async function greet(request: HttpRequest, context: InvocationContext): P
 
 app.http('greet', {
   methods: ['GET', 'POST'],
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: greet
 });
 `);
@@ -1410,7 +1422,7 @@ public sealed class GreetFunction
 {
     [Function("greet")]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = "greet")] HttpRequestData request)
+        [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = "greet")] HttpRequestData request)
     {
         var query = request.Url.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries);
         var name = "SwallowKit";
@@ -1478,7 +1490,7 @@ def greet(req: func.HttpRequest) -> func.HttpResponse:
 
 from blueprints.greet import bp as greet_bp
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 app.register_blueprint(greet_bp)
 # SwallowKit scaffold registrations
@@ -2109,7 +2121,7 @@ const containerName = 'Models'; // PascalCase + 's'
 app.http('{model}-get-all', {
   methods: ['GET'],
   route: '{model}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [{ type: 'cosmosDB', name: 'cosmosInput', containerName, ... }],
   handler: async (request, context) => {
     const documents = context.extraInputs.get('cosmosInput');
@@ -2400,7 +2412,7 @@ import { ModelSchema } from '@${projectName}/shared';
 app.http('{model}-get-all', {
   methods: ['GET'],
   route: '{model}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [cosmosInput],
   handler: async (request, context) => {
     const documents = context.extraInputs.get(cosmosInput);
@@ -2429,6 +2441,43 @@ app.http('{model}-get-all', {
   console.log('   - GitHub Copilot        → .github/copilot-instructions.md');
   console.log('   - GitHub Copilot (edit) → .github/instructions/*.instructions.md');
   console.log('');
+}
+
+export function buildFunctionsHostKeyBicepExpression(): string {
+  return "listKeys('${functionsFlex.outputs.id}/host/default', '2023-12-01').functionKeys.default";
+}
+
+export function buildStaticWebAppConfigBicepSource(): string {
+  return `@description('Static Web App name')
+param staticWebAppName string
+
+@description('Functions App default hostname for backend API calls')
+param functionsDefaultHostname string
+
+@secure()
+@description('Functions host key used only by the server-side BFF')
+param functionsHostKey string
+
+@description('Application Insights connection string for SWA')
+param appInsightsConnectionString string
+
+resource staticWebApp 'Microsoft.Web/staticSites@2023-01-01' existing = {
+  name: staticWebAppName
+}
+
+resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-01-01' = {
+  parent: staticWebApp
+  name: 'appsettings'
+  properties: {
+    APPLICATIONINSIGHTS_CONNECTION_STRING: appInsightsConnectionString
+    ApplicationInsightsAgent_EXTENSION_VERSION: '~3'
+    BACKEND_FUNCTIONS_BASE_URL: 'https://\${functionsDefaultHostname}'
+    BACKEND_FUNCTIONS_KEY: functionsHostKey
+  }
+}
+
+output configName string = staticWebAppConfig.name
+`;
 }
 
 async function createInfrastructure(
@@ -2605,6 +2654,7 @@ module staticWebAppConfig 'modules/staticwebapp-config.bicep' = {
   params: {
     staticWebAppName: staticWebApp.outputs.name
     functionsDefaultHostname: functionsFlex.outputs.defaultHostname
+    functionsHostKey: ${buildFunctionsHostKeyBicepExpression()}
     appInsightsConnectionString: appInsightsSwa.outputs.connectionString
   }
   dependsOn: [
@@ -2698,31 +2748,7 @@ output defaultHostname string = staticWebApp.properties.defaultHostname
   fs.writeFileSync(path.join(modulesDir, 'staticwebapp.bicep'), staticWebAppBicep);
 
   // modules/staticwebapp-config.bicep (for updating config after Functions deployment)
-  const staticWebAppConfigBicep = `@description('Static Web App name')
-param staticWebAppName string
-
-@description('Functions App default hostname for backend API calls')
-param functionsDefaultHostname string
-
-@description('Application Insights connection string for SWA')
-param appInsightsConnectionString string
-
-resource staticWebApp 'Microsoft.Web/staticSites@2023-01-01' existing = {
-  name: staticWebAppName
-}
-
-resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-01-01' = {
-  parent: staticWebApp
-  name: 'appsettings'
-  properties: {
-    APPLICATIONINSIGHTS_CONNECTION_STRING: appInsightsConnectionString
-    ApplicationInsightsAgent_EXTENSION_VERSION: '~3'
-    BACKEND_FUNCTIONS_BASE_URL: 'https://\${functionsDefaultHostname}'
-  }
-}
-
-output configName string = staticWebAppConfig.name
-`;
+  const staticWebAppConfigBicep = buildStaticWebAppConfigBicepSource();
   fs.writeFileSync(path.join(modulesDir, 'staticwebapp-config.bicep'), staticWebAppConfigBicep);
   
   // modules/loganalytics.bicep (Shared Log Analytics Workspace)

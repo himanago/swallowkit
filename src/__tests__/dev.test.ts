@@ -6,6 +6,7 @@ import {
   buildFunctionsStartArgs,
   buildFunctionsCoreToolsCommand,
   buildNextDevArgs,
+  buildSwaStartArgs,
   buildDevCommand,
   buildPythonFunctionsEnv,
   compareVersionNumbers,
@@ -13,6 +14,7 @@ import {
   getFunctionsReadinessTimeoutMs,
   getCSharpFunctionsBuildArtifactPaths,
   getPythonVirtualEnvPaths,
+  getSwaCliInstallCommand,
   parseCoreToolsVersion,
   waitForHttpServerReady,
 } from "../cli/commands/dev";
@@ -68,6 +70,23 @@ describe("dev command helpers", () => {
   it("builds the Azure Functions base URL from host and port", () => {
     expect(buildFunctionsBaseUrl(undefined, "7071")).toBe("http://localhost:7071");
     expect(buildFunctionsBaseUrl("127.0.0.1", "7072")).toBe("http://127.0.0.1:7072");
+  });
+
+  it("builds SWA CLI arguments without bypassing the Next.js BFF", () => {
+    expect(buildSwaStartArgs(undefined, "3000", "4280")).toEqual([
+      "start",
+      "http://localhost:3000",
+      "--swa-config-location",
+      ".",
+      "--port",
+      "4280",
+    ]);
+    expect(buildSwaStartArgs(undefined, "3000", "4280")).not.toContain("--api-devserver-url");
+  });
+
+  it("provides a project-local SWA CLI install command", () => {
+    expect(getSwaCliInstallCommand("pnpm")).toBe("pnpm add -Dw @azure/static-web-apps-cli");
+    expect(getSwaCliInstallCommand("npm")).toBe("npm install -D @azure/static-web-apps-cli");
   });
 
   it("gives C# more startup time before reporting readiness timeout", () => {
@@ -197,6 +216,8 @@ describe("dev CLI parser", () => {
       noFunctions: true,
       seedEnv: "local",
       mockConnectors: true,
+      swaPort: "4290",
+      noSwa: true,
     };
 
     const optionsAfterCommand = await parseDevOptions([
@@ -215,6 +236,9 @@ describe("dev CLI parser", () => {
       "--seed-env",
       "local",
       "--mock-connectors",
+      "--swa-port",
+      "4290",
+      "--no-swa",
     ]);
 
     const optionsBeforeCommand = await parseDevOptions([
@@ -226,6 +250,9 @@ describe("dev CLI parser", () => {
       "--seed-env",
       "local",
       "--mock-connectors",
+      "--swa-port",
+      "4290",
+      "--no-swa",
       "--no-functions",
       "--port",
       "3001",

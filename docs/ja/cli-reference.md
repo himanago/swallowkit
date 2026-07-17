@@ -801,7 +801,7 @@ pnpm dlx swallowkit add-auth [options]
 
 | オプション | 説明 | 値 | デフォルト |
 |----------|------|-----|---------|
-| `--provider <provider>` | 認証プロバイダー | `custom-jwt` | `custom-jwt` |
+| `--provider <provider>` | 認証プロバイダー | `custom-jwt` | `custom-jwt`, `swa`, `external-token`, `none` |
 
 > 注: `swa` と `swa-custom` は将来向けに予約された値で、現行の認証生成フローでは未実装です。
 
@@ -879,6 +879,8 @@ pnpm dlx swallowkit dev [options]
 | `--no-functions` | | Functions をスキップ | `false` |
 | `--seed-env <environment>` | | 起動前に `dev-seeds/<environment>` から対応する Cosmos Emulator コンテナを置換 | *（無効）* |
 | `--mock-connectors` | | connector モデル用のモックプロキシサーバーを起動 | `false` |
+| `--swa-port <port>` | | SWA認証エミュレーターのポート | `4280` |
+| `--no-swa` | | SWA認証エミュレーターをスキップ | `false` |
 | `--verbose` | `-v` | 詳細ログを表示 | `false` |
 
 ### 動作
@@ -901,6 +903,10 @@ pnpm dlx swallowkit dev [options]
     - **Python バックエンド**: ローカル実行環境の管理に **uv** を使い、`.uv/` 配下にプロジェクトローカルな状態を保持しつつ、アプリ用の `functions/.venv` と Python スキーマ生成用の `functions/.codegen-venv` を作成
     - **C# バックエンド**: isolated worker のビルドが完了するまでコールドスタートが長めになるため、Functions URL は HTTP 応答できる状態になってから ready として表示
 5. **Next.js 起動**: 開発サーバーを起動
+6. **SWA認証エミュレーター起動**（`auth.provider: 'swa'`かつ`--no-swa`未指定時）:
+   - プロジェクトローカルまたはPATH上のSWA CLIを確認し、未導入ならインストールコマンドを表示して終了
+   - Next.jsをBFFとして維持したまま4280番ポートで認証プロキシを起動
+   - ローカルログインURLと認証付きアプリURLを表示
 
 ### Dev Seed ワークフロー
 

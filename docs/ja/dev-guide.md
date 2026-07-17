@@ -13,9 +13,11 @@ pnpm swallowkit dev
 ```
 :::
 
-2 つのサーバーが起動します：
+通常は2つのサーバーが起動します：
 - Next.js: http://localhost:3000
 - Azure Functions: http://localhost:7071
+
+`auth.provider`が`swa`の場合は、SWA認証エミュレーターも http://localhost:4280 で起動します。認証付き画面には4280番ポートからアクセスしてください。SWA CLIが未導入の場合、`swallowkit dev`はプロジェクトに追加するコマンドを表示して、サーバー起動前に終了します。
 
 ### オプション
 
@@ -29,6 +31,8 @@ pnpm swallowkit dev
 | `-v, --verbose` | 詳細ログ出力 |
 | `--no-functions` | Azure Functions の起動をスキップ |
 | `--mock-connectors` | モックコネクタサーバーを使用 |
+| `--swa-port <port>` | SWA認証エミュレーターのポート（既定: `4280`） |
+| `--no-swa` | SWA認証エミュレーターを起動しない |
 
 ## バックエンド別の動作
 

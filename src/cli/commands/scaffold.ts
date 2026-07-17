@@ -162,6 +162,9 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
           ? { authPolicy: uiAuthPolicy }
           : undefined;
       await generateUIComponents(modelInfo, sharedPackageName, uiAuthOptions);
+      if (uiAuthConfig?.provider === 'external-token') {
+        applyExternalTokenFetchToGeneratedUi(modelInfo);
+      }
       await updateNavigationMenu(modelInfo);
     }
 
@@ -188,6 +191,31 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     console.error("\n❌ Scaffold failed:", error.message);
     process.exit(1);
   }
+}
+
+function applyExternalTokenFetchToGeneratedUi(modelInfo: ModelInfo): void {
+  const uiRoot = path.join(process.cwd(), 'app', toKebabCase(modelInfo.name));
+  if (!fs.existsSync(uiRoot)) return;
+  const visit = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const target = path.join(dir, entry.name);
+      if (entry.isDirectory()) { visit(target); continue; }
+      if (!entry.name.endsWith('.tsx')) continue;
+      let content = fs.readFileSync(target, 'utf-8');
+      if (!content.includes('fetch(')) continue;
+      content = content.replace(/\bfetch\(/g, 'authenticatedFetch(');
+      content = content.replace(
+        /(if \(!res\.ok\) throw new Error\([^\n]+\);)/g,
+        `if (res.status === 401) throw new Error('Authentication required');\n        $1`
+      );
+      if (!content.includes("@/lib/auth/authenticated-fetch")) {
+        const directive = content.match(/^'use client';\s*\r?\n/)?.[0] ?? '';
+        content = `${directive}import { authenticatedFetch } from '@/lib/auth/authenticated-fetch';\n${content.slice(directive.length)}`;
+      }
+      fs.writeFileSync(target, content, 'utf-8');
+    }
+  };
+  visit(uiRoot);
 }
 
 /**
@@ -305,8 +333,10 @@ async function generateCallFunctionHelper(): Promise<void> {
   const hasAuth = authConfig && authConfig.provider !== 'none';
   let helperCode: string;
   if (hasAuth) {
-    const { generateBFFCallFunctionWithAuth } = await import("../../core/scaffold/auth-generator");
-    helperCode = generateBFFCallFunctionWithAuth();
+    const { generateBFFCallFunctionWithAuth, generateBFFCallFunctionWithSwaAuth } = await import("../../core/scaffold/auth-generator");
+    helperCode = authConfig?.provider === "swa"
+      ? generateBFFCallFunctionWithSwaAuth()
+      : generateBFFCallFunctionWithAuth();
   } else {
     helperCode = generateBFFCallFunction();
   }
@@ -347,7 +377,7 @@ async function generateFunctionsCode(
       fs.mkdirSync(functionDir, { recursive: true });
     }
 
-    const code = generateCompactAzureFunctionsCRUD(modelInfo, sharedPackageName, authPolicy);
+    const code = generateCompactAzureFunctionsCRUD(modelInfo, sharedPackageName, authPolicy, authConfig?.provider);
     fs.writeFileSync(functionFilePath, code, "utf-8");
     console.log(`✅ Created: ${functionFilePath}`);
     return;
@@ -425,14 +455,16 @@ async function generateConnectorFunctionsCode(
         modelInfo, sharedPackageName,
         connectorDef as RdbConnectorConfig,
         connectorConfig as RdbModelConnectorConfig,
-        authPolicy
+        authPolicy,
+        authConfig?.provider
       );
     } else {
       code = generateApiConnectorFunctionTS(
         modelInfo, sharedPackageName,
         connectorDef as ApiConnectorConfig,
         connectorConfig as ApiModelConnectorConfig,
-        authPolicy
+        authPolicy,
+        authConfig?.provider
       );
     }
 

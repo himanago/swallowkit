@@ -692,7 +692,7 @@ pnpm dlx swallowkit add-auth [options]
 
 | Option | Description | Values | Default |
 |--------|-------------|--------|---------|
-| `--provider <provider>` | Authentication provider | `custom-jwt` | `custom-jwt` |
+| `--provider <provider>` | Authentication provider | `custom-jwt` | `custom-jwt`, `swa`, `external-token`, `none` |
 
 > Note: `swa` and `swa-custom` are reserved for future releases, but are not implemented by the current generated auth flow.
 
@@ -770,6 +770,8 @@ pnpm dlx swallowkit dev [options]
 | `--no-functions` | | Skip Functions | `false` |
 | `--seed-env <environment>` | | Replace matching Cosmos Emulator containers from `dev-seeds/<environment>` before startup | *(disabled)* |
 | `--mock-connectors` | | Start a mock proxy server for connector models | `false` |
+| `--swa-port <port>` | | SWA authentication emulator port | `4280` |
+| `--no-swa` | | Skip the SWA authentication emulator | `false` |
 | `--verbose` | `-v` | Show detailed logs | `false` |
 
 ### Behavior
@@ -792,6 +794,10 @@ pnpm dlx swallowkit dev [options]
     - **Python backend**: use **uv** for local runtime management, keeping project-local state under `.uv/`, creating `functions/.venv` for the app, and `functions/.codegen-venv` for Python schema generation
     - **C# backend**: allow extra cold-start time for the isolated worker build, and only report the Functions URL as ready after the host answers HTTP requests
 5. **Next.js Start**: Launch development server
+6. **SWA authentication emulator** (when `auth.provider: 'swa'` and `--no-swa` is not set):
+   - Checks for a project-local or PATH-installed SWA CLI and exits with an installation command when missing
+   - Starts the authentication proxy on port 4280 while preserving Next.js as the BFF
+   - Prints the local login URL and authenticated application URL
 
 ### Dev Seed Workflow
 

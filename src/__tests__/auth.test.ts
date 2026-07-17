@@ -13,6 +13,17 @@ import {
   generateLoginPage,
   generateAuthContext,
   generateBFFCallFunctionWithAuth,
+  generateBFFCallFunctionWithSwaAuth,
+  generateSwaAuthHelperTS,
+  generateSwaAuthHelperCSharp,
+  generateSwaAuthHelperPython,
+  generateExternalTokenAdapter,
+  generateAuthenticatedFetch,
+  generateExternalTokenAuthContext,
+  generateExternalTokenVerifierTS,
+  generateExternalTokenHelperTS,
+  generateExternalTokenVerifierCSharp,
+  generateExternalTokenVerifierPython,
   generateAuthImportTS,
   generateAuthGuardTS,
   generateAuthGuardCSharp,
@@ -22,6 +33,7 @@ import { generateCompactAzureFunctionsCRUD } from "../core/scaffold/functions-ge
 import { parseAuthPolicy } from "../core/scaffold/model-parser";
 import { createBasicModelInfo } from "./fixtures";
 import { ModelAuthPolicy, CustomJwtConfig } from "../types";
+import { addAuthProviderToRootLayout, generateSwaAuthContext } from "../cli/commands/add-auth";
 
 const defaultJwtConfig: CustomJwtConfig = {
   userConnector: "mysql",
@@ -324,6 +336,97 @@ describe("generateBFFCallFunctionWithAuth", () => {
   it("handles headers() unavailable gracefully", () => {
     const code = generateBFFCallFunctionWithAuth();
     expect(code).toContain("catch");
+  });
+
+  it("also attaches the Functions host key", () => {
+    const code = generateBFFCallFunctionWithAuth();
+    expect(code).toContain("BACKEND_FUNCTIONS_KEY");
+    expect(code).toContain("'x-functions-key'");
+  });
+});
+
+describe("SWA built-in auth generators", () => {
+  it("wraps the root layout with AuthProvider exactly once", () => {
+    const layout = `import './globals.css';\nexport default function RootLayout({ children }: { children: React.ReactNode }) {\n  return <html><body>{children}</body></html>;\n}\n`;
+    const once = addAuthProviderToRootLayout(layout);
+    const twice = addAuthProviderToRootLayout(once);
+
+    expect(twice).toBe(once);
+    expect(once.match(/import \{ AuthProvider \}/g)).toHaveLength(1);
+    expect(once.match(/<AuthProvider>/g)).toHaveLength(1);
+    expect(once).toContain("<AuthProvider>{children}</AuthProvider>");
+  });
+
+  it("preserves a React directive before the generated import", () => {
+    const layout = `'use client';\nimport { useAuth } from '@/lib/auth/auth-context';\nexport default function RootLayout({ children }: { children: React.ReactNode }) { return <body>{children}</body>; }`;
+    const updated = addAuthProviderToRootLayout(layout);
+
+    expect(updated).toMatch(/^'use client';\nimport \{ AuthProvider \}/);
+    expect(updated.match(/AuthProvider \} from/g)).toHaveLength(1);
+  });
+
+  it("treats unavailable or invalid /.auth/me responses as anonymous", () => {
+    const code = generateSwaAuthContext();
+    expect(code).toContain("if (!response.ok)");
+    expect(code).toContain("typeof body !== 'object'");
+    expect(code).toContain(".catch(() => setUser(null))");
+    expect(code).toContain(".finally(() => setLoading(false))");
+  });
+
+  it("normalizes a valid SWA principal and its string roles", () => {
+    const code = generateSwaAuthContext();
+    expect(code).toContain("typeof value.userId !== 'string'");
+    expect(code).toContain("value.userRoles.filter");
+    expect(code).toContain("satisfies AuthUser");
+  });
+
+  it("forwards a normalized platform principal with /.auth/me fallback", () => {
+    const code = generateBFFCallFunctionWithSwaAuth();
+    expect(code).toContain("x-ms-client-principal");
+    expect(code).toContain("/.auth/me");
+    expect(code).toContain("BACKEND_FUNCTIONS_KEY");
+    expect(code).not.toContain("fetchHeaders['Authorization']");
+  });
+
+  it.each([
+    ["typescript", generateSwaAuthHelperTS()],
+    ["csharp", generateSwaAuthHelperCSharp()],
+    ["python", generateSwaAuthHelperPython()],
+  ])("generates %s principal validation and role checks", (_language, code) => {
+    expect(code).toContain("x-ms-client-principal");
+    expect(code).toContain("authenticated");
+    expect(code.toLowerCase()).toContain("role");
+    expect(code).not.toContain("JWT_SECRET");
+  });
+});
+
+describe("external token auth generators", () => {
+  it("generates a fail-closed frontend adapter and authenticated fetch", () => {
+    expect(generateExternalTokenAdapter()).toContain("return null");
+    const fetchCode = generateAuthenticatedFetch();
+    expect(fetchCode).toContain("Authorization");
+    expect(fetchCode).toContain("Bearer");
+    expect(fetchCode).toContain("status: 401");
+  });
+
+  it("handles non-JSON auth/me responses without parsing them", () => {
+    const code = generateExternalTokenAuthContext();
+    expect(code).toContain("content-type");
+    expect(code).toContain(".catch(() => setUser(null))");
+  });
+
+  it.each([
+    ["typescript", generateExternalTokenVerifierTS()],
+    ["csharp", generateExternalTokenVerifierCSharp()],
+    ["python", generateExternalTokenVerifierPython()],
+  ])("generates a fail-closed %s verifier", (_language, code) => {
+    expect(code).toContain("External token verifier is not configured");
+    expect(code).not.toContain("JWT_SECRET");
+  });
+
+  it("awaits external token verification in TypeScript guards", () => {
+    expect(generateAuthGuardTS({}, "read", "external-token")).toContain("await requireAuth(request)");
+    expect(generateExternalTokenHelperTS()).toContain("await verifyExternalToken");
   });
 });
 

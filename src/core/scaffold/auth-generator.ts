@@ -3,7 +3,7 @@
  * add-auth コマンドおよび scaffold ロールガード挿入で使用するテンプレート群
  */
 
-import { CustomJwtConfig, ModelAuthPolicy, RdbConnectorConfig } from "../../types";
+import { AuthProvider, CustomJwtConfig, ModelAuthPolicy, RdbConnectorConfig } from "../../types";
 
 type RdbProvider = RdbConnectorConfig["provider"]; // "mysql" | "postgres" | "sqlserver"
 
@@ -111,7 +111,7 @@ ${getConnection}
 app.http('auth-login', {
   methods: ['POST'],
   route: 'auth/login',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
       const body = LoginRequest.parse(await request.json());
@@ -169,7 +169,7 @@ app.http('auth-login', {
 app.http('auth-me', {
   methods: ['GET'],
   route: 'auth/me',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
       const user = requireAuth(request);
@@ -187,7 +187,7 @@ app.http('auth-me', {
 app.http('auth-logout', {
   methods: ['POST'],
   route: 'auth/logout',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest): Promise<HttpResponseInit> => {
     return { status: 200, jsonBody: { message: 'Logged out' } };
   },
@@ -312,7 +312,7 @@ namespace Functions.Auth
     {
         [Function("auth-login")]
         public async Task<HttpResponseData> Login(
-            [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "auth/login")] HttpRequestData request)
+            [HttpTrigger(AuthorizationLevel.Function, "post", Route = "auth/login")] HttpRequestData request)
         {
             var body = await JsonSerializer.DeserializeAsync<LoginRequest>(request.Body);
             if (body == null || string.IsNullOrEmpty(body.LoginId) || string.IsNullOrEmpty(body.Password))
@@ -371,7 +371,7 @@ namespace Functions.Auth
 
         [Function("auth-me")]
         public async Task<HttpResponseData> Me(
-            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "auth/me")] HttpRequestData request)
+            [HttpTrigger(AuthorizationLevel.Function, "get", Route = "auth/me")] HttpRequestData request)
         {
             var (principal, errorResponse) = await JwtHelper.Authorize(request);
             if (errorResponse != null) return errorResponse;
@@ -390,7 +390,7 @@ namespace Functions.Auth
 
         [Function("auth-logout")]
         public async Task<HttpResponseData> Logout(
-            [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "auth/logout")] HttpRequestData request)
+            [HttpTrigger(AuthorizationLevel.Function, "post", Route = "auth/logout")] HttpRequestData request)
         {
             var response = request.CreateResponse(System.Net.HttpStatusCode.OK);
             await response.WriteAsJsonAsync(new { message = "Logged out" });
@@ -580,7 +580,7 @@ auth_bp = func.Blueprint()
 ${getConnection}
 
 
-@auth_bp.route(route="auth/login", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@auth_bp.route(route="auth/login", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
 def auth_login(req: func.HttpRequest) -> func.HttpResponse:
     try:
         body = req.get_json()
@@ -652,7 +652,7 @@ def auth_login(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 
-@auth_bp.route(route="auth/me", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@auth_bp.route(route="auth/me", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
 def auth_me(req: func.HttpRequest) -> func.HttpResponse:
     from auth.jwt_helper import require_auth, handle_auth_error
 
@@ -671,7 +671,7 @@ def auth_me(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 
-@auth_bp.route(route="auth/logout", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@auth_bp.route(route="auth/logout", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
 def auth_logout(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse(
         json.dumps({"message": "Logged out"}),
@@ -1122,6 +1122,17 @@ function getFunctionsBaseUrl(): string {
   return process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
 }
 
+function isLocalFunctionsUrl(url: string): boolean {
+  return url.startsWith('http://localhost:') || url.startsWith('http://127.0.0.1:');
+}
+
+function getFunctionsKeyHeaders(functionsBaseUrl: string): Record<string, string> {
+  const key = process.env.BACKEND_FUNCTIONS_KEY;
+  if (key) return { 'x-functions-key': key };
+  if (isLocalFunctionsUrl(functionsBaseUrl)) return {};
+  throw new Error('BACKEND_FUNCTIONS_KEY is required for non-local Functions calls');
+}
+
 interface CallFunctionConfig<TInput = any, TOutput = any> {
   /** HTTP メソッド */
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -1160,11 +1171,13 @@ export async function callFunction<TInput = any, TOutput = any>(
     // Azure Functions を呼び出し
     const functionsBaseUrl = getFunctionsBaseUrl();
     const url = functionsBaseUrl + path;
+    const keyHeaders = getFunctionsKeyHeaders(functionsBaseUrl);
     console.log(\`[BFF] \${method} \${url}\`);
 
     // Authorization ヘッダーの転送（Proxy が cookie → Authorization に変換済み）
     const fetchHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...keyHeaders,
     };
     try {
       const reqHeaders = await headers();
@@ -1224,6 +1237,247 @@ export async function callFunction<TInput = any, TOutput = any>(
 `;
 }
 
+/** SWA built-in auth variant: forward only a platform-derived client principal. */
+export function generateBFFCallFunctionWithSwaAuth(): string {
+  return generateBFFCallFunctionWithAuth()
+    .replace(
+      `    // Authorization ヘッダーの転送（Proxy が cookie → Authorization に変換済み）`,
+      `    // SWA client principal is accepted only from the platform request context.`
+    )
+    .replace(
+      `      const authorization = reqHeaders.get('authorization');
+      if (authorization) {
+        fetchHeaders['Authorization'] = authorization;
+      }`,
+      `      let principal = reqHeaders.get('x-ms-client-principal');
+      if (!principal) {
+        const cookie = reqHeaders.get('cookie');
+        const host = reqHeaders.get('host');
+        if (cookie && host) {
+          const proto = reqHeaders.get('x-forwarded-proto') || 'https';
+          const meResponse = await fetch(\`\${proto}://\${host}/.auth/me\`, {
+            headers: { cookie },
+            cache: 'no-store',
+          });
+          if (meResponse.ok) {
+            const payload = await meResponse.json() as { clientPrincipal?: unknown };
+            if (payload.clientPrincipal) {
+              principal = Buffer.from(JSON.stringify(payload.clientPrincipal), 'utf8').toString('base64');
+            }
+          }
+        }
+      }
+      if (principal) {
+        const parsed = JSON.parse(Buffer.from(principal, 'base64').toString('utf8'));
+        const normalized = {
+          identityProvider: String(parsed.identityProvider || ''),
+          userId: String(parsed.userId || ''),
+          userDetails: String(parsed.userDetails || ''),
+          userRoles: Array.isArray(parsed.userRoles) ? parsed.userRoles.filter((role: unknown) => typeof role === 'string') : [],
+        };
+        if (normalized.userId && normalized.userRoles.includes('authenticated')) {
+          fetchHeaders['x-ms-client-principal'] = Buffer.from(JSON.stringify(normalized), 'utf8').toString('base64');
+        }
+      }`
+    );
+}
+
+export function generateSwaAuthHelperTS(): string {
+  return `import { HttpRequest, HttpResponseInit } from '@azure/functions';
+
+export interface AuthUser { id: string; loginId: string; roles: string[]; }
+export class AuthError extends Error { constructor(public status: number, message: string) { super(message); } }
+
+export function requireAuth(request: HttpRequest): AuthUser {
+  const encoded = request.headers.get('x-ms-client-principal');
+  if (!encoded) throw new AuthError(401, 'Authentication required');
+  try {
+    const value = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+    const roles = Array.isArray(value.userRoles) ? value.userRoles.filter((r: unknown) => typeof r === 'string') : [];
+    if (typeof value.userId !== 'string' || !value.userId || !roles.includes('authenticated')) throw new Error();
+    return { id: value.userId, loginId: typeof value.userDetails === 'string' ? value.userDetails : '', roles };
+  } catch { throw new AuthError(401, 'Invalid client principal'); }
+}
+export function requireRoles(user: AuthUser, roles: string[]): void {
+  if (roles.length && !roles.some(role => user.roles.includes(role))) throw new AuthError(403, 'Insufficient permissions');
+}
+export function handleAuthError(error: unknown): HttpResponseInit | null {
+  return error instanceof AuthError ? { status: error.status, jsonBody: { error: error.message } } : null;
+}
+`;
+}
+
+// ============================================================
+// External token authentication
+// ============================================================
+
+export function generateExternalTokenAdapter(): string {
+  return `/** Replace these functions with your external IdP SDK integration. */
+export async function getToken(): Promise<string | null> { return null; }
+export async function login(): Promise<void> { throw new Error('External token login adapter is not configured'); }
+export async function logout(): Promise<void> { throw new Error('External token logout adapter is not configured'); }
+`;
+}
+
+export function generateAuthenticatedFetch(): string {
+  return `import { getToken } from './external-token-adapter';
+
+export async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const token = await getToken();
+  if (!token) return new Response(JSON.stringify({ error: 'Authentication required' }), { status: 401, headers: { 'content-type': 'application/json' } });
+  const headers = new Headers(init.headers);
+  headers.set('Authorization', \`Bearer \${token}\`);
+  return fetch(input, { ...init, headers });
+}
+`;
+}
+
+export function generateExternalTokenBFFMeRoute(): string {
+  return `import { callFunction } from '@/lib/api/call-function';
+export async function GET() { return callFunction({ method: 'GET', path: '/api/auth/me' }); }
+`;
+}
+
+export function generateExternalTokenAuthContext(): string {
+  return `'use client';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { authenticatedFetch } from './authenticated-fetch';
+import * as adapter from './external-token-adapter';
+export interface AuthUser { id: string; loginId: string; name: string; email: string; roles: string[]; }
+interface Value { user: AuthUser | null; loading: boolean; login: () => Promise<void>; logout: () => Promise<void>; hasRole: (role: string) => boolean; hasAnyRole: (roles: string[]) => boolean; }
+const Context = createContext<Value | null>(null);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AuthUser | null>(null); const [loading, setLoading] = useState(true);
+  useEffect(() => { authenticatedFetch('/api/auth/me').then(async r => {
+    if (!r.ok || !(r.headers.get('content-type') || '').includes('application/json')) return null;
+    return r.json() as Promise<AuthUser>;
+  }).then(setUser).catch(() => setUser(null)).finally(() => setLoading(false)); }, []);
+  const hasRole = (role: string) => user?.roles.includes(role) ?? false;
+  const logout = async () => { await adapter.logout(); setUser(null); };
+  return <Context.Provider value={{ user, loading, login: adapter.login, logout, hasRole, hasAnyRole: roles => roles.some(hasRole) }}>{children}</Context.Provider>;
+}
+export function useAuth() { const value = useContext(Context); if (!value) throw new Error('useAuth must be used within an AuthProvider'); return value; }
+`;
+}
+
+export function generateExternalTokenVerifierTS(): string {
+  return `export interface ExternalAuthPrincipal { userId: string; userDetails: string; roles: string[]; }
+export class ExternalTokenVerificationError extends Error { constructor(public status: 401 | 503, message: string) { super(message); } }
+/** Implement IdP verification here. Never decode and trust a token without verification. */
+export async function verifyExternalToken(_token: string): Promise<ExternalAuthPrincipal> {
+  throw new Error('External token verifier is not configured');
+}
+`;
+}
+
+export function generateExternalTokenHelperTS(): string {
+  return `import { HttpRequest, HttpResponseInit } from '@azure/functions';
+import { verifyExternalToken, ExternalTokenVerificationError, type ExternalAuthPrincipal } from './external-token-verifier';
+export class AuthError extends Error { constructor(public status: number, message: string) { super(message); } }
+export async function requireAuth(request: HttpRequest): Promise<ExternalAuthPrincipal> {
+  const header = request.headers.get('authorization') || '';
+  if (!header.startsWith('Bearer ') || !header.slice(7)) throw new AuthError(401, 'Missing or invalid Authorization header');
+  try { const principal = await verifyExternalToken(header.slice(7));
+    if (!principal?.userId || !Array.isArray(principal.roles)) throw new AuthError(401, 'Invalid external principal');
+    return principal;
+  } catch (error) { if (error instanceof AuthError) throw error; if (error instanceof ExternalTokenVerificationError) throw new AuthError(error.status, error.message); throw new AuthError(500, 'External token verifier is not configured'); }
+}
+export function requireRoles(user: ExternalAuthPrincipal, roles: string[]) { if (!roles.some(role => user.roles.includes(role))) throw new AuthError(403, 'Insufficient permissions'); }
+export function handleAuthError(error: unknown): HttpResponseInit | null { return error instanceof AuthError ? { status: error.status, jsonBody: { error: error.message } } : null; }
+`;
+}
+
+export function generateExternalAuthMeTS(): string {
+  return `import { app, HttpRequest, HttpResponseInit } from '@azure/functions';
+import { requireAuth, handleAuthError } from './auth/jwt-helper';
+app.http('external-auth-me', { methods: ['GET'], route: 'auth/me', authLevel: 'function', handler: async (request: HttpRequest): Promise<HttpResponseInit> => {
+  try { const p = await requireAuth(request); return { status: 200, jsonBody: { id: p.userId, loginId: p.userDetails, name: p.userDetails, email: '', roles: p.roles } }; }
+  catch (error) { return handleAuthError(error) || { status: 500, jsonBody: { error: 'Authentication failed' } }; }
+} });
+`;
+}
+
+export function generateExternalTokenVerifierCSharp(): string { return `namespace Functions.Auth;\npublic record ExternalAuthPrincipal(string UserId, string UserDetails, string[] Roles);\npublic static class ExternalTokenVerifier { public static Task<ExternalAuthPrincipal> VerifyExternalToken(string token) => throw new InvalidOperationException("External token verifier is not configured"); }\n`; }
+export function generateExternalTokenHelperCSharp(): string { return `using Microsoft.Azure.Functions.Worker.Http;\nnamespace Functions.Auth;\npublic static class JwtHelper { public static async Task<(ExternalAuthPrincipal? Principal, HttpResponseData? ErrorResponse)> Authorize(HttpRequestData request, params string[] roles) { if (!request.Headers.TryGetValues("Authorization", out var values) || !values.FirstOrDefault()!.StartsWith("Bearer ")) { var r=request.CreateResponse(System.Net.HttpStatusCode.Unauthorized); await r.WriteAsJsonAsync(new { error="Authentication required" }); return (null,r); } try { var p=await ExternalTokenVerifier.VerifyExternalToken(values.First()[7..]); if (roles.Length>0 && !roles.Any(p.Roles.Contains)) { var r=request.CreateResponse(System.Net.HttpStatusCode.Forbidden); await r.WriteAsJsonAsync(new { error="Insufficient permissions" }); return (null,r); } return (p,null); } catch (HttpRequestException) { var r=request.CreateResponse(System.Net.HttpStatusCode.ServiceUnavailable); await r.WriteAsJsonAsync(new { error="Identity provider unavailable" }); return (null,r); } catch { var r=request.CreateResponse(System.Net.HttpStatusCode.Unauthorized); await r.WriteAsJsonAsync(new { error="Authentication failed" }); return (null,r); } } }\n`; }
+export function generateExternalAuthMeCSharp(): string { return `using Microsoft.Azure.Functions.Worker;\nusing Microsoft.Azure.Functions.Worker.Http;\nnamespace Functions.Auth;\npublic class ExternalAuthMe { [Function("external-auth-me")] public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Function,"get",Route="auth/me")] HttpRequestData req) { var (p,e)=await JwtHelper.Authorize(req); if(e!=null)return e; var r=req.CreateResponse(System.Net.HttpStatusCode.OK); await r.WriteAsJsonAsync(new { id=p!.UserId, loginId=p.UserDetails, name=p.UserDetails, email="", roles=p.Roles }); return r; } }\n`; }
+export function generateExternalTokenVerifierPython(): string { return `class ExternalTokenVerificationError(Exception):\n    def __init__(self, status: int, message: str): self.status, self.message = status, message\n\ndef verify_external_token(token: str) -> dict:\n    raise RuntimeError("External token verifier is not configured")\n`; }
+export function generateExternalTokenHelperPython(): string { return `import azure.functions as func\nfrom .external_token_verifier import verify_external_token, ExternalTokenVerificationError\nclass AuthError(Exception):\n    def __init__(self,status,message): self.status,self.message=status,message\ndef require_auth(req: func.HttpRequest):\n    header=req.headers.get("authorization","")\n    if not header.startswith("Bearer "): raise AuthError(401,"Authentication required")\n    try:\n        p=verify_external_token(header[7:])\n        if not p.get("userId") or not isinstance(p.get("roles"),list): raise AuthError(401,"Invalid external principal")\n        return p\n    except ExternalTokenVerificationError as e: raise AuthError(e.status,e.message)\n    except AuthError: raise\n    except RuntimeError: raise AuthError(500,"External token verifier is not configured")\ndef require_roles(user,roles):\n    if not any(r in user.get("roles",[]) for r in roles): raise AuthError(403,"Insufficient permissions")\ndef handle_auth_error(error):\n    return func.HttpResponse('{"error":"%s"}' % error.message,status_code=error.status,mimetype="application/json") if isinstance(error,AuthError) else None\n`; }
+export function generateExternalAuthMePython(): string { return `import json\nimport azure.functions as func\nfrom auth.jwt_helper import require_auth, handle_auth_error\nbp=func.Blueprint()\n@bp.route(route="auth/me",methods=["GET"],auth_level=func.AuthLevel.FUNCTION)\ndef auth_me(req: func.HttpRequest):\n    try:\n        p=require_auth(req); return func.HttpResponse(json.dumps({"id":p["userId"],"loginId":p.get("userDetails",""),"name":p.get("userDetails",""),"email":"","roles":p["roles"]}),mimetype="application/json")\n    except Exception as e:\n        return handle_auth_error(e) or func.HttpResponse('{"error":"Authentication failed"}',status_code=500,mimetype="application/json")\n`; }
+export function generateSwaAuthHelperPython(): string {
+  return `import base64
+import json
+import azure.functions as func
+
+class AuthError(Exception):
+    def __init__(self, status, message): self.status, self.message = status, message
+
+def require_auth(req):
+    encoded = req.headers.get("x-ms-client-principal")
+    if not encoded: raise AuthError(401, "Authentication required")
+    try:
+        value = json.loads(base64.b64decode(encoded).decode("utf-8"))
+        roles = [r for r in value.get("userRoles", []) if isinstance(r, str)]
+        if not value.get("userId") or "authenticated" not in roles: raise ValueError()
+        return {"id": value["userId"], "loginId": value.get("userDetails", ""), "roles": roles}
+    except Exception: raise AuthError(401, "Invalid client principal")
+
+def require_roles(user, roles):
+    if roles and not any(role in user["roles"] for role in roles): raise AuthError(403, "Insufficient permissions")
+
+def handle_auth_error(error):
+    return func.HttpResponse(json.dumps({"error": error.message}), status_code=error.status, mimetype="application/json") if isinstance(error, AuthError) else None
+`;
+}
+
+export function generateSwaAuthHelperCSharp(): string {
+  return `using System.Text;
+using System.Text.Json;
+using Microsoft.Azure.Functions.Worker.Http;
+
+namespace Functions.Auth;
+
+public class JwtPayload
+{
+    public string Sub { get; set; } = "";
+    public string LoginId { get; set; } = "";
+    public string[] Roles { get; set; } = Array.Empty<string>();
+}
+
+public static class JwtHelper
+{
+    public static async Task<(JwtPayload?, HttpResponseData?)> Authorize(HttpRequestData request, params string[] requiredRoles)
+    {
+        try
+        {
+            var encoded = request.Headers.TryGetValues("x-ms-client-principal", out var values) ? values.FirstOrDefault() : null;
+            if (string.IsNullOrWhiteSpace(encoded)) throw new InvalidOperationException();
+            using var document = JsonDocument.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(encoded)));
+            var root = document.RootElement;
+            var userId = root.GetProperty("userId").GetString() ?? "";
+            var details = root.TryGetProperty("userDetails", out var detailValue) ? detailValue.GetString() ?? "" : "";
+            var roles = root.TryGetProperty("userRoles", out var roleValue) && roleValue.ValueKind == JsonValueKind.Array
+                ? roleValue.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!).ToArray()
+                : Array.Empty<string>();
+            if (string.IsNullOrEmpty(userId) || !roles.Contains("authenticated")) throw new InvalidOperationException();
+            if (requiredRoles.Length > 0 && !requiredRoles.Any(roles.Contains))
+            {
+                var forbidden = request.CreateResponse(System.Net.HttpStatusCode.Forbidden);
+                await forbidden.WriteAsJsonAsync(new { error = "Forbidden" });
+                return (null, forbidden);
+            }
+            return (new JwtPayload { Sub = userId, LoginId = details, Roles = roles }, null);
+        }
+        catch
+        {
+            var unauthorized = request.CreateResponse(System.Net.HttpStatusCode.Unauthorized);
+            await unauthorized.WriteAsJsonAsync(new { error = "Unauthorized" });
+            return (null, unauthorized);
+        }
+    }
+}
+`;
+}
+
 // ============================================================
 // 13. scaffold 用ロールガード挿入ヘルパー
 // ============================================================
@@ -1238,16 +1492,16 @@ export function generateAuthImportTS(): string {
 /**
  * TypeScript Functions のハンドラー先頭に挿入する認証チェックコードを生成
  */
-export function generateAuthGuardTS(policy: ModelAuthPolicy, operation: 'read' | 'write'): string {
+export function generateAuthGuardTS(policy: ModelAuthPolicy, operation: 'read' | 'write', provider?: AuthProvider): string {
   const roles = operation === 'read'
     ? (policy.read || policy.roles || [])
     : (policy.write || policy.roles || []);
 
   if (roles.length > 0) {
-    return `      const authUser = requireAuth(request);
+    return `      const authUser = ${provider === 'external-token' ? 'await ' : ''}requireAuth(request);
       requireRoles(authUser, ${JSON.stringify(roles)});`;
   }
-  return `      const authUser = requireAuth(request);`;
+  return `      const authUser = ${provider === 'external-token' ? 'await ' : ''}requireAuth(request);`;
 }
 
 /**

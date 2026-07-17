@@ -1,16 +1,19 @@
 # Authentication
 
-Add user authentication and role-based authorization to a SwallowKit project. Currently supports custom JWT authentication with an external RDB user store.
+Add user authentication and role-based authorization to a SwallowKit project. Both custom JWT with an external RDB user store and Static Web Apps built-in authentication are supported.
 
 Current implementation status:
 
 | Mode | Description | Status |
 |------|-------------|--------|
 | `custom-jwt` | External RDB user database + JWT tokens | ✅ Available (v1) |
-| `swa` | Static Web Apps built-in authentication | 🔜 Planned |
+| `swa` | Static Web Apps built-in authentication | ✅ Available |
 | `swa-custom` | Hybrid (SWA auth + custom extensions) | 🔜 Planned |
+| `external-token` | Bearer tokens issued by LIFF/Auth0/Firebase/etc. | ✅ Available |
 
-> **Current behavior**: Only `custom-jwt` is implemented today. The CLI still accepts reserved provider names for future modes, but the generated auth flow is currently `custom-jwt`-based.
+> For SWA auth, run `npx swallowkit add-auth --provider swa`. The generated `/api/*` route requires the `authenticated` role and forwards the SWA client principal to Functions through the BFF.
+
+In every mode, server-to-server calls from the BFF to Functions are protected by an automatically configured Functions host key in the `x-functions-key` header. The key is never exposed to the browser.
 
 💡 **Key concept**: `custom-jwt` uses JWT (not sessions) because Azure Functions is stateless. The BFF layer manages cookies (transport concern), while Functions handle token generation and verification (security concern).
 
@@ -370,6 +373,41 @@ Models **without** an explicit `authPolicy` follow the `auth.authorization.defau
 
 ## Security Considerations
 
+## External token authentication with LINE Login
+
+```bash
+npx swallowkit add-auth --provider external-token
+```
+
+SwallowKit generates Bearer-token transport, mandatory Functions verification, normalized principals, and `authPolicy` authorization. Implement IdP-specific behavior in `lib/auth/external-token-adapter.ts` and the language-specific `external-token-verifier`. Both generated stubs fail closed.
+
+With LIFF, send only the ID token, not client-provided profile data or a user ID:
+
+```typescript
+import liff from '@line/liff';
+const liffId = process.env.NEXT_PUBLIC_LIFF_ID!;
+async function ready() { await liff.init({ liffId }); }
+export async function getToken() { await ready(); return liff.isLoggedIn() ? liff.getIDToken() : null; }
+export async function login() { await ready(); if (!liff.isLoggedIn()) liff.login(); }
+export async function logout() { await ready(); if (liff.isLoggedIn()) liff.logout(); }
+```
+
+TypeScript verifier example:
+
+```typescript
+export async function verifyExternalToken(token: string) {
+  const body = new URLSearchParams({ id_token: token, client_id: process.env.LINE_CHANNEL_ID! });
+  const response = await fetch('https://api.line.me/oauth2/v2.1/verify', { method: 'POST', body, signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw new ExternalTokenVerificationError(401, 'Invalid LINE ID token');
+  const value = await response.json();
+  return { userId: value.sub, userDetails: value.name || '', roles: ['authenticated'] };
+}
+```
+
+For C#, POST the same form with `HttpClient` and map `sub` to `UserId`. For Python, use `requests.post(..., data={"id_token": token, "client_id": channel_id}, timeout=5)` and raise `ExternalTokenVerificationError(401, ...)` when LINE rejects it. Treat timeouts and provider outages as 503 and never continue business processing. Keep the Channel ID in environment settings and never log tokens or verification responses. Include the expected nonce when the login flow uses one.
+
+For access tokens, use LINE's token verification endpoint, require a matching `client_id` and positive `expires_in`, and retrieve the profile server-side. The recommended example uses an OpenID Connect ID token.
+
 ### JWT Design
 
 - Tokens are signed with a secret stored in the `JWT_SECRET` environment variable
@@ -405,10 +443,16 @@ This means an expired token is rejected early at the edge (fast, low cost), whil
 
 ## Best Practices
 
+### Local development with SWA authentication
+
+`add-auth --provider swa` automatically wraps the application with `AuthProvider`. On Azure SWA, it obtains user information and roles from `/.auth/me`.
+
+When SWA CLI is installed, `swallowkit dev` starts its authentication emulator. Configure a local user and roles at http://localhost:4280/.auth/login/aad, then use port 4280 to test authenticated pages and APIs. If SWA CLI is missing, install it in the project with the command shown by `swallowkit dev` and retry. With `--no-swa`, failure of `/.auth/me` is handled safely and the UI is rendered with an anonymous user.
+
 ### Choosing a Provider Mode
 
 - ✅ Use `custom-jwt` when you have an existing user database and need full control over the auth flow
-- ⏳ `swa` is planned for simple projects where Azure AD / GitHub / social login is sufficient
+- ✅ Use `swa` for simple projects using SWA built-in authentication with Microsoft Entra ID
 - ⏳ `swa-custom` is planned for cases where you need SWA convenience with custom extensions
 
 ### Secret Management
@@ -460,7 +504,7 @@ function Dashboard() {
 The following are current limitations of the auth feature in v1:
 
 - **No refresh tokens**: Tokens expire after the configured `tokenExpiry` period. Users must re-login when the token expires
-- **No `swa` or `swa-custom` modes**: Only `custom-jwt` is implemented. SWA-based auth providers are planned for a future release
+- **No `swa-custom` mode**: SWA custom extensions are not implemented. Use built-in `swa` or `custom-jwt` authentication
 - **No token revocation**: Issued JWTs cannot be invalidated before expiry. For immediate access revocation, rotate the `JWT_SECRET` (invalidates all tokens)
 - **No Edge Runtime crypto**: Next.js Middleware (Edge Runtime) cannot verify JWT signatures — only expiry is checked at the middleware layer
 - **No password reset flow**: The `add-auth` command does not generate password reset or account recovery endpoints

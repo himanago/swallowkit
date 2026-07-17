@@ -22,6 +22,23 @@ import {
   generateLoginPage,
   generateAuthContext,
   generateBFFCallFunctionWithAuth,
+  generateBFFCallFunctionWithSwaAuth,
+  generateSwaAuthHelperTS,
+  generateSwaAuthHelperCSharp,
+  generateSwaAuthHelperPython,
+  generateExternalTokenAdapter,
+  generateAuthenticatedFetch,
+  generateExternalTokenBFFMeRoute,
+  generateExternalTokenAuthContext,
+  generateExternalTokenVerifierTS,
+  generateExternalTokenHelperTS,
+  generateExternalAuthMeTS,
+  generateExternalTokenVerifierCSharp,
+  generateExternalTokenHelperCSharp,
+  generateExternalAuthMeCSharp,
+  generateExternalTokenVerifierPython,
+  generateExternalTokenHelperPython,
+  generateExternalAuthMePython,
 } from "../../core/scaffold/auth-generator";
 import { syncProjectManifest } from "../../core/project/manifest";
 import { buildSharedTsConfig } from "./init";
@@ -30,20 +47,225 @@ interface AddAuthOptions {
   provider?: string;
 }
 
+function writeIfMissing(filePath: string, content: string): void {
+  if (fs.existsSync(filePath)) return;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, "utf-8");
+}
+
+function defaultCustomJwtConfig(): CustomJwtConfig {
+  return {
+    userConnector: "mysql",
+    userTable: "users",
+    loginIdColumn: "login_id",
+    passwordHashColumn: "password_hash",
+    rolesColumn: "roles",
+    jwtSecretEnv: "JWT_SECRET",
+    tokenExpiry: "24h",
+  };
+}
+
+function setupSwaAuth(cwd: string, backendLanguage: BackendLanguage): void {
+  const helperPath = backendLanguage === "typescript"
+    ? path.join(cwd, "functions", "src", "auth", "jwt-helper.ts")
+    : backendLanguage === "csharp"
+      ? path.join(cwd, "functions", "Auth", "JwtHelper.cs")
+      : path.join(cwd, "functions", "auth", "jwt_helper.py");
+  fs.mkdirSync(path.dirname(helperPath), { recursive: true });
+  const helper = backendLanguage === "typescript"
+    ? generateSwaAuthHelperTS()
+    : backendLanguage === "csharp"
+      ? generateSwaAuthHelperCSharp()
+      : generateSwaAuthHelperPython();
+  fs.writeFileSync(helperPath, helper, "utf-8");
+
+  const callFnPath = path.join(cwd, "lib", "api", "call-function.ts");
+  fs.mkdirSync(path.dirname(callFnPath), { recursive: true });
+  fs.writeFileSync(callFnPath, generateBFFCallFunctionWithSwaAuth(), "utf-8");
+
+  const authDir = path.join(cwd, "lib", "auth");
+  fs.mkdirSync(authDir, { recursive: true });
+  fs.writeFileSync(path.join(authDir, "auth-context.tsx"), generateSwaAuthContext(), "utf-8");
+  updateRootLayoutWithAuthProvider(cwd);
+  const loginDir = path.join(cwd, "app", "login");
+  fs.mkdirSync(loginDir, { recursive: true });
+  fs.writeFileSync(path.join(loginDir, "page.tsx"), generateSwaLoginPage(), "utf-8");
+  updateSwaRouteConfig(cwd);
+}
+
+function setupExternalTokenAuth(cwd: string, backendLanguage: BackendLanguage): void {
+  const authDir = path.join(cwd, "lib", "auth");
+  fs.mkdirSync(authDir, { recursive: true });
+  writeIfMissing(path.join(authDir, "external-token-adapter.ts"), generateExternalTokenAdapter());
+  fs.writeFileSync(path.join(authDir, "authenticated-fetch.ts"), generateAuthenticatedFetch(), "utf-8");
+  fs.writeFileSync(path.join(authDir, "auth-context.tsx"), generateExternalTokenAuthContext(), "utf-8");
+  fs.writeFileSync(path.join(cwd, "lib", "api", "call-function.ts"), generateBFFCallFunctionWithAuth(), "utf-8");
+  const meDir = path.join(cwd, "app", "api", "auth", "me");
+  fs.mkdirSync(meDir, { recursive: true });
+  fs.writeFileSync(path.join(meDir, "route.ts"), generateExternalTokenBFFMeRoute(), "utf-8");
+  updateRootLayoutWithAuthProvider(cwd);
+
+  if (backendLanguage === "typescript") {
+    const verifier = path.join(cwd, "functions", "src", "auth", "external-token-verifier.ts");
+    writeIfMissing(verifier, generateExternalTokenVerifierTS());
+    fs.writeFileSync(path.join(cwd, "functions", "src", "auth", "jwt-helper.ts"), generateExternalTokenHelperTS(), "utf-8");
+    fs.writeFileSync(path.join(cwd, "functions", "src", "auth-me.ts"), generateExternalAuthMeTS(), "utf-8");
+  } else if (backendLanguage === "csharp") {
+    const verifier = path.join(cwd, "functions", "Auth", "ExternalTokenVerifier.cs");
+    writeIfMissing(verifier, generateExternalTokenVerifierCSharp());
+    fs.writeFileSync(path.join(cwd, "functions", "Auth", "JwtHelper.cs"), generateExternalTokenHelperCSharp(), "utf-8");
+    fs.writeFileSync(path.join(cwd, "functions", "Auth", "ExternalAuthMe.cs"), generateExternalAuthMeCSharp(), "utf-8");
+  } else {
+    const verifier = path.join(cwd, "functions", "auth", "external_token_verifier.py");
+    writeIfMissing(verifier, generateExternalTokenVerifierPython());
+    fs.writeFileSync(path.join(cwd, "functions", "auth", "jwt_helper.py"), generateExternalTokenHelperPython(), "utf-8");
+    const authMePath = path.join(cwd, "functions", "blueprints", "auth_me.py");
+    fs.mkdirSync(path.dirname(authMePath), { recursive: true });
+    fs.writeFileSync(authMePath, generateExternalAuthMePython(), "utf-8");
+    updatePythonAuthMeRegistration(cwd);
+  }
+}
+
+function updatePythonAuthMeRegistration(cwd: string): void {
+  const appPath = path.join(cwd, "functions", "function_app.py");
+  if (!fs.existsSync(appPath)) return;
+  const importLine = "from blueprints.auth_me import bp as external_auth_me_bp";
+  const registerLine = "app.register_blueprint(external_auth_me_bp)";
+  let content = fs.readFileSync(appPath, "utf-8");
+  if (content.includes(importLine)) return;
+  const marker = "# SwallowKit scaffold registrations";
+  content = content.includes(marker)
+    ? content.replace(marker, `${importLine}\n${registerLine}\n${marker}`)
+    : `${content.trimEnd()}\n${importLine}\n${registerLine}\n`;
+  fs.writeFileSync(appPath, content, "utf-8");
+}
+
+function generateSwaLoginPage(): string {
+  return `'use client';
+export default function LoginPage() {
+  return <main><h1>Sign in</h1><a href="/.auth/login/aad?post_login_redirect_uri=/">Sign in with Microsoft</a></main>;
+}
+`;
+}
+
+export function generateSwaAuthContext(): string {
+  return `'use client';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+
+export interface AuthUser { id: string; loginId: string; name: string; email: string; roles: string[]; }
+interface AuthContextValue { user: AuthUser | null; loading: boolean; login: () => void; logout: () => void; hasRole: (role: string) => boolean; hasAnyRole: (roles: string[]) => boolean; }
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    fetch('/.auth/me')
+      .then(async response => {
+        if (!response.ok) throw new Error('SWA authentication is unavailable');
+        const body: unknown = await response.json();
+        if (!body || typeof body !== 'object' || !('clientPrincipal' in body)) return null;
+        const principal = body.clientPrincipal;
+        if (!principal || typeof principal !== 'object') return null;
+        const value = principal as Record<string, unknown>;
+        if (typeof value.userId !== 'string') return null;
+        return {
+          id: value.userId,
+          loginId: typeof value.userDetails === 'string' ? value.userDetails : '',
+          name: typeof value.userDetails === 'string' ? value.userDetails : '',
+          email: typeof value.userDetails === 'string' ? value.userDetails : '',
+          roles: Array.isArray(value.userRoles) ? value.userRoles.filter((role): role is string => typeof role === 'string') : [],
+        } satisfies AuthUser;
+      })
+      .then(setUser)
+      .catch(() => setUser(null))
+      .finally(() => setLoading(false));
+  }, []);
+  const login = () => { window.location.href = '/.auth/login/aad?post_login_redirect_uri=/'; };
+  const logout = () => { window.location.href = '/.auth/logout?post_logout_redirect_uri=/'; };
+  const hasRole = (role: string) => user?.roles.includes(role) ?? false;
+  return <AuthContext.Provider value={{ user, loading, login, logout, hasRole, hasAnyRole: roles => roles.some(hasRole) }}>{children}</AuthContext.Provider>;
+}
+export function useAuth() { const value = useContext(AuthContext); if (!value) throw new Error('useAuth must be used within an AuthProvider'); return value; }
+`;
+}
+
+export function addAuthProviderToRootLayout(layout: string): string {
+  let updated = layout;
+  if (!/import\s*\{[^}]*\bAuthProvider\b[^}]*\}\s*from\s*['"]@\/lib\/auth\/auth-context['"]/.test(updated)) {
+    const directive = updated.match(/^(?:\s*['"]use (?:client|server)['"];?\s*\r?\n)/)?.[0] ?? "";
+    updated = `${directive}import { AuthProvider } from '@/lib/auth/auth-context';\n${updated.slice(directive.length)}`;
+  }
+  if (!/<AuthProvider(?:\s|>)/.test(updated)) {
+    const childrenIndex = updated.lastIndexOf("{children}");
+    if (childrenIndex === -1) {
+      throw new Error("Could not find {children} in app/layout.tsx");
+    }
+    updated = `${updated.slice(0, childrenIndex)}<AuthProvider>{children}</AuthProvider>${updated.slice(childrenIndex + "{children}".length)}`;
+  }
+  return updated;
+}
+
+function updateRootLayoutWithAuthProvider(cwd: string): void {
+  const layoutPath = path.join(cwd, "app", "layout.tsx");
+  if (!fs.existsSync(layoutPath)) {
+    throw new Error("app/layout.tsx was not found; cannot install AuthProvider");
+  }
+  const layout = fs.readFileSync(layoutPath, "utf-8");
+  const updated = addAuthProviderToRootLayout(layout);
+  if (updated !== layout) fs.writeFileSync(layoutPath, updated, "utf-8");
+}
+
+function updateSwaRouteConfig(cwd: string): void {
+  const configPath = path.join(cwd, "staticwebapp.config.json");
+  const config = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, "utf-8")) : {};
+  config.routes = Array.isArray(config.routes)
+    ? config.routes.filter((route: { route?: string }) => route.route !== "/api/*")
+    : [];
+  config.routes.unshift({ route: "/api/*", allowedRoles: ["authenticated"] });
+  config.responseOverrides = { ...(config.responseOverrides || {}), "401": { statusCode: 302, redirect: "/.auth/login/aad?post_login_redirect_uri=.referrer" } };
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+}
+
 export async function addAuthCommand(options: AddAuthOptions) {
   ensureSwallowKitProject("add-auth");
 
   console.log(" SwallowKit Add-Auth: Setting up authentication...\n");
 
   const provider = (options.provider || "custom-jwt") as AuthProvider;
-  if (!["custom-jwt", "swa", "swa-custom", "none"].includes(provider)) {
-    console.error(` Unknown provider: ${provider}. Use: custom-jwt | swa | swa-custom | none`);
+  if (!["custom-jwt", "swa", "external-token", "swa-custom", "none"].includes(provider)) {
+    console.error(` Unknown provider: ${provider}. Use: custom-jwt | swa | external-token | swa-custom | none`);
     process.exit(1);
   }
 
   const backendLanguage = getBackendLanguage();
   const config = getFullConfig();
   const cwd = process.cwd();
+
+  if (provider === "swa-custom") {
+    throw new Error("The swa-custom provider is not implemented. Use --provider swa or --provider custom-jwt.");
+  }
+  if (provider === "none") {
+    updateConfigWithAuth(cwd, provider, config.auth?.customJwt || defaultCustomJwtConfig());
+    await syncProjectManifest();
+    console.log(" Authentication disabled in swallowkit.config.js");
+    return;
+  }
+  if (provider === "swa") {
+    setupSwaAuth(cwd, backendLanguage);
+    updateConfigWithAuth(cwd, provider, config.auth?.customJwt || defaultCustomJwtConfig());
+    await syncProjectManifest();
+    console.log("\n SWA built-in authentication setup complete!");
+    return;
+  }
+  if (provider === "external-token") {
+    setupExternalTokenAuth(cwd, backendLanguage);
+    updateConfigWithAuth(cwd, provider, config.auth?.customJwt || defaultCustomJwtConfig());
+    await syncProjectManifest();
+    console.log("\n External token authentication setup complete!");
+    console.log(" Implement the generated frontend adapter and backend verifier before use.");
+    return;
+  }
 
   // Read project name from package.json
   const pkgPath = path.join(cwd, "package.json");
@@ -59,15 +281,9 @@ export async function addAuthCommand(options: AddAuthOptions) {
   }
 
   // Default custom-jwt config
-  const customJwtConfig: CustomJwtConfig = config.auth?.customJwt || {
-    userConnector: "mysql",
-    userTable: "users",
-    loginIdColumn: "login_id",
-    passwordHashColumn: "password_hash",
-    rolesColumn: "roles",
-    jwtSecretEnv: "JWT_SECRET",
-    tokenExpiry: "24h",
-  };
+  const customJwtConfig: CustomJwtConfig = config.auth?.customJwt || defaultCustomJwtConfig();
+
+  // custom-jwt setup continues below.
 
   // 1. Generate shared/models/auth.ts
   console.log(" Generating auth models...");
@@ -359,10 +575,7 @@ function updateConfigWithAuth(cwd: string, provider: AuthProvider, config: Custo
   const beforeClosing = content.substring(0, closingBraceIdx).trimEnd();
   const needsComma = !beforeClosing.endsWith(",") && !beforeClosing.endsWith("{");
 
-  const authBlock = `${needsComma ? "," : ""}
-  // 認証認可設定
-  auth: {
-    provider: '${provider}',
+  const providerSettings = provider === "custom-jwt" ? `
     customJwt: {
       userConnector: '${config.userConnector}',
       userTable: '${config.userTable}',
@@ -371,7 +584,17 @@ function updateConfigWithAuth(cwd: string, provider: AuthProvider, config: Custo
       rolesColumn: '${config.rolesColumn}',
       jwtSecretEnv: '${config.jwtSecretEnv || "JWT_SECRET"}',
       tokenExpiry: '${config.tokenExpiry || "24h"}',
-    },
+    },` : provider === "swa" ? `
+    swa: {
+      allowedProviders: ['aad'],
+      roleSource: 'swa-roles',
+    },` : "";
+
+  const authBlock = `${needsComma ? "," : ""}
+  // 認証認可設定
+  auth: {
+    provider: '${provider}',
+${providerSettings}
     authorization: {
       defaultPolicy: 'authenticated',
     },

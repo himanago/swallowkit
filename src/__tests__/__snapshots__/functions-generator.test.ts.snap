@@ -130,7 +130,7 @@ public sealed class TodoCrudFunctions
 
     [Function("todoGetAll")]
     public async Task<HttpResponseData> GetAll(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "todo")] HttpRequestData request)
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "todo")] HttpRequestData request)
     {
         try
         {
@@ -171,7 +171,7 @@ public sealed class TodoCrudFunctions
 
     [Function("todoGetById")]
     public async Task<HttpResponseData> GetById(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "todo/{id}")] HttpRequestData request,
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "todo/{id}")] HttpRequestData request,
         string id)
     {
         try
@@ -194,7 +194,7 @@ public sealed class TodoCrudFunctions
 
     [Function("todoCreate")]
     public async Task<HttpResponseData> Create(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "todo")] HttpRequestData request)
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "todo")] HttpRequestData request)
     {
         try
         {
@@ -229,7 +229,7 @@ public sealed class TodoCrudFunctions
 
     [Function("todoUpdate")]
     public async Task<HttpResponseData> Update(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "todo/{id}")] HttpRequestData request,
+        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "todo/{id}")] HttpRequestData request,
         string id)
     {
         try
@@ -274,7 +274,7 @@ public sealed class TodoCrudFunctions
 
     [Function("todoDelete")]
     public async Task<HttpResponseData> Delete(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "todo/{id}")] HttpRequestData request,
+        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "todo/{id}")] HttpRequestData request,
         string id)
     {
         try
@@ -466,7 +466,7 @@ const containerName = 'Todos';
 app.http('todo-get-all', {
   methods: ['GET'],
   route: 'todo',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [
     {
       type: 'cosmosDB',
@@ -500,7 +500,7 @@ app.http('todo-get-all', {
 app.http('todo-get-by-id', {
   methods: ['GET'],
   route: 'todo/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
       const id = request.params.id;
@@ -542,7 +542,7 @@ app.http('todo-get-by-id', {
 app.http('todo-create', {
   methods: ['POST'],
   route: 'todo',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraOutputs: [
     {
       type: 'cosmosDB',
@@ -586,7 +586,7 @@ app.http('todo-create', {
 app.http('todo-update', {
   methods: ['PUT'],
   route: 'todo/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
       const id = request.params.id;
@@ -647,7 +647,7 @@ app.http('todo-update', {
 app.http('todo-delete', {
   methods: ['DELETE'],
   route: 'todo/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
       const id = request.params.id;
@@ -706,7 +706,7 @@ const containerName = 'Todos';
 app.http('todo-get-all', {
   methods: ['GET'],
   route: 'todo',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [
     {
       type: 'cosmosDB',
@@ -740,7 +740,7 @@ app.http('todo-get-all', {
 app.http('todo-get-by-id', {
   methods: ['GET'],
   route: 'todo/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [
     {
       type: 'cosmosDB',
@@ -773,7 +773,7 @@ app.http('todo-get-by-id', {
 app.http('todo-create', {
   methods: ['POST'],
   route: 'todo',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraOutputs: [
     {
       type: 'cosmosDB',
@@ -817,7 +817,7 @@ app.http('todo-create', {
 app.http('todo-update', {
   methods: ['PUT'],
   route: 'todo/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [
     {
       type: 'cosmosDB',
@@ -880,7 +880,7 @@ app.http('todo-update', {
 app.http('todo-delete', {
   methods: ['DELETE'],
   route: 'todo/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
       const id = request.params.id;
@@ -928,7 +928,7 @@ const containerName = 'Issues';
 app.http('issue-get-all', {
   methods: ['GET'],
   route: 'issue',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [
     {
       type: 'cosmosDB',
@@ -962,7 +962,7 @@ app.http('issue-get-all', {
 app.http('issue-get-by-id', {
   methods: ['GET'],
   route: 'issue/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [
     {
       type: 'cosmosDB',
@@ -995,7 +995,7 @@ app.http('issue-get-by-id', {
 app.http('issue-create', {
   methods: ['POST'],
   route: 'issue',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraOutputs: [
     {
       type: 'cosmosDB',
@@ -1039,7 +1039,7 @@ app.http('issue-create', {
 app.http('issue-update', {
   methods: ['PUT'],
   route: 'issue/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [
     {
       type: 'cosmosDB',
@@ -1102,7 +1102,7 @@ app.http('issue-update', {
 app.http('issue-delete', {
   methods: ['DELETE'],
   route: 'issue/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
       const id = request.params.id;

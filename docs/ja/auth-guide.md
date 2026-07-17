@@ -1,16 +1,19 @@
 # 認証
 
-SwallowKit プロジェクトにユーザー認証とロールベース認可を追加します。現在は外部 RDB ユーザーストアを使ったカスタム JWT 認証に対応しています。
+SwallowKit プロジェクトにユーザー認証とロールベース認可を追加します。外部 RDB を使うカスタム JWT と Static Web Apps 組み込み認証に対応しています。
 
 現時点の実装状況は次のとおりです：
 
 | モード | 説明 | ステータス |
 |-------|------|----------|
 | `custom-jwt` | 外部 RDB ユーザーデータベース + JWT トークン | ✅ 利用可能（v1） |
-| `swa` | Static Web Apps 組み込み認証 | 🔜 計画中 |
+| `swa` | Static Web Apps 組み込み認証 | ✅ 利用可能 |
 | `swa-custom` | ハイブリッド（SWA 認証 + カスタム拡張） | 🔜 計画中 |
+| `external-token` | LIFF/Auth0/Firebase等が発行するBearer token | ✅ 利用可能 |
 
-> **現在の挙動**: 現在実装されているのは `custom-jwt` のみです。CLI には将来向けの provider 名も残っていますが、現行の生成結果は `custom-jwt` ベースです。
+> `swa` モードでは `npx swallowkit add-auth --provider swa` を実行します。`/api/*` は `authenticated` ロールに限定され、SWA の client principal が BFF 経由で Functions に伝達されます。
+
+すべてのモードで、BFF から Functions への通信はサーバー側の Functions host key（`x-functions-key`）で保護されます。キーは Azure デプロイ時に自動設定され、ブラウザには公開されません。
 
 💡 **ポイント**: `custom-jwt` は JWT（セッションではなく）を使用します。これは Azure Functions がステートレスであることが原則だからです。BFF レイヤーが Cookie 管理（トランスポート層の責務）を担い、Functions がトークンの発行と検証（セキュリティの責務）を担います。
 
@@ -370,6 +373,41 @@ const canWrite = hasAnyRole(["admin"]);
 
 ## セキュリティに関する考慮事項
 
+## External Token認証とLINE Login
+
+```bash
+npx swallowkit add-auth --provider external-token
+```
+
+このモードではSwallowKitがBearer tokenの搬送、Functionsでの強制検証、principalの正規化、`authPolicy`認可を生成します。外部IdP固有処理は、生成される`lib/auth/external-token-adapter.ts`とバックエンド言語別の`external-token-verifier`へ実装します。初期実装は常にfail closedです。
+
+LIFFではプロフィールやuser IDをクライアントから送らず、ID tokenだけを送ります：
+
+```typescript
+import liff from '@line/liff';
+const liffId = process.env.NEXT_PUBLIC_LIFF_ID!;
+async function ready() { await liff.init({ liffId }); }
+export async function getToken() { await ready(); return liff.isLoggedIn() ? liff.getIDToken() : null; }
+export async function login() { await ready(); if (!liff.isLoggedIn()) liff.login(); }
+export async function logout() { await ready(); if (liff.isLoggedIn()) liff.logout(); }
+```
+
+TypeScript verifier例：
+
+```typescript
+export async function verifyExternalToken(token: string) {
+  const body = new URLSearchParams({ id_token: token, client_id: process.env.LINE_CHANNEL_ID! });
+  const response = await fetch('https://api.line.me/oauth2/v2.1/verify', { method: 'POST', body, signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw new ExternalTokenVerificationError(401, 'Invalid LINE ID token');
+  const value = await response.json();
+  return { userId: value.sub, userDetails: value.name || '', roles: ['authenticated'] };
+}
+```
+
+C#では`HttpClient`で同じendpointへ`FormUrlEncodedContent`をPOSTし、`sub`を`UserId`へ正規化します。Pythonでは`requests.post(..., data={"id_token": token, "client_id": channel_id}, timeout=5)`を使い、失敗時に`ExternalTokenVerificationError(401, ...)`を送出します。通信タイムアウトやLINE障害は503として扱い、業務処理を続行しないでください。Channel IDは環境変数で管理し、tokenや検証応答をログへ出さないでください。nonceを使用したログインでは検証要求にも期待値を渡します。
+
+access tokenを使う場合はLINEのtoken検証endpointで`client_id`一致と正の`expires_in`を確認し、プロフィールはサーバーから取得します。標準例はOpenID ConnectのID token方式です。
+
 ### JWT 設計
 
 - トークンは `JWT_SECRET` 環境変数に格納されたシークレットで署名される
@@ -405,10 +443,16 @@ const canWrite = hasAnyRole(["admin"]);
 
 ## ベストプラクティス
 
+### SWA 認証のローカル開発
+
+`add-auth --provider swa` はアプリを `AuthProvider` で自動的にラップします。Azure SWA 上では `/.auth/me` から利用者情報とロールを取得します。
+
+`swallowkit dev` はSWA CLIが導入済みなら認証エミュレーターを起動します。http://localhost:4280/.auth/login/aad でローカル利用者とロールを設定し、4280番ポートから認証付き画面とAPIを確認できます。SWA CLIがない場合は、表示されるコマンドでプロジェクトへ追加してから再実行してください。`--no-swa`でエミュレーターを無効にした場合、`/.auth/me` の失敗は安全に処理され、UIは匿名ユーザーとして表示されます。
+
 ### プロバイダーモードの選択
 
 - ✅ 既存のユーザーデータベースがあり、認証フローを完全に制御したい場合は `custom-jwt` を使用
-- ⏳ Azure AD / GitHub / ソーシャルログインで十分なシンプルなプロジェクト向けの `swa` は計画中です
+- ✅ Microsoft Entra IDによるSWA組み込み認証を使用するシンプルなプロジェクトでは `swa` を使用
 - ⏳ SWA の利便性にカスタム拡張を加える `swa-custom` は計画中です
 
 ### シークレット管理
@@ -460,7 +504,7 @@ function Dashboard() {
 認証機能の v1 における現時点での制限事項は以下のとおりです：
 
 - **リフレッシュトークンなし**: トークンは設定した `tokenExpiry` の期間で失効します。トークンが切れた場合、ユーザーは再ログインする必要があります
-- **`swa` および `swa-custom` モードなし**: `custom-jwt` のみが実装されています。SWA ベースの認証プロバイダーは今後のリリースで予定されています
+- **`swa-custom` モードなし**: SWA のカスタム拡張モードは未実装です。組み込みの `swa` または `custom-jwt` を使用してください
 - **トークン失効（リボケーション）なし**: 発行された JWT を有効期限前に無効化することはできません。即座にアクセスを取り消すには、`JWT_SECRET` をローテーション（全トークン無効化）してください
 - **Edge Runtime に暗号化 API なし**: Next.js Middleware（Edge Runtime）では JWT 署名を検証できません — Middleware レイヤーでは有効期限チェックのみが行われます
 - **パスワードリセットフローなし**: `add-auth` コマンドはパスワードリセットやアカウント復旧のエンドポイントを生成しません

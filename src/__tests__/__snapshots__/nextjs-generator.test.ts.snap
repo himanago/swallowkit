@@ -23,6 +23,17 @@ function getFunctionsBaseUrl(): string {
   return process.env.BACKEND_FUNCTIONS_BASE_URL || process.env.FUNCTIONS_BASE_URL || 'http://localhost:7071';
 }
 
+function isLocalFunctionsUrl(url: string): boolean {
+  return url.startsWith('http://localhost:') || url.startsWith('http://127.0.0.1:');
+}
+
+function getFunctionsKeyHeaders(functionsBaseUrl: string): Record<string, string> {
+  const key = process.env.BACKEND_FUNCTIONS_KEY;
+  if (key) return { 'x-functions-key': key };
+  if (isLocalFunctionsUrl(functionsBaseUrl)) return {};
+  throw new Error('BACKEND_FUNCTIONS_KEY is required for non-local Functions calls');
+}
+
 interface CallFunctionConfig<TInput = any, TOutput = any> {
   /** HTTP メソッド */
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -61,11 +72,12 @@ export async function callFunction<TInput = any, TOutput = any>(
     // Azure Functions を呼び出し
     const functionsBaseUrl = getFunctionsBaseUrl();
     const url = functionsBaseUrl + path;
+    const keyHeaders = getFunctionsKeyHeaders(functionsBaseUrl);
     console.log(\`[BFF] \${method} \${url}\`);
 
     const response = await fetch(url, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...keyHeaders },
       body: validatedBody !== undefined ? JSON.stringify(validatedBody) : undefined,
     });
 

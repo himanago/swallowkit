@@ -26,6 +26,8 @@ const DEV_OPTION_ARITY = new Map<string, 0 | 1>([
   ["--verbose", 0],
   ["--no-functions", 0],
   ["--mock-connectors", 0],
+  ["--swa-port", 1],
+  ["--no-swa", 0],
 ]);
 
 function ensureUtf8ConsoleOnWindows(): void {
@@ -168,7 +170,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
   program
     .command("add-auth")
     .description("Add authentication and authorization to the project")
-    .option("--provider <provider>", "Auth provider: custom-jwt | swa | swa-custom | none", "custom-jwt")
+    .option("--provider <provider>", "Auth provider: custom-jwt | swa | external-token | swa-custom | none", "custom-jwt")
     .action((options) => {
       addAuthCommand({
         provider: options.provider,

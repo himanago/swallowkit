@@ -5,14 +5,14 @@
  */
 
 import { ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
-import { ModelAuthPolicy } from "../../types";
+import { AuthProvider, ModelAuthPolicy } from "../../types";
 import { generateAuthImportTS, generateAuthGuardTS, generateAuthGuardCSharp, generateAuthGuardPython } from "./auth-generator";
 
 /**
  * Azure Functions エンティティファイルを生成（インラインハンドラー方式）
  * 各ハンドラーがベタ書きされており、ビジネスロジックの追加・変更が容易
  */
-export function generateCompactAzureFunctionsCRUD(model: ModelInfo, sharedPackageName: string, authPolicy?: ModelAuthPolicy): string {
+export function generateCompactAzureFunctionsCRUD(model: ModelInfo, sharedPackageName: string, authPolicy?: ModelAuthPolicy, authProvider?: AuthProvider): string {
   const modelName = model.name;
   const modelCamel = toCamelCase(modelName);
   const schemaName = model.schemaName;
@@ -23,8 +23,8 @@ export function generateCompactAzureFunctionsCRUD(model: ModelInfo, sharedPackag
 
   const hasAuth = !!authPolicy;
   const authImport = hasAuth ? `\n${generateAuthImportTS()}\n` : '';
-  const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read')}\n` : '';
-  const writeGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'write')}\n` : '';
+  const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read', authProvider)}\n` : '';
+  const writeGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'write', authProvider)}\n` : '';
   const authCatchBlock = hasAuth
     ? `      const authErr = handleAuthError(error);
       if (authErr) return authErr;\n`
@@ -69,7 +69,7 @@ const containerName = '${modelName.endsWith('s') ? modelName : modelName + 's'}'
 app.http('${modelCamel}-get-all', {
   methods: ['GET'],
   route: '${modelCamel}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [
     {
       type: 'cosmosDB',
@@ -105,7 +105,7 @@ ${getByIdHandler}
 app.http('${modelCamel}-create', {
   methods: ['POST'],
   route: '${modelCamel}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraOutputs: [
     {
       type: 'cosmosDB',
@@ -158,7 +158,7 @@ function generateGetByIdWithBinding(modelCamel: string, schemaName: string, read
 app.http('${modelCamel}-get-by-id', {
   methods: ['GET'],
   route: '${modelCamel}/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [
     {
       type: 'cosmosDB',
@@ -193,7 +193,7 @@ function generateGetByIdWithSdk(modelCamel: string, schemaName: string, readGuar
 app.http('${modelCamel}-get-by-id', {
   methods: ['GET'],
   route: '${modelCamel}/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${readGuard}
       const id = request.params.id;
@@ -229,7 +229,7 @@ function generateUpdateWithBinding(modelCamel: string, schemaName: string, write
 app.http('${modelCamel}-update', {
   methods: ['PUT'],
   route: '${modelCamel}/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   extraInputs: [
     {
       type: 'cosmosDB',
@@ -294,7 +294,7 @@ function generateUpdateWithSdk(modelCamel: string, schemaName: string, partition
 app.http('${modelCamel}-update', {
   methods: ['PUT'],
   route: '${modelCamel}/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${writeGuard}
       const id = request.params.id;
@@ -349,7 +349,7 @@ function generateDeleteIdPartition(modelCamel: string, writeGuard: string, authC
 app.http('${modelCamel}-delete', {
   methods: ['DELETE'],
   route: '${modelCamel}/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${writeGuard}
       const id = request.params.id;
@@ -379,7 +379,7 @@ function generateDeleteCustomPartition(modelCamel: string, partitionKeyField: st
 app.http('${modelCamel}-delete', {
   methods: ['DELETE'],
   route: '${modelCamel}/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${writeGuard}
       const id = request.params.id;
@@ -596,7 +596,7 @@ ${readItemMethod}
 
     [Function("${modelCamel}GetAll")]
     public async Task<HttpResponseData> GetAll(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "${modelCamel}")] HttpRequestData request)
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "${modelCamel}")] HttpRequestData request)
     {
         try
         {${readGuard}
@@ -637,7 +637,7 @@ ${readItemMethod}
 
     [Function("${modelCamel}GetById")]
     public async Task<HttpResponseData> GetById(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "${modelCamel}/{id}")] HttpRequestData request,
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "${modelCamel}/{id}")] HttpRequestData request,
         string id)
     {
         try
@@ -660,7 +660,7 @@ ${readItemMethod}
 
     [Function("${modelCamel}Create")]
     public async Task<HttpResponseData> Create(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "${modelCamel}")] HttpRequestData request)
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "${modelCamel}")] HttpRequestData request)
     {
         try
         {${writeGuard}
@@ -695,7 +695,7 @@ ${readItemMethod}
 
     [Function("${modelCamel}Update")]
     public async Task<HttpResponseData> Update(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "${modelCamel}/{id}")] HttpRequestData request,
+        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "${modelCamel}/{id}")] HttpRequestData request,
         string id)
     {
         try
@@ -740,7 +740,7 @@ ${readItemMethod}
 
     [Function("${modelCamel}Delete")]
     public async Task<HttpResponseData> Delete(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "${modelCamel}/{id}")] HttpRequestData request,
+        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "${modelCamel}/{id}")] HttpRequestData request,
         string id)
     {
         try

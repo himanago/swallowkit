@@ -11,6 +11,7 @@ import {
   ApiModelConnectorConfig,
   ConnectorOperation,
   ModelAuthPolicy,
+  AuthProvider,
 } from "../../types";
 import { generateAuthImportTS, generateAuthGuardTS } from "./auth-generator";
 
@@ -24,7 +25,8 @@ export function generateRdbConnectorFunctionTS(
   sharedPackageName: string,
   connectorDef: RdbConnectorConfig,
   modelConnector: RdbModelConnectorConfig,
-  authPolicy?: ModelAuthPolicy
+  authPolicy?: ModelAuthPolicy,
+  authProvider?: AuthProvider
 ): string {
   const modelCamel = toCamelCase(model.name);
   const schemaName = model.schemaName;
@@ -123,7 +125,7 @@ export function generateRdbConnectorFunctionTS(
   // Auth guard setup
   const hasAuth = !!authPolicy;
   const authImport = hasAuth ? `\n${generateAuthImportTS()}\n` : '';
-  const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read')}\n` : '';
+  const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read', authProvider)}\n` : '';
   const authCatchBlock = hasAuth
     ? `      const authErr = handleAuthError(error);
       if (authErr) return authErr;\n      `
@@ -143,7 +145,7 @@ ${getConnection}
 app.http('${modelCamel}-get-all', {
   methods: ['GET'],
   route: '${modelCamel}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${readGuard}
       ${queryAll}
@@ -162,7 +164,7 @@ app.http('${modelCamel}-get-all', {
 app.http('${modelCamel}-get-by-id', {
   methods: ['GET'],
   route: '${modelCamel}/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${readGuard}
       const id = request.params.id;
@@ -190,7 +192,8 @@ export function generateApiConnectorFunctionTS(
   sharedPackageName: string,
   connectorDef: ApiConnectorConfig,
   modelConnector: ApiModelConnectorConfig,
-  authPolicy?: ModelAuthPolicy
+  authPolicy?: ModelAuthPolicy,
+  authProvider?: AuthProvider
 ): string {
   const modelCamel = toCamelCase(model.name);
   const schemaName = model.schemaName;
@@ -203,8 +206,8 @@ export function generateApiConnectorFunctionTS(
   // Auth guard setup (user access control, separate from connector auth to external APIs)
   const hasAuth = !!authPolicy;
   const authImportLine = hasAuth ? `\n${generateAuthImportTS()}\n` : '';
-  const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read')}\n` : '';
-  const writeGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'write')}\n` : '';
+  const readGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'read', authProvider)}\n` : '';
+  const writeGuard = hasAuth ? `\n${generateAuthGuardTS(authPolicy!, 'write', authProvider)}\n` : '';
   const authCatchBlock = hasAuth
     ? `      const authErr = handleAuthError(error);
       if (authErr) return authErr;\n      `
@@ -229,7 +232,7 @@ ${authSetup.helperCode}
 app.http('${modelCamel}-get-all', {
   methods: ['GET'],
   route: '${modelCamel}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${readGuard}
       const url = getBaseUrl() + '${epPath}';
@@ -263,7 +266,7 @@ app.http('${modelCamel}-get-all', {
 app.http('${modelCamel}-get-by-id', {
   methods: ['GET'],
   route: '${modelCamel}/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${readGuard}
       const id = request.params.id;
@@ -303,7 +306,7 @@ app.http('${modelCamel}-get-by-id', {
 app.http('${modelCamel}-create', {
   methods: ['POST'],
   route: '${modelCamel}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${writeGuard}
       const body = await request.json();
@@ -341,7 +344,7 @@ app.http('${modelCamel}-create', {
 app.http('${modelCamel}-update', {
   methods: ['PUT'],
   route: '${modelCamel}/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${writeGuard}
       const id = request.params.id;
@@ -381,7 +384,7 @@ app.http('${modelCamel}-update', {
 app.http('${modelCamel}-delete', {
   methods: ['DELETE'],
   route: '${modelCamel}/{id}',
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${writeGuard}
       const id = request.params.id;
@@ -496,7 +499,7 @@ export function generateRdbConnectorFunctionCSharp(
     methods += `
     [Function("${modelCamel}GetAll")]
     public async Task<HttpResponseData> GetAll(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "${modelCamel}")] HttpRequestData request)
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "${modelCamel}")] HttpRequestData request)
     {
         try
         {
@@ -531,7 +534,7 @@ export function generateRdbConnectorFunctionCSharp(
     methods += `
     [Function("${modelCamel}GetById")]
     public async Task<HttpResponseData> GetById(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "${modelCamel}/{id}")] HttpRequestData request,
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "${modelCamel}/{id}")] HttpRequestData request,
         string id)
     {
         try
@@ -618,7 +621,7 @@ export function generateApiConnectorFunctionCSharp(
     methods += `
     [Function("${modelCamel}GetAll")]
     public async Task<HttpResponseData> GetAll(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "${modelCamel}")] HttpRequestData request)
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "${modelCamel}")] HttpRequestData request)
     {
         try
         {
@@ -651,7 +654,7 @@ export function generateApiConnectorFunctionCSharp(
     methods += `
     [Function("${modelCamel}GetById")]
     public async Task<HttpResponseData> GetById(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "${modelCamel}/{id}")] HttpRequestData request,
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "${modelCamel}/{id}")] HttpRequestData request,
         string id)
     {
         try
@@ -689,7 +692,7 @@ export function generateApiConnectorFunctionCSharp(
     methods += `
     [Function("${modelCamel}Create")]
     public async Task<HttpResponseData> Create(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "${modelCamel}")] HttpRequestData request)
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "${modelCamel}")] HttpRequestData request)
     {
         try
         {
@@ -725,7 +728,7 @@ export function generateApiConnectorFunctionCSharp(
     methods += `
     [Function("${modelCamel}Update")]
     public async Task<HttpResponseData> Update(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "${modelCamel}/{id}")] HttpRequestData request,
+        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "${modelCamel}/{id}")] HttpRequestData request,
         string id)
     {
         try
@@ -759,7 +762,7 @@ export function generateApiConnectorFunctionCSharp(
     methods += `
     [Function("${modelCamel}Delete")]
     public async Task<HttpResponseData> Delete(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "${modelCamel}/{id}")] HttpRequestData request,
+        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "${modelCamel}/{id}")] HttpRequestData request,
         string id)
     {
         try
