@@ -109,6 +109,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
     .option("--backend-language <language>", "Azure Functions backend language: typescript | csharp | python")
     .option("--cosmos-db-mode <mode>", "Cosmos DB mode: freetier | serverless")
     .option("--vnet <option>", "Network security: outbound | none")
+    .option("--swa-plan <plan>", "Azure Static Web Apps plan: free | standard")
     .action((projectName, options) => {
       initCommand({
         name: projectName || "swallowkit-app",
@@ -118,6 +119,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
         backendLanguage: options.backendLanguage,
         cosmosDbMode: options.cosmosDbMode,
         vnet: options.vnet,
+        swaPlan: options.swaPlan,
       });
     });
 

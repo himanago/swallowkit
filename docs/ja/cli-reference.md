@@ -105,16 +105,19 @@ pnpm dlx swallowkit init [project-name] [options]
 | `--backend-language <language>` | Azure Functions のバックエンド言語 | `typescript`, `csharp`, `python` | *（プロンプト）* |
 | `--cosmos-db-mode <mode>` | Cosmos DB モード | `freetier`, `serverless` | *（プロンプト）* |
 | `--vnet <option>` | ネットワークセキュリティ | `outbound`, `none` | *（プロンプト）* |
+| `--swa-plan <plan>` | Azure Static Web Apps プラン | `free`, `standard` | *（プロンプト、初期選択は `standard`）* |
 
 ### 対話モードと非対話モード
 
-デフォルトでは、`init` は CI/CD、Azure Functions のバックエンド言語、Cosmos DB モード、ネットワーク設定を対話プロンプトで質問します。
+デフォルトでは、`init` は CI/CD、Azure Functions のバックエンド言語、Static Web Apps プラン、Cosmos DB モード、ネットワーク設定を対話プロンプトで質問します。
+
+Free はこのツールの基本構成で利用できます。Standard は SLA、カスタム認証プロバイダー、Functions によるカスタムロール付与、Static Web Apps 自体の Private Endpoint、Free より大きいクォータが必要な場合に選択してください。`--vnet outbound` が作成する Functions/Cosmos DB 用 VNet は、SWA プランとは独立しています。
 
 フラグで直接指定するとプロンプトをスキップできます：
 
 ```bash
 # 完全非対話モード
-npx swallowkit init my-app --cicd github --backend-language csharp --cosmos-db-mode serverless --vnet outbound
+npx swallowkit init my-app --cicd github --backend-language csharp --swa-plan free --cosmos-db-mode serverless --vnet outbound
 
 # 部分指定（--cicd のみ指定、残りはプロンプト表示）
 npx swallowkit init my-app --cicd skip
@@ -644,7 +647,7 @@ SwallowKit はパッケージマネージャーを自動的に選択します：
 npx swallowkit init my-awesome-app
 
 # 新しいディレクトリに初期化（非対話モード）
-npx swallowkit init my-awesome-app --cicd github --cosmos-db-mode serverless --vnet outbound
+npx swallowkit init my-awesome-app --cicd github --swa-plan free --cosmos-db-mode serverless --vnet outbound
 
 # pnpm で実行
 pnpm dlx swallowkit init my-awesome-app

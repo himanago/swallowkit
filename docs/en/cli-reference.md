@@ -105,16 +105,19 @@ pnpm dlx swallowkit init [project-name] [options]
 | `--backend-language <language>` | Azure Functions backend language | `typescript`, `csharp`, `python` | *(prompt)* |
 | `--cosmos-db-mode <mode>` | Cosmos DB mode | `freetier`, `serverless` | *(prompt)* |
 | `--vnet <option>` | Network security | `outbound`, `none` | *(prompt)* |
+| `--swa-plan <plan>` | Azure Static Web Apps plan | `free`, `standard` | *(prompt; initial selection is `standard`)* |
 
 ### Interactive vs Non-Interactive Mode
 
-By default, `init` asks interactive prompts for CI/CD, Azure Functions backend language, Cosmos DB mode, and network settings.
+By default, `init` asks interactive prompts for CI/CD, Azure Functions backend language, Static Web Apps plan, Cosmos DB mode, and network settings.
+
+Free supports the toolkit's base configuration. Choose Standard when you need an SLA, custom authentication providers, function-based custom role assignment, a private endpoint for Static Web Apps itself, or higher quotas. The Functions/Cosmos DB VNet created by `--vnet outbound` is independent of the SWA plan.
 
 You can skip prompts by passing flags directly:
 
 ```bash
 # Fully non-interactive
-npx swallowkit init my-app --cicd github --backend-language csharp --cosmos-db-mode serverless --vnet outbound
+npx swallowkit init my-app --cicd github --backend-language csharp --swa-plan free --cosmos-db-mode serverless --vnet outbound
 
 # Partially non-interactive (only --cicd specified; the rest will prompt)
 npx swallowkit init my-app --cicd skip
@@ -535,7 +538,7 @@ The generated project (lockfiles, workspace config, CI/CD scripts) matches the d
 npx swallowkit init my-awesome-app
 
 # Initialize in new directory (non-interactive)
-npx swallowkit init my-awesome-app --cicd github --cosmos-db-mode serverless --vnet outbound
+npx swallowkit init my-awesome-app --cicd github --swa-plan free --cosmos-db-mode serverless --vnet outbound
 
 # Using pnpm
 pnpm dlx swallowkit init my-awesome-app

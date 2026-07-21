@@ -158,6 +158,14 @@ describe("dev command helpers", () => {
 });
 
 describe("dev CLI parser", () => {
+  it("exposes the Static Web Apps plan option on init", () => {
+    const init = createProgram().commands.find((command) => command.name() === "init");
+    const option = init?.options.find((candidate) => candidate.long === "--swa-plan");
+
+    expect(option).toBeDefined();
+    expect(option?.description).toContain("free | standard");
+  });
+
   async function parseDevOptions(argv: string[]): Promise<DevOptions> {
     let capturedOptions: DevOptions | undefined;
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => undefined);

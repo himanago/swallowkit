@@ -31,15 +31,22 @@ interface InitOptions {
   backendLanguage?: BackendLanguage;
   cosmosDbMode?: CosmosDbMode;
   vnet?: VNetOption;
+  swaPlan?: StaticWebAppPlan;
 }
 
 type CiCdProvider = 'github' | 'azure' | 'skip';
 type CosmosDbMode = 'freetier' | 'serverless';
 type VNetOption = 'none' | 'outbound';
+type StaticWebAppPlan = 'free' | 'standard';
+
+export function getStaticWebAppSku(plan: StaticWebAppPlan): 'Free' | 'Standard' {
+  return plan === 'free' ? 'Free' : 'Standard';
+}
 
 interface AzureConfig {
   cosmosDbMode: CosmosDbMode;
   vnetOption: VNetOption;
+  swaPlan: StaticWebAppPlan;
 }
 
 const BACKEND_LANGUAGE_CHOICES: Array<{ title: string; value: BackendLanguage }> = [
@@ -186,32 +193,56 @@ async function promptCiCd(): Promise<CiCdProvider> {
   return response.cicd || 'skip';
 }
 
-async function promptAzureConfig(): Promise<AzureConfig> {
-  const cosmosResponse = await prompts({
-    type: 'select',
-    name: 'mode',
-    message: 'Cosmos DB mode (affects cost):',
-    choices: [
-      { title: 'Free Tier (1000 RU/s free, best for first project)', value: 'freetier' },
-      { title: 'Serverless (pay-per-use, flexible)', value: 'serverless' }
-    ],
-    initial: 0
-  });
+async function promptAzureConfig(options: InitOptions): Promise<AzureConfig> {
+  let swaPlan = options.swaPlan;
+  if (!swaPlan) {
+    const response = await prompts({
+      type: 'select',
+      name: 'plan',
+      message: 'Azure Static Web Apps plan:',
+      choices: [
+        { title: 'Standard (production, SLA and advanced auth/networking features)', value: 'standard' },
+        { title: 'Free (personal projects, no SLA and lower quotas)', value: 'free' }
+      ],
+      initial: 0
+    });
+    swaPlan = response.plan || 'standard';
+  }
 
-  const vnetResponse = await prompts({
-    type: 'select',
-    name: 'vnet',
-    message: 'Network security:',
-    choices: [
-      { title: 'VNet Integration (recommended) - Cosmos DB via Private Endpoint', value: 'outbound' },
-      { title: 'None - Public endpoints, simplest but least secure', value: 'none' }
-    ],
-    initial: 0
-  });
+  let cosmosDbMode = options.cosmosDbMode;
+  if (!cosmosDbMode) {
+    const response = await prompts({
+      type: 'select',
+      name: 'mode',
+      message: 'Cosmos DB mode (affects cost):',
+      choices: [
+        { title: 'Free Tier (1000 RU/s free, best for first project)', value: 'freetier' },
+        { title: 'Serverless (pay-per-use, flexible)', value: 'serverless' }
+      ],
+      initial: 0
+    });
+    cosmosDbMode = response.mode || 'freetier';
+  }
+
+  let vnetOption = options.vnet;
+  if (!vnetOption) {
+    const response = await prompts({
+      type: 'select',
+      name: 'vnet',
+      message: 'Network security:',
+      choices: [
+        { title: 'VNet Integration (recommended) - Cosmos DB via Private Endpoint', value: 'outbound' },
+        { title: 'None - Public endpoints, simplest but least secure', value: 'none' }
+      ],
+      initial: 0
+    });
+    vnetOption = response.vnet || 'outbound';
+  }
 
   return {
-    cosmosDbMode: cosmosResponse.mode || 'freetier',
-    vnetOption: vnetResponse.vnet || 'outbound'
+    cosmosDbMode: cosmosDbMode || 'freetier',
+    vnetOption: vnetOption || 'outbound',
+    swaPlan: swaPlan || 'standard'
   };
 }
 
@@ -219,6 +250,7 @@ const VALID_CICD: CiCdProvider[] = ['github', 'azure', 'skip'];
 const VALID_BACKEND_LANGUAGE: BackendLanguage[] = ['typescript', 'csharp', 'python'];
 const VALID_COSMOS_DB_MODE: CosmosDbMode[] = ['freetier', 'serverless'];
 const VALID_VNET: VNetOption[] = ['none', 'outbound'];
+const VALID_SWA_PLAN: StaticWebAppPlan[] = ['free', 'standard'];
 
 function validateInitFlags(options: InitOptions): void {
   if (options.cicd && !VALID_CICD.includes(options.cicd)) {
@@ -235,6 +267,10 @@ function validateInitFlags(options: InitOptions): void {
   }
   if (options.vnet && !VALID_VNET.includes(options.vnet)) {
     console.error(`❌ Invalid --vnet value: "${options.vnet}". Must be: ${VALID_VNET.join(', ')}`);
+    process.exit(1);
+  }
+  if (options.swaPlan && !VALID_SWA_PLAN.includes(options.swaPlan)) {
+    console.error(`❌ Invalid --swa-plan value: "${options.swaPlan}". Must be: ${VALID_SWA_PLAN.join(', ')}`);
     process.exit(1);
   }
 }
@@ -264,9 +300,7 @@ export async function initCommand(options: InitOptions) {
     const cicdProvider: CiCdProvider = options.cicd || await promptCiCd();
     const backendLanguage: BackendLanguage = options.backendLanguage || await promptBackendLanguage();
 
-    const azureConfig: AzureConfig = (options.cosmosDbMode && options.vnet)
-      ? { cosmosDbMode: options.cosmosDbMode, vnetOption: options.vnet }
-      : await promptAzureConfig();
+    const azureConfig = await promptAzureConfig(options);
 
     // Create Next.js project with create-next-app
     await createNextJsProject(options.name, pm);
@@ -2494,6 +2528,7 @@ async function createInfrastructure(
 
   const enableVNet = azureConfig.vnetOption !== 'none';
   const functionsRuntime = getFunctionsRuntimeConfig(backendLanguage);
+  const staticWebAppSku = getStaticWebAppSku(azureConfig.swaPlan);
 
   // main.bicep
   const mainBicep = `targetScope = 'resourceGroup'
@@ -2506,6 +2541,13 @@ param location string = resourceGroup().location
 
 @description('Location for Static Web App (must be explicitly provided)')
 param swaLocation string
+
+@description('Static Web Apps hosting plan')
+@allowed([
+  'Free'
+  'Standard'
+])
+param staticWebAppSku string = '${staticWebAppSku}'
 
 @description('Cosmos DB mode')
 @allowed(['freetier', 'serverless'])
@@ -2549,7 +2591,7 @@ module staticWebApp 'modules/staticwebapp.bicep' = {
   params: {
     name: 'swa-\${projectName}'
     location: swaLocation
-    sku: 'Standard'
+    sku: staticWebAppSku
     appInsightsConnectionString: appInsightsSwa.outputs.connectionString
   }
 }
@@ -2691,6 +2733,9 @@ output vnetName string = enableVNet ? vnet.outputs.name : ''
     },
     "cosmosDbMode": {
       "value": "${azureConfig.cosmosDbMode}"
+    },
+    "staticWebAppSku": {
+      "value": "${staticWebAppSku}"
     },
     "enableVNet": {
       "value": ${enableVNet}

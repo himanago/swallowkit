@@ -19,6 +19,7 @@ import {
   buildCosmosDbFreeTierBicepSource,
   buildFunctionsHostKeyBicepExpression,
   buildStaticWebAppConfigBicepSource,
+  getStaticWebAppSku,
   withNpmLockfileSafeManifests,
 } from "../cli/commands/init";
 
@@ -212,6 +213,13 @@ describe("buildCosmosDbFreeTierBicepSource", () => {
 
     expect(source).toContain("throughput: 1000");
     expect(source).not.toContain("containers");
+  });
+});
+
+describe("Static Web Apps plan", () => {
+  it("maps init plan values to Azure SKU names", () => {
+    expect(getStaticWebAppSku("free")).toBe("Free");
+    expect(getStaticWebAppSku("standard")).toBe("Standard");
   });
 });
 
