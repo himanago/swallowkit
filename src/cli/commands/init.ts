@@ -43,7 +43,7 @@ export function getStaticWebAppSku(plan: StaticWebAppPlan): 'Free' | 'Standard' 
   return plan === 'free' ? 'Free' : 'Standard';
 }
 
-interface AzureConfig {
+export interface AzureConfig {
   cosmosDbMode: CosmosDbMode;
   vnetOption: VNetOption;
   swaPlan: StaticWebAppPlan;
@@ -2487,7 +2487,7 @@ app.http('{model}-get-all', {
 }
 
 export function buildFunctionsHostKeyBicepExpression(): string {
-  return "listKeys('${functionsFlex.outputs.id}/host/default', '2023-12-01').functionKeys.default";
+  return "listKeys(resourceId('Microsoft.Web/sites/host', 'func-${projectName}', 'default'), '2023-12-01').functionKeys.default";
 }
 
 export function buildStaticWebAppConfigBicepSource(): string {
@@ -2523,7 +2523,7 @@ output configName string = staticWebAppConfig.name
 `;
 }
 
-async function createInfrastructure(
+export async function createInfrastructure(
   projectDir: string,
   projectName: string,
   azureConfig: AzureConfig,
@@ -3118,9 +3118,10 @@ output roleAssignmentId string = roleAssignment.id
 `;
   fs.writeFileSync(path.join(modulesDir, 'cosmosdb-role-assignment.bicep'), cosmosDbRoleAssignmentBicep);
 
-  // VNet modules (only generate if VNet is enabled)
-  if (enableVNet) {
-    // modules/vnet.bicep
+  // Bicep resolves module files at compile time even when their deployment condition is false,
+  // so these definitions must always be generated. main.bicep still controls deployment with
+  // `if (enableVNet)`.
+  // modules/vnet.bicep
     const vnetBicep = `@description('VNet name')
 param name string
 
@@ -3250,8 +3251,7 @@ output privateDnsZoneId string = privateDnsZone.id
 `;
     fs.writeFileSync(path.join(modulesDir, 'private-endpoint-cosmos.bicep'), cosmosPrivateEndpointBicep);
 
-    console.log('✅ VNet modules created\n');
-  }
+  console.log('✅ VNet module definitions created\n');
 
   console.log('✅ Infrastructure files created\n');
 }

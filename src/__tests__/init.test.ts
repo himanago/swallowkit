@@ -20,6 +20,7 @@ import {
   buildFunctionsHostKeyBicepExpression,
   buildStaticWebAppConfigBicepSource,
   buildTypeScriptFunctionsPackageJson,
+  createInfrastructure,
   getStaticWebAppSku,
   withNpmLockfileSafeManifests,
 } from "../cli/commands/init";
@@ -256,6 +257,8 @@ describe("Functions host key infrastructure", () => {
     const expression = buildFunctionsHostKeyBicepExpression();
     expect(expression).toContain("listKeys(");
     expect(expression).toContain("functionKeys.default");
+    expect(expression).toContain("resourceId('Microsoft.Web/sites/host', 'func-${projectName}', 'default')");
+    expect(expression).not.toContain("functionsFlex.outputs.id");
   });
 
   it("passes the key to SWA through a secure module parameter", () => {
@@ -265,6 +268,32 @@ describe("Functions host key infrastructure", () => {
     expect(source).toContain("BACKEND_FUNCTIONS_KEY: functionsHostKey");
     expect(source).not.toContain("output functionsHostKey");
   });
+});
+
+describe("Infrastructure generation", () => {
+  it.each([
+    ["freetier", "free"],
+    ["serverless", "standard"],
+  ] as Array<["freetier" | "serverless", "free" | "standard"]>)(
+    "emits VNet module definitions with VNet disabled (%s)",
+    async (cosmosDbMode, swaPlan) => {
+      const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-infra-no-vnet-"));
+
+      await createInfrastructure(
+        projectDir,
+        "sample-app",
+        { cosmosDbMode, vnetOption: "none", swaPlan },
+        "typescript",
+      );
+
+      expect(fs.existsSync(path.join(projectDir, "infra", "modules", "vnet.bicep"))).toBe(true);
+      expect(fs.existsSync(path.join(projectDir, "infra", "modules", "private-endpoint-cosmos.bicep"))).toBe(true);
+
+      const mainBicep = fs.readFileSync(path.join(projectDir, "infra", "main.bicep"), "utf-8");
+      expect(mainBicep).toContain("param enableVNet bool = false");
+      expect(mainBicep).toContain("module vnet 'modules/vnet.bicep' = if (enableVNet)");
+    },
+  );
 });
 
 describe("GitHub Actions workflow generation", () => {
