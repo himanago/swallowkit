@@ -1,4 +1,5 @@
 import {
+  detectFromUserAgent,
   getCommands,
   getWorkspaceConfig,
   getCiSetupStep,
@@ -10,6 +11,16 @@ import {
   getFunctionsStartScript,
   spawnArgs,
 } from "../utils/package-manager";
+
+describe("detectFromUserAgent", () => {
+  it("falls back to npm when pnpm is not installed", () => {
+    expect(detectFromUserAgent(() => false)).toBe("npm");
+  });
+
+  it("prefers pnpm when it is installed", () => {
+    expect(detectFromUserAgent(() => true)).toBe("pnpm");
+  });
+});
 
 describe("getCommands", () => {
   describe("pnpm", () => {

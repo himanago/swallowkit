@@ -19,6 +19,7 @@ import {
   buildCosmosDbFreeTierBicepSource,
   buildFunctionsHostKeyBicepExpression,
   buildStaticWebAppConfigBicepSource,
+  buildTypeScriptFunctionsPackageJson,
   getStaticWebAppSku,
   withNpmLockfileSafeManifests,
 } from "../cli/commands/init";
@@ -109,6 +110,20 @@ module.exports = nextConfig;
     expect(dependencies).not.toHaveProperty("swallowkit");
   });
 
+  it("uses npm-compatible file dependencies for the shared workspace", () => {
+    const dependencies = buildGeneratedProjectDependencies("sample-app", "npm");
+
+    expect(dependencies["@sample-app/shared"]).toBe("file:shared");
+    expect(Object.values(dependencies)).not.toContain("workspace:*");
+  });
+
+  it("uses an npm-compatible shared dependency in the Functions workspace", () => {
+    const packageJson = buildTypeScriptFunctionsPackageJson("sample-app", "npm");
+
+    expect(packageJson.dependencies["@sample-app/shared"]).toBe("file:../shared");
+    expect(Object.values(packageJson.dependencies)).not.toContain("workspace:*");
+  });
+
   it("adds swallowkit as a generated project devDependency", () => {
     const devDependencies = buildGeneratedProjectDevDependencies();
 
@@ -139,6 +154,19 @@ module.exports = nextConfig;
     ]);
     expect(parsed.mcpServers.swallowkit.cwd).toBe(".");
     expect(parsed.mcpServers.swallowkit.env).toEqual({ SWALLOWKIT_MCP_VERSION: "latest" });
+  });
+
+  it("builds an npm-based MCP config when pnpm is unavailable", () => {
+    const source = buildSwallowKitMcpProjectConfigSource("npm");
+    const parsed = JSON.parse(source);
+
+    expect(parsed.mcpServers.swallowkit.command).toBe("npx");
+    expect(parsed.mcpServers.swallowkit.args).toEqual([
+      "--yes",
+      "--package",
+      "swallowkit@${SWALLOWKIT_MCP_VERSION}",
+      "swallowkit-mcp",
+    ]);
   });
 
   it("temporarily rewrites workspace protocol dependencies for npm lockfile generation", async () => {

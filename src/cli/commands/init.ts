@@ -760,12 +760,15 @@ export function buildSwallowKitConfigSource(backendLanguage: BackendLanguage): s
 `;
 }
 
-export function buildGeneratedProjectDependencies(projectName: string): Record<string, string> {
+export function buildGeneratedProjectDependencies(
+  projectName: string,
+  pm: PackageManager = 'pnpm',
+): Record<string, string> {
   return {
     '@azure/cosmos': '^4.0.0',
     'applicationinsights': '^3.3.0',
     'zod': '^4.0.0',
-    [`@${projectName}/shared`]: 'workspace:*',
+    [`@${projectName}/shared`]: pm === 'pnpm' ? 'workspace:*' : 'file:shared',
   };
 }
 
@@ -799,14 +802,16 @@ export function buildGeneratedProjectDevDependencies(): Record<string, string> {
   };
 }
 
-export function buildSwallowKitMcpProjectConfigSource(): string {
+export function buildSwallowKitMcpProjectConfigSource(pm: PackageManager = 'pnpm'): string {
   const { name } = getSwallowKitPackageMetadata();
   return JSON.stringify(
     {
       mcpServers: {
         swallowkit: {
-          command: "pnpm",
-          args: ["dlx", "--package", `${name}@\${SWALLOWKIT_MCP_VERSION}`, "swallowkit-mcp"],
+          command: pm === 'pnpm' ? 'pnpm' : 'npx',
+          args: pm === 'pnpm'
+            ? ["dlx", "--package", `${name}@\${SWALLOWKIT_MCP_VERSION}`, "swallowkit-mcp"]
+            : ["--yes", "--package", `${name}@\${SWALLOWKIT_MCP_VERSION}`, "swallowkit-mcp"],
           cwd: ".",
           env: {
             SWALLOWKIT_MCP_VERSION: "latest",
@@ -838,7 +843,7 @@ async function addSwallowKitFiles(
   // zod is in the shared workspace package, not here
   packageJson.dependencies = {
     ...packageJson.dependencies,
-    ...buildGeneratedProjectDependencies(projectName),
+    ...buildGeneratedProjectDependencies(projectName, pm),
   };
   packageJson.devDependencies = {
     ...packageJson.devDependencies,
@@ -1329,8 +1334,8 @@ tests
   fs.writeFileSync(path.join(functionsDir, '.gitignore'), `${gitignoreLines.join('\n')}\n`);
 }
 
-function createTypeScriptFunctionsProject(projectDir: string, functionsDir: string, pm: PackageManager): void {
-  const functionsPackageJson = {
+export function buildTypeScriptFunctionsPackageJson(projectName: string, pm: PackageManager = 'pnpm') {
+  return {
     name: 'functions',
     version: '1.0.0',
     description: 'Azure Functions backend',
@@ -1345,13 +1350,17 @@ function createTypeScriptFunctionsProject(projectDir: string, functionsDir: stri
       '@azure/cosmos': '^4.0.0',
       '@azure/identity': '^4.0.0',
       zod: '>=3.25.0',
-      [`@${path.basename(projectDir)}/shared`]: 'workspace:*',
+      [`@${projectName}/shared`]: pm === 'pnpm' ? 'workspace:*' : 'file:../shared',
     },
     devDependencies: {
       '@types/node': '^20.0.0',
       typescript: '^5.0.0',
     },
   };
+}
+
+function createTypeScriptFunctionsProject(projectDir: string, functionsDir: string, pm: PackageManager): void {
+  const functionsPackageJson = buildTypeScriptFunctionsPackageJson(path.basename(projectDir), pm);
   fs.writeFileSync(path.join(functionsDir, 'package.json'), JSON.stringify(functionsPackageJson, null, 2));
 
   const sharedPkgName = `@${path.basename(projectDir)}/shared`;
@@ -2004,7 +2013,7 @@ function createAiAgentFiles(projectDir: string, projectName: string, backendLang
   console.log('🤖 Creating AI agent instruction files...\n');
   const backendLanguageLabel = getBackendLanguageLabel(backendLanguage);
   const runCmd = pm === 'pnpm' ? 'pnpm' : 'npx';
-  const projectMcpConfigSource = buildSwallowKitMcpProjectConfigSource();
+  const projectMcpConfigSource = buildSwallowKitMcpProjectConfigSource(pm);
   const functionsStructureLine = backendLanguage === 'typescript'
     ? `│   └── src/               # HTTP trigger handlers with Cosmos DB bindings`
     : backendLanguage === 'csharp'
@@ -2069,7 +2078,7 @@ ${functionsStructureLine}
   - \`${runCmd} swallowkit machine validate project\`
   - \`${runCmd} swallowkit machine generate scaffold <name> --api-only\`
 - Do not hand-edit framework-owned artifacts when the MCP or machine interface can generate or validate them for you.
-- The MCP bootstrap requires pnpm and network access when the selected version is not cached.
+- The MCP bootstrap uses ${pm} and requires network access when the selected version is not cached.
 - **Always invoke SwallowKit via \`${runCmd}\`.** Do not mix package manager commands.
 
 ## Critical Design Principles

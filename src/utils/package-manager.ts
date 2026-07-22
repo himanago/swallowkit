@@ -91,8 +91,8 @@ export function getCommands(pm: PackageManager): PackageManagerCommands {
  * This is intentionally independent of `npm_config_user_agent` so that
  * `npx swallowkit init` still creates a pnpm project when pnpm is available.
  */
-export function detectFromUserAgent(): PackageManager {
-  return isPnpmInstalled() ? "pnpm" : "npm";
+export function detectFromUserAgent(pnpmIsInstalled: () => boolean = isPnpmInstalled): PackageManager {
+  return pnpmIsInstalled() ? "pnpm" : "npm";
 }
 
 /**
