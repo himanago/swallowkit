@@ -1439,60 +1439,122 @@ export async function callFunction<TInput = any, TOutput = any>(
 `;
 }
 
-/** SWA built-in auth variant: forward only a platform-derived client principal. */
-export function generateBFFCallFunctionWithSwaAuth(): string {
+function generateBFFSwaCredentialForwarding(includeBearer: boolean): string {
+  const bearerForwarding = includeBearer
+    ? `      const authorization = reqHeaders.get('authorization');
+      if (authorization?.startsWith('Bearer ')) {
+        fetchHeaders.Authorization = authorization;
+      }
+
+`
+    : "";
+
+  return `${bearerForwarding}      let principal = reqHeaders.get('x-ms-client-principal');
+
+      if (!principal) {
+        const cookie = reqHeaders.get('cookie');
+        const forwardedHost = reqHeaders.get('x-forwarded-host');
+        const requestHost = reqHeaders.get('host');
+        const host = (forwardedHost || requestHost)?.split(',')[0].trim();
+
+        if (cookie && host) {
+          const forwardedProto = reqHeaders.get('x-forwarded-proto');
+          const proto =
+            forwardedProto?.split(',')[0].trim() ||
+            (isLocalFunctionsUrl(functionsBaseUrl) ? 'http' : 'https');
+
+          const meResponse = await fetch(\`\${proto}://\${host}/.auth/me\`, {
+            headers: { cookie },
+            cache: 'no-store',
+          });
+
+          if (meResponse.ok) {
+            const payload = (await meResponse.json()) as {
+              clientPrincipal?: unknown;
+            };
+
+            if (payload.clientPrincipal) {
+              principal = Buffer.from(
+                JSON.stringify(payload.clientPrincipal),
+                'utf8'
+              ).toString('base64');
+            }
+          }
+        }
+      }
+
+      if (principal) {
+        const decodedPrincipal = Buffer.from(principal, 'base64');
+        if (decodedPrincipal.toString('base64') !== principal) {
+          throw new Error('Invalid SWA client principal encoding');
+        }
+        const parsed = JSON.parse(
+          decodedPrincipal.toString('utf8')
+        ) as Record<string, unknown>;
+
+        const normalized = {
+          identityProvider:
+            typeof parsed.identityProvider === 'string'
+              ? parsed.identityProvider
+              : '',
+          userId: typeof parsed.userId === 'string' ? parsed.userId : '',
+          userDetails:
+            typeof parsed.userDetails === 'string'
+              ? parsed.userDetails
+              : '',
+          userRoles: Array.isArray(parsed.userRoles)
+            ? parsed.userRoles.filter(
+                (role: unknown): role is string => typeof role === 'string'
+              )
+            : [],
+        };
+
+        if (
+          normalized.identityProvider &&
+          normalized.userId &&
+          normalized.userRoles.includes('authenticated')
+        ) {
+          fetchHeaders['x-ms-client-principal'] = Buffer.from(
+            JSON.stringify(normalized),
+            'utf8'
+          ).toString('base64');
+        }
+      }`;
+}
+
+function generateBFFCallFunctionWithSwaCredentials(includeBearer: boolean): string {
   return generateBFFCallFunctionWithAuth()
     .replace(
       `    // Authorization ヘッダーの転送（Proxy が cookie → Authorization に変換済み）`,
-      `    // SWA client principal is accepted only from the platform request context.`
+      `    // Forward only validated credentials from the current request.`
     )
     .replace(
       `      const authorization = reqHeaders.get('authorization');
       if (authorization) {
         fetchHeaders['Authorization'] = authorization;
       }`,
-      `      // Never forward a browser-supplied principal header. Resolve it from the SWA session endpoint.
-      let principal: string | null = null;
-      {
-        const cookie = reqHeaders.get('cookie');
-        const host = reqHeaders.get('host');
-        if (cookie && host) {
-          const proto = reqHeaders.get('x-forwarded-proto') || 'https';
-          const meResponse = await fetch(\`\${proto}://\${host}/.auth/me\`, {
-            headers: { cookie },
-            cache: 'no-store',
-          });
-          if (meResponse.ok) {
-            const payload = await meResponse.json() as { clientPrincipal?: unknown };
-            if (payload.clientPrincipal) {
-              principal = Buffer.from(JSON.stringify(payload.clientPrincipal), 'utf8').toString('base64');
-            }
-          }
-        }
-      }
-      if (principal) {
-        const parsed = JSON.parse(Buffer.from(principal, 'base64').toString('utf8'));
-        const normalized = {
-          identityProvider: String(parsed.identityProvider || ''),
-          userId: String(parsed.userId || ''),
-          userDetails: String(parsed.userDetails || ''),
-          userRoles: Array.isArray(parsed.userRoles) ? parsed.userRoles.filter((role: unknown) => typeof role === 'string') : [],
-        };
-        if (normalized.userId && normalized.userRoles.includes('authenticated')) {
-          fetchHeaders['x-ms-client-principal'] = Buffer.from(JSON.stringify(normalized), 'utf8').toString('base64');
-        }
-      }`
+      generateBFFSwaCredentialForwarding(includeBearer)
+    )
+    .replace(
+      `    } catch {
+      // headers() が使えないコンテキスト（ISR 等）では無視
+    }`,
+      `    } catch (error) {
+      // Do not include credentials or request header values in authentication logs.
+      const errorType = error instanceof Error ? error.name : 'UnknownError';
+      console.error('[BFF] Authentication forwarding failed:', errorType);
+    }`
     );
+}
+
+/** SWA built-in auth variant: forward only a validated SWA client principal. */
+export function generateBFFCallFunctionWithSwaAuth(): string {
+  return generateBFFCallFunctionWithSwaCredentials(false);
 }
 
 /** Combined transport for named schemes. Functions still performs all verification. */
 export function generateBFFCallFunctionWithMultipleAuth(): string {
-  return generateBFFCallFunctionWithSwaAuth().replace(
-    `      // Never forward a browser-supplied principal header. Resolve it from the SWA session endpoint.`,
-    `      const authorization = reqHeaders.get('authorization');
-      if (authorization?.startsWith('Bearer ')) fetchHeaders['Authorization'] = authorization;
-      // Never forward a browser-supplied principal header. Resolve it from the SWA session endpoint.`
-  );
+  return generateBFFCallFunctionWithSwaCredentials(true);
 }
 
 export function generateSwaAuthHelperTS(): string {

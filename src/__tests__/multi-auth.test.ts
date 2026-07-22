@@ -81,7 +81,7 @@ describe("named authentication routers", () => {
 
   it("forwards both credential sources and the Functions host key", () => {
     const code = generateBFFCallFunctionWithMultipleAuth();
-    expect(code).toContain("fetchHeaders['Authorization']");
+    expect(code).toContain("fetchHeaders.Authorization");
     expect(code).toContain("fetchHeaders['x-ms-client-principal']");
     expect(code).toContain("'x-functions-key'");
     expect(code).not.toMatch(/console\.log\([^\n]*(authorization|principal|cookie)/i);
