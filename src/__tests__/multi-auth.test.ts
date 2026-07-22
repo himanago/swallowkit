@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { addAuthCommand } from "../cli/commands/add-auth";
+import { createUIAuthOptions } from "../cli/commands/scaffold";
 import {
   generateBFFCallFunctionWithMultipleAuth,
   generateNamedAuthRouterCSharp,
@@ -12,8 +13,10 @@ import { normalizeAuthConfig } from "../core/config";
 import { parseAuthPolicy } from "../core/scaffold/model-parser";
 import { createBasicModelInfo } from "./fixtures";
 import { generateCSharpAzureFunctionsCRUD, generateCompactAzureFunctionsCRUD, generatePythonAzureFunctionsCRUD } from "../core/scaffold/functions-generator";
+import { generateAuthLayout, generateNewPage } from "../core/scaffold/ui-generator";
+import { AuthConfig } from "../types";
 
-const auth = normalizeAuthConfig({
+const namedAuthConfig: AuthConfig = {
   schemes: {
     admin: { provider: "swa" },
     lineUser: { provider: "external-token" },
@@ -25,7 +28,8 @@ const auth = normalizeAuthConfig({
       lineUserOnly: { schemes: ["lineUser"], roles: ["authenticated"] },
     },
   },
-})!;
+};
+const auth = normalizeAuthConfig(namedAuthConfig)!;
 
 describe("named authentication routers", () => {
   it("generates deterministic TypeScript policy routing and normalized principals", () => {
@@ -88,6 +92,17 @@ describe("named authentication routers", () => {
       .toEqual({ policy: "adminOnly" });
     expect(parseAuthPolicy("export const authPolicy = { read: 'adminOnly', write: 'lineUserOnly' };"))
       .toEqual({ read: "adminOnly", write: "lineUserOnly" });
+  });
+
+  it("resolves the same named auth context for the model layout and CRUD pages", () => {
+    const model = createBasicModelInfo({ name: "Product", authPolicy: { policy: "adminOnly" } });
+    const options = createUIAuthOptions(model.authPolicy!, namedAuthConfig);
+    const layout = generateAuthLayout(model, options);
+    const page = generateNewPage(model, options);
+
+    expect(options.authContextImport).toBe("@/lib/auth/schemes/admin/auth-context");
+    expect(layout).toContain("AuthProvider } from '@/lib/auth/schemes/admin/auth-context'");
+    expect(page).toContain("useAuth } from '@/lib/auth/schemes/admin/auth-context'");
   });
 });
 

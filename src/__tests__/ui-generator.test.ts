@@ -7,6 +7,7 @@ import {
   generateFormComponent,
   generateNewPage,
   generateEditPage,
+  generateAuthLayout,
 } from "../core/scaffold/ui-generator";
 import {
   createBasicModelInfo,
@@ -14,6 +15,41 @@ import {
   createModelInfoWithNullableForeignKeys,
   createModelInfoWithEnum,
 } from "./fixtures";
+
+const namedAuthOptions = {
+  authPolicy: { policy: "staffOnly" },
+  writeRoles: ["authenticated"],
+  authContextImport: "@/lib/auth/schemes/staff/auth-context",
+};
+
+describe("generateAuthLayout", () => {
+  it("uses the same resolved auth context as authenticated CRUD pages", () => {
+    const model = createBasicModelInfo({ name: "Product" });
+    const layout = generateAuthLayout(model, namedAuthOptions);
+    const listPage = generateListPage(model, "@myapp/shared", namedAuthOptions);
+    const newPage = generateNewPage(model, namedAuthOptions);
+
+    expect(layout).toContain("import { AuthProvider } from '@/lib/auth/schemes/staff/auth-context';");
+    expect(layout).toContain("<AuthProvider>{children}</AuthProvider>");
+    expect(layout).toContain("function ProductLayout");
+    expect(listPage).toContain("import { useAuth } from '@/lib/auth/schemes/staff/auth-context';");
+    expect(newPage).toContain("import { useAuth } from '@/lib/auth/schemes/staff/auth-context';");
+  });
+
+  it("does not generate an auth layout without auth options", () => {
+    expect(generateAuthLayout(createBasicModelInfo({ name: "Product" }))).toBeUndefined();
+  });
+
+  it("is deterministic and does not duplicate providers or imports", () => {
+    const model = createBasicModelInfo({ name: "Product" });
+    const first = generateAuthLayout(model, namedAuthOptions);
+    const second = generateAuthLayout(model, namedAuthOptions);
+
+    expect(second).toBe(first);
+    expect(first?.match(/import \{ AuthProvider \}/g)).toHaveLength(1);
+    expect(first?.match(/<AuthProvider>/g)).toHaveLength(1);
+  });
+});
 
 describe("generateListPage", () => {
   it("generates list page for basic model (snapshot)", () => {

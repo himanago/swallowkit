@@ -16,6 +16,27 @@ export interface UIAuthOptions {
 }
 
 /**
+ * 認証付きCRUDルートを、ページ側のuseAuthと同じAuthProviderで囲むレイアウトを生成する。
+ */
+export function generateAuthLayout(model: ModelInfo, authOptions?: UIAuthOptions): string | undefined {
+  if (!authOptions) return undefined;
+
+  const authContextImport = authOptions.authContextImport ?? '@/lib/auth/auth-context';
+
+  return `import { AuthProvider } from '${authContextImport}';
+import type { ReactNode } from 'react';
+
+export default function ${model.name}Layout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  return <AuthProvider>{children}</AuthProvider>;
+}
+`;
+}
+
+/**
  * 一覧画面を生成
  */
 export function generateListPage(model: ModelInfo, sharedPackageName: string, authOptions?: UIAuthOptions): string {

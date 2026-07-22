@@ -28,6 +28,7 @@ import {
   generateFormComponent,
   generateNewPage,
   generateEditPage,
+  generateAuthLayout,
   UIAuthOptions,
 } from "../../core/scaffold/ui-generator";
 import { generateLanguageSchemaArtifacts } from "../../core/scaffold/native-schema-generator";
@@ -440,7 +441,7 @@ async function generateFunctionsCode(
   console.log(`✅ Created: ${blueprintPath}`);
 }
 
-function createUIAuthOptions(policy: ModelAuthPolicy, authConfig: AuthConfig): UIAuthOptions {
+export function createUIAuthOptions(policy: ModelAuthPolicy, authConfig: AuthConfig): UIAuthOptions {
   const normalized = normalizeAuthConfig(authConfig);
   const readPolicyName = typeof policy.read === 'string' ? policy.read : policy.policy;
   const writePolicyName = typeof policy.write === 'string' ? policy.write : policy.policy;
@@ -956,7 +957,7 @@ module ${containerModuleName} 'containers/${modelKebab}-container.bicep' = {
 /**
  * Generate UI components (list, detail, form, create, edit pages)
  */
-async function generateUIComponents(modelInfo: any, sharedPackageName: string, authOptions?: UIAuthOptions): Promise<void> {
+export async function generateUIComponents(modelInfo: ModelInfo, sharedPackageName: string, authOptions?: UIAuthOptions): Promise<void> {
   console.log("\n🎨 Generating UI components...");
 
   const modelKebab = toKebabCase(modelInfo.name);
@@ -983,18 +984,25 @@ async function generateUIComponents(modelInfo: any, sharedPackageName: string, a
   const formComponent = generateFormComponent(modelInfo, sharedPackageName);
   const newPage = generateNewPage(modelInfo, authOptions);
   const editPage = generateEditPage(modelInfo, sharedPackageName, authOptions);
+  const authLayout = generateAuthLayout(modelInfo, authOptions);
 
   fs.writeFileSync(path.join(modelDir, "page.tsx"), listPage, "utf-8");
   fs.writeFileSync(path.join(idDir, "page.tsx"), detailPage, "utf-8");
   fs.writeFileSync(path.join(componentsDir, `${modelName}Form.tsx`), formComponent, "utf-8");
   fs.writeFileSync(path.join(newDir, "page.tsx"), newPage, "utf-8");
   fs.writeFileSync(path.join(editDir, "page.tsx"), editPage, "utf-8");
+  if (authLayout) {
+    fs.writeFileSync(path.join(modelDir, "layout.tsx"), authLayout, "utf-8");
+  }
 
   console.log(`✅ Created: ${path.join(modelDir, "page.tsx")}`);
   console.log(`✅ Created: ${path.join(idDir, "page.tsx")}`);
   console.log(`✅ Created: ${path.join(componentsDir, `${modelName}Form.tsx`)}`);
   console.log(`✅ Created: ${path.join(newDir, "page.tsx")}`);
   console.log(`✅ Created: ${path.join(editDir, "page.tsx")}`);
+  if (authLayout) {
+    console.log(`✅ Created: ${path.join(modelDir, "layout.tsx")}`);
+  }
 }
 
 /**

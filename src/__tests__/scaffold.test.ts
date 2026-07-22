@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import { EventEmitter } from "events";
 import * as childProcess from "child_process";
-import { generateCosmosContainer } from "../cli/commands/scaffold";
+import { generateCosmosContainer, generateUIComponents } from "../cli/commands/scaffold";
 import {
   NSWAG_CONSOLECORE_VERSION,
   buildCSharpCodegenToolManifestSource,
@@ -16,6 +16,117 @@ import {
   getPythonSchemaModelPath,
 } from "../core/scaffold/native-schema-generator";
 import { createBasicModelInfo } from "./fixtures";
+
+describe("authenticated UI scaffold layouts", () => {
+  const originalCwd = process.cwd();
+  let tempDir: string;
+  const authOptions = {
+    authPolicy: { policy: "staffOnly" },
+    writeRoles: ["authenticated"],
+    authContextImport: "@/lib/auth/schemes/staff/auth-context",
+  };
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(originalCwd, ".tmp-auth-layout-"));
+    process.chdir(tempDir);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("writes a model-scoped provider layout and regenerates it stably", async () => {
+    const model = createBasicModelInfo({ name: "Product", schemaName: "productSchema" });
+
+    await generateUIComponents(model, "@fixture/shared", authOptions);
+    const layoutPath = path.join(tempDir, "app", "product", "layout.tsx");
+    const first = fs.readFileSync(layoutPath, "utf-8");
+    await generateUIComponents(model, "@fixture/shared", authOptions);
+    const second = fs.readFileSync(layoutPath, "utf-8");
+
+    expect(second).toBe(first);
+    expect(second).toContain("from '@/lib/auth/schemes/staff/auth-context'");
+    expect(second.match(/import \{ AuthProvider \}/g)).toHaveLength(1);
+    expect(second.match(/<AuthProvider>/g)).toHaveLength(1);
+    expect(fs.readFileSync(path.join(tempDir, "app", "product", "page.tsx"), "utf-8"))
+      .toContain("from '@/lib/auth/schemes/staff/auth-context'");
+  });
+
+  it("does not create an auth layout for an unauthenticated model or affect another route", async () => {
+    await generateUIComponents(createBasicModelInfo({ name: "Product", schemaName: "productSchema" }), "@fixture/shared");
+    await generateUIComponents(createBasicModelInfo({ name: "Line", schemaName: "lineSchema" }), "@fixture/shared");
+
+    expect(fs.existsSync(path.join(tempDir, "app", "product", "layout.tsx"))).toBe(false);
+    expect(fs.existsSync(path.join(tempDir, "app", "line", "layout.tsx"))).toBe(false);
+    expect(fs.readFileSync(path.join(tempDir, "app", "line", "page.tsx"), "utf-8"))
+      .not.toContain("schemes/staff/auth-context");
+  });
+
+  it("builds the generated authenticated CRUD routes with Next.js", async () => {
+    const model = createBasicModelInfo({ name: "Product", schemaName: "productSchema" });
+    await generateUIComponents(model, "@fixture/shared", authOptions);
+
+    writeFile(path.join(tempDir, "app", "layout.tsx"), `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <html><body>{children}</body></html>;
+}
+`);
+    writeFile(path.join(tempDir, "lib", "auth", "schemes", "staff", "auth-context.tsx"), `'use client';
+import { createContext, useContext } from 'react';
+const AuthContext = createContext<{ user: { id: string }; loading: boolean; hasAnyRole: (roles: string[]) => boolean } | null>(null);
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  return <AuthContext.Provider value={{ user: { id: 'test' }, loading: false, hasAnyRole: () => true }}>{children}</AuthContext.Provider>;
+}
+export function useAuth() {
+  const value = useContext(AuthContext);
+  if (!value) throw new Error('useAuth must be used within an AuthProvider');
+  return value;
+}
+`);
+    writeFile(path.join(tempDir, "shared.ts"), `import { z } from 'zod/v4';
+export const productSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string().optional(),
+  completed: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+`);
+    writeFile(path.join(tempDir, "package.json"), JSON.stringify({
+      private: true,
+      scripts: { build: "next build" },
+    }, null, 2));
+    writeFile(path.join(tempDir, "tsconfig.json"), JSON.stringify({
+      compilerOptions: {
+        target: "ES2020",
+        lib: ["dom", "dom.iterable", "esnext"],
+        strict: true,
+        noEmit: true,
+        esModuleInterop: true,
+        module: "esnext",
+        moduleResolution: "bundler",
+        resolveJsonModule: true,
+        isolatedModules: true,
+        jsx: "preserve",
+        baseUrl: ".",
+        paths: { "@/*": ["./*"], "@fixture/shared": ["./shared.ts"] },
+      },
+      include: ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+      exclude: ["node_modules"],
+    }, null, 2));
+
+    const npmCommand = process.platform === "win32"
+      ? { file: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", "npm run build"] }
+      : { file: "npm", args: ["run", "build"] };
+    expect(() => childProcess.execFileSync(npmCommand.file, npmCommand.args, {
+      cwd: tempDir,
+      env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" },
+      stdio: "pipe",
+      timeout: 120_000,
+    })).not.toThrow();
+  }, 150_000);
+});
 
 jest.mock("child_process", () => {
   const actual = jest.requireActual<typeof import("child_process")>("child_process");
