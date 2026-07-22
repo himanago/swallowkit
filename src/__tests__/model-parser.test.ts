@@ -49,4 +49,33 @@ export type Product = z.infer<typeof Product>;
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("distinguishes optional and nullable fields", async () => {
+    const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-model-parser-"));
+    const modelPath = path.join(tempDir, "coupon.ts");
+
+    try {
+      fs.writeFileSync(
+        modelPath,
+        `import { z } from 'zod/v4';
+
+export const couponSchema = z.object({
+  requiredUserId: z.string(),
+  optionalUserId: z.string().optional(),
+  nullableUserId: z.string().nullable(),
+});
+`,
+        "utf-8"
+      );
+
+      const model = await parseModelFile(modelPath);
+      expect(model.fields).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "requiredUserId", isOptional: false, isNullable: false }),
+        expect.objectContaining({ name: "optionalUserId", isOptional: true, isNullable: false }),
+        expect.objectContaining({ name: "nullableUserId", isOptional: false, isNullable: true }),
+      ]));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });

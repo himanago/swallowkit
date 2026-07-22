@@ -27,6 +27,7 @@ export interface FieldInfo {
   name: string;
   type: string; // "string" | "number" | "boolean" | "date" | "object" | "array"
   isOptional: boolean;
+  isNullable?: boolean;
   isArray: boolean;
   enumValues?: string[]; // enum の場合の選択肢
   isForeignKey?: boolean; // 外部キーかどうか
@@ -463,10 +464,11 @@ if (isObject) {
     const field = shape[key];
     let type = 'string';
     let isOptional = false;
+    let isNullable = false;
     let isArray = false;
     let enumValues = undefined;
     
-    // ZodOptional, ZodDefault, ZodEffects を unwrap
+    // ZodOptional, ZodNullable, ZodDefault, ZodEffects を unwrap
     let fieldDef = field;
     const getTypeName = (def) => def?._def?.typeName || def?.constructor?.name || '';
     
@@ -478,6 +480,10 @@ if (isObject) {
       
       if (typeName === 'ZodOptional') {
         isOptional = true;
+        fieldDef = fieldDef._def.innerType;
+        unwrapped = true;
+      } else if (typeName === 'ZodNullable') {
+        isNullable = true;
         fieldDef = fieldDef._def.innerType;
         unwrapped = true;
       } else if (typeName === 'ZodDefault') {
@@ -536,7 +542,7 @@ if (isObject) {
       isForeignKey = true;
     }
     
-    return { name: key, type, isOptional, isArray, enumValues, isForeignKey, referencedModel };
+    return { name: key, type, isOptional, isNullable, isArray, enumValues, isForeignKey, referencedModel };
   });
   
   console.log(JSON.stringify(fields));
@@ -609,6 +615,7 @@ function extractFieldsWithRegex(modelPath: string, schemaName: string): FieldInf
       name: fieldName,
       type: mapZodTypeToTs(zodType),
       isOptional: fieldDef.includes(".optional()"),
+      isNullable: fieldDef.includes(".nullable()"),
       isArray: fieldDef.includes(".array()"),
     });
   }

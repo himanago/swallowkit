@@ -1,3 +1,6 @@
+import * as fs from "fs";
+import * as path from "path";
+import { execFileSync } from "child_process";
 import {
   generateListPage,
   generateDetailPage,
@@ -8,6 +11,7 @@ import {
 import {
   createBasicModelInfo,
   createModelInfoWithForeignKey,
+  createModelInfoWithNullableForeignKeys,
   createModelInfoWithEnum,
 } from "./fixtures";
 
@@ -48,6 +52,15 @@ describe("generateListPage", () => {
     const code = generateListPage(model, "@myapp/shared");
     expect(code).toContain("categoryId");
   });
+
+  it("guards optional and nullable foreign key map lookups", () => {
+    const code = generateListPage(createModelInfoWithNullableForeignKeys(), "@myapp/shared");
+
+    expect(code).toContain("requiredUserMap[item.requiredUserId] || item.requiredUserId");
+    expect(code).toContain("item.optionalUserId ? optionalUserMap[item.optionalUserId] || item.optionalUserId : '-'");
+    expect(code).toContain("item.nullableUserId ? nullableUserMap[item.nullableUserId] || item.nullableUserId : '-'");
+    expect(code).not.toContain("requiredUserId ?");
+  });
 });
 
 describe("generateDetailPage", () => {
@@ -67,6 +80,61 @@ describe("generateDetailPage", () => {
     const model = createBasicModelInfo();
     const code = generateDetailPage(model, "@myapp/shared");
     expect(code).toContain("DELETE");
+  });
+
+  it("guards optional and nullable foreign key map lookups", () => {
+    const code = generateDetailPage(createModelInfoWithNullableForeignKeys(), "@myapp/shared");
+
+    expect(code).toContain("requiredUserMap[coupon.requiredUserId] || coupon.requiredUserId");
+    expect(code).toContain("coupon.optionalUserId ? optionalUserMap[coupon.optionalUserId] || coupon.optionalUserId : '-'");
+    expect(code).toContain("coupon.nullableUserId ? nullableUserMap[coupon.nullableUserId] || coupon.nullableUserId : '-'");
+    expect(code).not.toContain("requiredUserId ?");
+  });
+
+  it("generates list and detail pages that pass strict TypeScript checking", () => {
+    const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-ui-generator-"));
+    const model = createModelInfoWithNullableForeignKeys();
+
+    try {
+      fs.writeFileSync(path.join(tempDir, "list.tsx"), generateListPage(model, "@myapp/shared"));
+      fs.writeFileSync(path.join(tempDir, "detail.tsx"), generateDetailPage(model, "@myapp/shared"));
+      fs.writeFileSync(
+        path.join(tempDir, "shared.ts"),
+        `import { z } from 'zod/v4';
+export const couponSchema = z.object({
+  id: z.string(),
+  requiredUserId: z.string(),
+  optionalUserId: z.string().optional(),
+  nullableUserId: z.string().nullable(),
+});
+`
+      );
+      fs.writeFileSync(
+        path.join(tempDir, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            target: "ES2020",
+            module: "commonjs",
+            moduleResolution: "node",
+            jsx: "react-jsx",
+            strict: true,
+            esModuleInterop: true,
+            skipLibCheck: true,
+            noEmit: true,
+            baseUrl: ".",
+            paths: { "@myapp/shared": ["./shared.ts"] },
+          },
+          include: ["*.ts", "*.tsx"],
+        })
+      );
+
+      expect(() => execFileSync(process.execPath, [require.resolve("typescript/bin/tsc"), "-p", tempDir], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      })).not.toThrow();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -205,6 +205,11 @@ ${displayFields.map(f => {
   } else if (f.isForeignKey && f.referencedModel) {
     const refModel = f.referencedModel;
     const refModelCamel = toCamelCase(refModel);
+    if (f.isOptional || f.isNullable) {
+      return `                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                    {item.${f.name} ? ${refModelCamel}Map[item.${f.name}] || item.${f.name} : '-'}
+                  </td>`;
+    }
     return `                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
                     {${refModelCamel}Map[item.${f.name}] || item.${f.name}}
                   </td>`;
@@ -440,6 +445,12 @@ ${model.fields.map(f => {
   } else if (f.isForeignKey && f.referencedModel) {
     const refModel = f.referencedModel;
     const refModelCamel = toCamelCase(refModel);
+    if (f.isOptional || f.isNullable) {
+      return `            <div>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">${refModel}</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{${modelCamel}.${f.name} ? ${refModelCamel}Map[${modelCamel}.${f.name}] || ${modelCamel}.${f.name} : '-'}</dd>
+            </div>`;
+    }
     return `            <div>
               <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">${refModel}</dt>
               <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{${refModelCamel}Map[${modelCamel}.${f.name}] || ${modelCamel}.${f.name}}</dd>

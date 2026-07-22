@@ -113,6 +113,46 @@ export function createModelInfoWithForeignKey(): ModelInfo {
 }
 
 /**
+ * 必須・optional・nullable の外部キーを含む ModelInfo フィクスチャ
+ */
+export function createModelInfoWithNullableForeignKeys(): ModelInfo {
+  return createBasicModelInfo({
+    name: "Coupon",
+    displayName: "Coupon",
+    schemaName: "couponSchema",
+    filePath: "/models/coupon.ts",
+    fields: [
+      { name: "id", type: "string", isOptional: false, isArray: false },
+      {
+        name: "requiredUserId",
+        type: "string",
+        isOptional: false,
+        isArray: false,
+        isForeignKey: true,
+        referencedModel: "RequiredUser",
+      },
+      {
+        name: "optionalUserId",
+        type: "string",
+        isOptional: true,
+        isArray: false,
+        isForeignKey: true,
+        referencedModel: "OptionalUser",
+      },
+      {
+        name: "nullableUserId",
+        type: "string",
+        isOptional: false,
+        isNullable: true,
+        isArray: false,
+        isForeignKey: true,
+        referencedModel: "NullableUser",
+      },
+    ],
+  });
+}
+
+/**
  * enum フィールドを含む ModelInfo フィクスチャ
  */
 export function createModelInfoWithEnum(): ModelInfo {
