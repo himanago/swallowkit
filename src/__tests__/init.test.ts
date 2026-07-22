@@ -257,15 +257,16 @@ describe("Functions host key infrastructure", () => {
     const expression = buildFunctionsHostKeyBicepExpression();
     expect(expression).toContain("listKeys(");
     expect(expression).toContain("functionKeys.default");
-    expect(expression).toContain("resourceId('Microsoft.Web/sites/host', 'func-${projectName}', 'default')");
+    expect(expression).toContain("${resourceId('Microsoft.Web/sites', functionsAppName)}/host/default");
+    expect(expression).not.toContain("Microsoft.Web/sites/host");
     expect(expression).not.toContain("functionsFlex.outputs.id");
   });
 
-  it("passes the key to SWA through a secure module parameter", () => {
+  it("resolves the key inside the SWA config module after Functions deployment", () => {
     const source = buildStaticWebAppConfigBicepSource();
-    expect(source).toContain("@secure()");
-    expect(source).toContain("param functionsHostKey string");
-    expect(source).toContain("BACKEND_FUNCTIONS_KEY: functionsHostKey");
+    expect(source).toContain("param functionsAppName string");
+    expect(source).toContain("BACKEND_FUNCTIONS_KEY: listKeys(");
+    expect(source).not.toContain("param functionsHostKey string");
     expect(source).not.toContain("output functionsHostKey");
   });
 });
@@ -292,6 +293,8 @@ describe("Infrastructure generation", () => {
       const mainBicep = fs.readFileSync(path.join(projectDir, "infra", "main.bicep"), "utf-8");
       expect(mainBicep).toContain("param enableVNet bool = false");
       expect(mainBicep).toContain("module vnet 'modules/vnet.bicep' = if (enableVNet)");
+      expect(mainBicep).toContain("functionsAppName: functionsFlex.outputs.name");
+      expect(mainBicep).not.toContain("functionsHostKey:");
     },
   );
 });

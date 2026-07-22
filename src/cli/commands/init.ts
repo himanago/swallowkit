@@ -2487,7 +2487,7 @@ app.http('{model}-get-all', {
 }
 
 export function buildFunctionsHostKeyBicepExpression(): string {
-  return "listKeys(resourceId('Microsoft.Web/sites/host', 'func-${projectName}', 'default'), '2023-12-01').functionKeys.default";
+  return "listKeys('${resourceId('Microsoft.Web/sites', functionsAppName)}/host/default', '2023-12-01').functionKeys.default";
 }
 
 export function buildStaticWebAppConfigBicepSource(): string {
@@ -2497,9 +2497,8 @@ param staticWebAppName string
 @description('Functions App default hostname for backend API calls')
 param functionsDefaultHostname string
 
-@secure()
-@description('Functions host key used only by the server-side BFF')
-param functionsHostKey string
+@description('Functions App name used to resolve its host key after deployment')
+param functionsAppName string
 
 @description('Application Insights connection string for SWA')
 param appInsightsConnectionString string
@@ -2515,7 +2514,7 @@ resource staticWebAppConfig 'Microsoft.Web/staticSites/config@2023-01-01' = {
     APPLICATIONINSIGHTS_CONNECTION_STRING: appInsightsConnectionString
     ApplicationInsightsAgent_EXTENSION_VERSION: '~3'
     BACKEND_FUNCTIONS_BASE_URL: 'https://\${functionsDefaultHostname}'
-    BACKEND_FUNCTIONS_KEY: functionsHostKey
+    BACKEND_FUNCTIONS_KEY: ${buildFunctionsHostKeyBicepExpression()}
   }
 }
 
@@ -2641,16 +2640,11 @@ module cosmosPrivateEndpoint 'modules/private-endpoint-cosmos.bicep' = if (enabl
   params: {
     name: 'pe-cosmos-\${projectName}'
     location: location
-    cosmosAccountId: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.id : cosmosDbServerless.outputs.id
-    cosmosAccountName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.accountName : cosmosDbServerless.outputs.accountName
-    subnetId: vnet.outputs.privateEndpointSubnetId
-    vnetId: vnet.outputs.id
+    cosmosAccountId: cosmosDbMode == 'freetier' ? cosmosDbFreeTier!.outputs.id : cosmosDbServerless!.outputs.id
+    cosmosAccountName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier!.outputs.accountName : cosmosDbServerless!.outputs.accountName
+    subnetId: vnet!.outputs.privateEndpointSubnetId
+    vnetId: vnet!.outputs.id
   }
-  dependsOn: [
-    cosmosDbFreeTier
-    cosmosDbServerless
-    vnet
-  ]
 }
 
 // Azure Functions (Flex Consumption) - Deploy AFTER Cosmos DB
@@ -2662,16 +2656,14 @@ module functionsFlex 'modules/functions-flex.bicep' = {
       storageAccountName: 'stg\${uniqueString(resourceGroup().id, projectName)}'
       appInsightsConnectionString: appInsightsFunctions.outputs.connectionString
       swaDefaultHostname: staticWebApp.outputs.defaultHostname
-      cosmosDbEndpoint: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.endpoint : cosmosDbServerless.outputs.endpoint
-      cosmosDbDatabaseName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.databaseName : cosmosDbServerless.outputs.databaseName
+      cosmosDbEndpoint: cosmosDbMode == 'freetier' ? cosmosDbFreeTier!.outputs.endpoint : cosmosDbServerless!.outputs.endpoint
+      cosmosDbDatabaseName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier!.outputs.databaseName : cosmosDbServerless!.outputs.databaseName
       functionsRuntimeName: '${functionsRuntime.name}'
       functionsRuntimeVersion: '${functionsRuntime.version}'
       enableVNet: enableVNet
-      vnetSubnetId: enableVNet ? vnet.outputs.functionsSubnetId : ''
+      vnetSubnetId: enableVNet ? vnet!.outputs.functionsSubnetId : ''
   }
   dependsOn: [
-    cosmosDbFreeTier
-    cosmosDbServerless
     cosmosPrivateEndpoint
   ]
 }
@@ -2680,23 +2672,17 @@ module functionsFlex 'modules/functions-flex.bicep' = {
 module cosmosDbRoleAssignmentFreeTier 'modules/cosmosdb-role-assignment.bicep' = if (cosmosDbMode == 'freetier') {
   name: 'cosmosDbRoleAssignment'
   params: {
-    cosmosAccountName: cosmosDbFreeTier.outputs.accountName
+    cosmosAccountName: cosmosDbFreeTier!.outputs.accountName
     functionsPrincipalId: functionsFlex.outputs.principalId
   }
-  dependsOn: [
-    functionsFlex
-  ]
 }
 
 module cosmosDbRoleAssignmentServerless 'modules/cosmosdb-role-assignment.bicep' = if (cosmosDbMode == 'serverless') {
   name: 'cosmosDbRoleAssignment'
   params: {
-    cosmosAccountName: cosmosDbServerless.outputs.accountName
+    cosmosAccountName: cosmosDbServerless!.outputs.accountName
     functionsPrincipalId: functionsFlex.outputs.principalId
   }
-  dependsOn: [
-    functionsFlex
-  ]
 }
 
 // Update SWA config with Functions hostname (after Functions deployment)
@@ -2705,21 +2691,18 @@ module staticWebAppConfig 'modules/staticwebapp-config.bicep' = {
   params: {
     staticWebAppName: staticWebApp.outputs.name
     functionsDefaultHostname: functionsFlex.outputs.defaultHostname
-    functionsHostKey: ${buildFunctionsHostKeyBicepExpression()}
+    functionsAppName: functionsFlex.outputs.name
     appInsightsConnectionString: appInsightsSwa.outputs.connectionString
   }
-  dependsOn: [
-    functionsFlex
-  ]
 }
 
 output staticWebAppName string = staticWebApp.outputs.name
 output staticWebAppUrl string = staticWebApp.outputs.defaultHostname
 output functionsAppName string = functionsFlex.outputs.name
 output functionsAppUrl string = functionsFlex.outputs.defaultHostname
-output cosmosDbAccountName string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.accountName : cosmosDbServerless.outputs.accountName
-output cosmosDbEndpoint string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.endpoint : cosmosDbServerless.outputs.endpoint
-output cosmosDatabaseName string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.databaseName : cosmosDbServerless.outputs.databaseName
+output cosmosDbAccountName string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier!.outputs.accountName : cosmosDbServerless!.outputs.accountName
+output cosmosDbEndpoint string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier!.outputs.endpoint : cosmosDbServerless!.outputs.endpoint
+output cosmosDatabaseName string = cosmosDbMode == 'freetier' ? cosmosDbFreeTier!.outputs.databaseName : cosmosDbServerless!.outputs.databaseName
 output logAnalyticsWorkspaceName string = logAnalytics.outputs.name
 output logAnalyticsWorkspaceId string = logAnalytics.outputs.id
 output appInsightsSwaName string = appInsightsSwa.outputs.name
@@ -2727,7 +2710,7 @@ output appInsightsSwaConnectionString string = appInsightsSwa.outputs.connection
 output appInsightsFunctionsName string = appInsightsFunctions.outputs.name
 output appInsightsFunctionsConnectionString string = appInsightsFunctions.outputs.connectionString
 output vnetEnabled bool = enableVNet
-output vnetName string = enableVNet ? vnet.outputs.name : ''
+output vnetName string = enableVNet ? vnet!.outputs.name : ''
 `;
   
   fs.writeFileSync(path.join(infraDir, 'main.bicep'), mainBicep);
