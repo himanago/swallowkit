@@ -16,6 +16,8 @@ Examples use `npx`. With pnpm, replace `npx` with `pnpm` (or `pnpm dlx` for `swa
 - [swallowkit add-auth](#swallowkit-add-auth)
 - [swallowkit dev](#swallowkit-dev)
 - [swallowkit scaffold](#swallowkit-scaffold)
+- [swallowkit status](#swallowkit-status)
+- [swallowkit verify](#swallowkit-verify)
 - [swallowkit create-dev-seeds](#swallowkit-create-dev-seeds)
 - [swallowkit provision](#swallowkit-provision)
 
@@ -36,9 +38,21 @@ npx swallowkit machine <command> <subcommand> [options]
 | `inspect project` | Return framework-owned project metadata |
 | `inspect entities` | Return entity and schema metadata |
 | `inspect routes` | Return BFF / Functions route metadata |
+| `inspect artifacts` | Return the generated-artifact ledger with ownership |
+| `inspect boundaries` | Return the responsibility boundary contract between AI free-form authoring and deterministic generation |
+| `inspect drift` | Detect drift between generated artifacts and the current state |
+| `inspect infra` | Inspect Bicep assets (params / modules / outputs / container wiring) without calling Azure |
 | `validate project` | Return structured validation violations |
 | `generate model` | Run `create-model` in non-interactive JSON mode |
 | `generate scaffold` | Run `scaffold` in non-interactive JSON mode |
+| `plan scaffold` | Compute the scaffold change plan (with planId) without writing files |
+| `apply scaffold` | Apply scaffold changes with plan freshness and approval checks |
+| `plan auth` | Compute the add-auth change plan without writing files |
+| `apply auth` | Apply auth code with plan freshness and approval checks |
+| `plan provision` | Local provisioning preflight (`--what-if` runs az what-if) |
+| `apply provision` | Apply an approved provisioning plan (always requires `--approve`) |
+| `verify project` | Run structure / drift / typecheck (plus build / lint / test / custom) verification checks |
+| `explain failure` | Return evidence and repair actions for the last verify failures |
 
 ### Examples
 
@@ -47,14 +61,26 @@ npx swallowkit machine inspect project
 npx swallowkit machine validate project
 npx swallowkit machine generate model todo --overwrite never
 npx swallowkit machine generate scaffold todo --api-only
+npx swallowkit machine plan scaffold todo
+npx swallowkit machine apply scaffold --plan <planId>
+npx swallowkit machine apply scaffold todo --approve
+npx swallowkit machine plan auth --provider custom-jwt
+npx swallowkit machine apply auth --plan <planId>
+npx swallowkit machine inspect boundaries
+npx swallowkit machine inspect infra
+npx swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia
+npx swallowkit machine apply provision --plan <planId> --approve
+npx swallowkit machine verify project --checks structure,drift
+npx swallowkit machine explain failure --check typecheck
 ```
 
 ### Output contract
 
 - stdout is always a single JSON document
 - commands are non-interactive
-- success and failure are both structured
+- success and failure are both structured (the `status` field reports `complete` / `in-progress` / `blocked` / `requires-human` / `failed`)
 - `generate model` requires an explicit overwrite policy (`always` or `never`)
+- generated artifacts are tracked in the `.swallowkit/artifacts.json` ledger (Git-managed)
 
 See the [AI / MCP Guide](./ai-mcp-guide.md) for architecture details and response examples.
 
@@ -73,9 +99,21 @@ npx swallowkit-mcp
 - `swallowkit_inspect_project`
 - `swallowkit_inspect_entities`
 - `swallowkit_inspect_routes`
+- `swallowkit_inspect_artifacts`
+- `swallowkit_inspect_boundaries`
+- `swallowkit_inspect_drift`
+- `swallowkit_inspect_infra`
 - `swallowkit_validate_project`
 - `swallowkit_generate_model`
 - `swallowkit_scaffold_model`
+- `swallowkit_plan_scaffold`
+- `swallowkit_apply_scaffold`
+- `swallowkit_plan_auth`
+- `swallowkit_apply_auth`
+- `swallowkit_plan_provision`
+- `swallowkit_apply_provision`
+- `swallowkit_verify_project`
+- `swallowkit_explain_failure`
 
 The MCP server is a thin adapter over `swallowkit machine ...` and does not introduce framework logic of its own.
 
@@ -124,6 +162,11 @@ npx swallowkit init my-app --cicd skip
 ```
 
 This is especially useful when calling the CLI from VS Code extensions or scripts where stdin is not a TTY.
+
+When a non-interactive environment is detected (CI, coding agents, piped execution, etc.), `init` behaves as follows instead of hanging on prompts:
+
+- If configuration flags are missing, it fails immediately with a list of the missing flags (no hang).
+- pnpm build-script approval (e.g. esbuild) is handled automatically by registering the packages under `allowBuilds` in `pnpm-workspace.yaml` and running `pnpm rebuild`.
 
 Invalid flag values produce a clear error:
 
@@ -204,13 +247,15 @@ The `init` command automatically generates instruction files for multiple AI cod
 
 | File | Target Agent | Description |
 |------|-------------|-------------|
-| `AGENTS.md` | OpenAI Codex / generic agents | Full architecture spec, conventions, naming rules, CLI skills |
+| `AGENTS.md` | OpenAI Codex / generic agents | Full architecture spec, conventions, naming rules, CLI commands, autonomous-loop procedures |
 | `CLAUDE.md` | Claude Code | Quick reference + CLI commands (references `AGENTS.md` for full spec) |
 | `.mcp.json` | Claude Code / project MCP runtimes | Launcher resolving `swallowkit-mcp` on each start; `SWALLOWKIT_MCP_VERSION` can pin it |
 | `.github/copilot-instructions.md` | GitHub Copilot | Summary of key rules (auto-loaded by Copilot) |
 | `.github/instructions/shared-models.instructions.md` | GitHub Copilot | Layer-specific rules for `shared/models/**` |
 | `.github/instructions/bff-routes.instructions.md` | GitHub Copilot | Layer-specific rules for `app/api/**` |
 | `.github/instructions/azure-functions.instructions.md` | GitHub Copilot | Layer-specific rules for `functions/**` |
+| `.github/skills/*/SKILL.md` | Skills-aware agents (Copilot in VS Code / CLI / cloud agent, etc.) | Workflow skills in the [Agent Skills](https://agentskills.io/) open standard (`swallowkit-add-model` / `swallowkit-modify-model` / `swallowkit-verify-repair` / `swallowkit-provision`), auto-loaded when the task matches |
+| `.swallowkit/workflows/*.md` | All agents (incl. non-skills-aware) | Agent-agnostic autonomous-loop runbooks (same content as the skills) |
 
 The full content of the generated `AGENTS.md` is shown below:
 
@@ -390,11 +435,11 @@ app.http('{model}-get-all', {
 | Cosmos DB partition key | `/id` (default) | Customizable via `export const partitionKey` in model file |
 | Bicep container file | `infra/containers/{kebab-case}-container.bicep` | `infra/containers/todo-container.bicep` |
 
-## Adding New Models (SwallowKit CLI Skills)
+## Adding New Models (SwallowKit CLI)
 
 Use the SwallowKit CLI — do **not** manually create model files or CRUD boilerplate.
 
-### Skill: Create a new data model
+### Create a new data model
 
 ```bash
 npx swallowkit create-model <name>
@@ -405,7 +450,7 @@ npx swallowkit create-model user post comment
 Creates `shared/models/<name>.ts` with a Zod schema template including `id`, `createdAt`, `updatedAt`.
 Edit the generated file to add your domain-specific fields, then run scaffold.
 
-### Skill: Generate full CRUD from a model
+### Generate full CRUD from a model
 
 ```bash
 npx swallowkit scaffold shared/models/<name>.ts
@@ -417,7 +462,7 @@ Generates:
 - UI pages (`app/<name>/page.tsx`, detail, create, edit pages)
 - Cosmos DB Bicep container config (`infra/containers/<name>-container.bicep`)
 
-### Skill: Start development servers
+### Start development servers
 
 ```bash
 npx swallowkit dev
@@ -426,7 +471,7 @@ npx swallowkit dev
 Runs Next.js (http://localhost:3000) and Azure Functions (http://localhost:7071) concurrently.
 Checks for Cosmos DB Emulator availability.
 
-### Skill: Provision Azure resources
+### Provision Azure resources
 
 ```bash
 npx swallowkit provision --resource-group <name>
@@ -928,6 +973,7 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 | `--functions-dir <dir>` | Azure Functions directory | `functions` |
 | `--api-dir <dir>` | Next.js API routes directory | `app/api` |
 | `--api-only` | Skip UI components only. Functions, BFF routes, OpenAPI, and native schema assets are still updated. | `false` |
+| `--dry-run` | Show planned file changes and conflicts without writing anything | `false` |
 
 ### Connector model behavior
 
@@ -1038,6 +1084,53 @@ await api.delete('/api/todos/123');
 ### Details
 
 See [Scaffold Guide](./scaffold-guide.md) for more information.
+
+## swallowkit status
+
+Show the generated-artifact ledger (`.swallowkit/artifacts.json`) and drift against the current project state.
+
+### Usage
+
+```bash
+npx swallowkit status [options]
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--artifacts` | List all tracked artifacts with their ownership | `false` |
+
+### Output
+
+- Number of tracked artifacts, files modified after generation, and missing files
+- Drift findings (schema-drift / artifact-modified / artifact-missing / generator-drift / manifest-drift) with repair actions
+
+## swallowkit verify
+
+Run verification checks (structure / drift / typecheck). Exits with code 1 if any check fails.
+
+### Usage
+
+```bash
+npx swallowkit verify [options]
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--checks <ids>` | Comma-separated check ids to run (`structure,drift,typecheck`) | all checks |
+
+### Checks
+
+| Check | What it does |
+| --- | --- |
+| `structure` | Project structure conventions (same as `validate project`) |
+| `drift` | Detect divergence between generated artifacts and the current state |
+| `typecheck` | TypeScript type check (uses the `typecheck` script if present, otherwise `npx tsc --noEmit`) |
+
+Results are saved to `.swallowkit/state/last-verify.json`; use `swallowkit machine explain failure` to get failure details.
 
 ## swallowkit create-dev-seeds
 

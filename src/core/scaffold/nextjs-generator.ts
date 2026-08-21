@@ -10,7 +10,7 @@ import { ModelInfo, toCamelCase } from "./model-parser";
  * BFF callFunction ヘルパー (lib/api/call-function.ts) のコードを生成
  */
 export function generateBFFCallFunction(): string {
-  return `import { NextRequest, NextResponse } from 'next/server';
+  return `import { NextResponse } from 'next/server';
 import { z } from 'zod/v4';
 
 /**
@@ -43,13 +43,13 @@ function getFunctionsKeyHeaders(functionsBaseUrl: string): Record<string, string
   throw new Error('BACKEND_FUNCTIONS_KEY is required for non-local Functions calls');
 }
 
-interface CallFunctionConfig<TInput = any, TOutput = any> {
+interface CallFunctionConfig<TInput = unknown, TOutput = unknown> {
   /** HTTP メソッド */
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   /** Azure Functions のパス (例: '/api/todo', '/api/todo/123') */
   path: string;
   /** リクエストボディ (POST/PUT 用) */
-  body?: any;
+  body?: unknown;
   /** 入力バリデーション用 Zod スキーマ (省略時はバリデーションなし) */
   inputSchema?: z.ZodSchema<TInput>;
   /** 出力バリデーション用 Zod スキーマ (省略時はそのまま返す) */
@@ -58,7 +58,7 @@ interface CallFunctionConfig<TInput = any, TOutput = any> {
   successStatus?: number;
 }
 
-export async function callFunction<TInput = any, TOutput = any>(
+export async function callFunction<TInput = unknown, TOutput = unknown>(
   config: CallFunctionConfig<TInput, TOutput>
 ): Promise<NextResponse> {
   const { method, path, body, inputSchema, responseSchema, successStatus = 200 } = config;
@@ -121,10 +121,10 @@ export async function callFunction<TInput = any, TOutput = any>(
     }
 
     return NextResponse.json(data, { status: successStatus });
-  } catch (error: any) {
+  } catch (error) {
     console.error(\`[BFF] Error:\`, error);
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: error instanceof Error ? error.message : 'Internal server error' },
       { status: 500 }
     );
   }

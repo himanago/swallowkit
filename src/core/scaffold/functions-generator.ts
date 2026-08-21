@@ -83,7 +83,7 @@ app.http('${modelCamel}-get-all', {
   ],
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${readGuard}
-      const documents = context.extraInputs.get('cosmosInput') as any[];
+      const documents = context.extraInputs.get('cosmosInput') as unknown[];
 
       if (!documents || !Array.isArray(documents)) {
         return { status: 200, jsonBody: [] };
@@ -119,7 +119,7 @@ app.http('${modelCamel}-create', {
   ],
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {${writeGuard}
-      const body = await request.json() as any;
+      const body = await request.json() as Record<string, unknown>;
 
       const { id, createdAt, updatedAt, ...userData } = body;
       const now = new Date().toISOString();
@@ -258,12 +258,12 @@ app.http('${modelCamel}-update', {
         return { status: 400, jsonBody: { error: 'ID is required' } };
       }
 
-      const existingDocument = context.extraInputs.get('cosmosInput') as any;
+      const existingDocument = context.extraInputs.get('cosmosInput') as Record<string, unknown> | undefined;
       if (!existingDocument) {
         return { status: 404, jsonBody: { error: 'Item not found' } };
       }
 
-      const body = await request.json() as any;
+      const body = await request.json() as Record<string, unknown>;
       const { createdAt, updatedAt, ...userData } = body;
 
       const dataWithManagedFields = {
@@ -315,7 +315,7 @@ app.http('${modelCamel}-update', {
       }
 
       const existingDocument = resources[0];
-      const body = await request.json() as any;
+      const body = await request.json() as Record<string, unknown>;
       const { createdAt, updatedAt, ...userData } = body;
 
       const dataWithManagedFields = {
@@ -364,8 +364,8 @@ app.http('${modelCamel}-delete', {
       context.log(\`Deleted item \${id} from \${containerName}\`);
 
       return { status: 204 };
-    } catch (error: any) {
-      if (error.code === 404) {
+    } catch (error) {
+      if ((error as { code?: number }).code === 404) {
         return { status: 404, jsonBody: { error: 'Item not found' } };
       }
 ${authCatchBlock}      context.error(\`Error deleting item from \${containerName}:\`, error);
@@ -405,8 +405,8 @@ app.http('${modelCamel}-delete', {
       context.log(\`Deleted item \${id} from \${containerName}\`);
 
       return { status: 204 };
-    } catch (error: any) {
-      if (error.code === 404) {
+    } catch (error) {
+      if ((error as { code?: number }).code === 404) {
         return { status: 404, jsonBody: { error: 'Item not found' } };
       }
 ${authCatchBlock}      context.error(\`Error deleting item from \${containerName}:\`, error);

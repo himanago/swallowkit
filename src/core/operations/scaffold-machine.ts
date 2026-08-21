@@ -1,6 +1,7 @@
 import { scaffoldCommand } from "../../cli/commands/scaffold";
 import {
   captureConsoleMessagesWithError,
+  deriveCapturedErrorMessage,
   interceptProcessExit,
   ProcessExitInterceptError,
   trackFileMutations,
@@ -23,22 +24,7 @@ export interface MachineScaffoldOperationResult {
 }
 
 function deriveErrorMessage(messages: { errors: string[]; warnings: string[]; logs: string[] }): string {
-  const errorText = messages.errors[messages.errors.length - 1];
-  if (errorText) {
-    return errorText.replace(/^\s*❌\s*/, "").trim();
-  }
-
-  const warningText = messages.warnings[messages.warnings.length - 1];
-  if (warningText) {
-    return warningText.trim();
-  }
-
-  const logText = messages.logs[messages.logs.length - 1];
-  if (logText) {
-    return logText.trim();
-  }
-
-  return "Scaffold failed.";
+  return deriveCapturedErrorMessage(messages, "Scaffold failed.");
 }
 
 export async function runMachineScaffoldOperation(

@@ -44,6 +44,8 @@ import {
   generateNamedExternalTokenVerifierPython,
 } from "../../core/scaffold/auth-generator";
 import { syncProjectManifest } from "../../core/project/manifest";
+import { FileOperationSession, getActiveFileSession } from "../../core/operations/file-session";
+import { recordSessionOperations } from "../../core/project/artifacts";
 import { buildSharedTsConfig } from "./init";
 
 interface AddAuthOptions {
@@ -51,10 +53,14 @@ interface AddAuthOptions {
   scheme?: string;
 }
 
-function writeIfMissing(filePath: string, content: string): void {
-  if (fs.existsSync(filePath)) return;
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf-8");
+const AUTH_GENERATOR = "add-auth";
+const managedMeta = { ownership: "managed" as const, generator: AUTH_GENERATOR };
+const extensionMeta = { ownership: "extension-point" as const, generator: AUTH_GENERATOR };
+const onceMeta = { ownership: "generated-once" as const, generator: AUTH_GENERATOR };
+
+function writeIfMissing(session: FileOperationSession, filePath: string, content: string): void {
+  if (session.fileExists(filePath)) return;
+  session.writeFile(filePath, content, onceMeta);
 }
 
 function defaultCustomJwtConfig(): CustomJwtConfig {
@@ -69,79 +75,72 @@ function defaultCustomJwtConfig(): CustomJwtConfig {
   };
 }
 
-function setupSwaAuth(cwd: string, backendLanguage: BackendLanguage): void {
+function setupSwaAuth(cwd: string, backendLanguage: BackendLanguage, session: FileOperationSession): void {
   const helperPath = backendLanguage === "typescript"
     ? path.join(cwd, "functions", "src", "auth", "jwt-helper.ts")
     : backendLanguage === "csharp"
       ? path.join(cwd, "functions", "Auth", "JwtHelper.cs")
       : path.join(cwd, "functions", "auth", "jwt_helper.py");
-  fs.mkdirSync(path.dirname(helperPath), { recursive: true });
   const helper = backendLanguage === "typescript"
     ? generateSwaAuthHelperTS()
     : backendLanguage === "csharp"
       ? generateSwaAuthHelperCSharp()
       : generateSwaAuthHelperPython();
-  fs.writeFileSync(helperPath, helper, "utf-8");
+  session.writeFile(helperPath, helper, managedMeta);
 
   const callFnPath = path.join(cwd, "lib", "api", "call-function.ts");
-  fs.mkdirSync(path.dirname(callFnPath), { recursive: true });
-  fs.writeFileSync(callFnPath, generateBFFCallFunctionWithSwaAuth(), "utf-8");
+  session.writeFile(callFnPath, generateBFFCallFunctionWithSwaAuth(), managedMeta);
 
   const authDir = path.join(cwd, "lib", "auth");
-  fs.mkdirSync(authDir, { recursive: true });
-  fs.writeFileSync(path.join(authDir, "auth-context.tsx"), generateSwaAuthContext(), "utf-8");
-  updateRootLayoutWithAuthProvider(cwd);
+  session.writeFile(path.join(authDir, "auth-context.tsx"), generateSwaAuthContext(), managedMeta);
+  updateRootLayoutWithAuthProvider(cwd, session);
   const loginDir = path.join(cwd, "app", "login");
-  fs.mkdirSync(loginDir, { recursive: true });
-  fs.writeFileSync(path.join(loginDir, "page.tsx"), generateSwaLoginPage(), "utf-8");
-  updateSwaRouteConfig(cwd);
+  session.writeFile(path.join(loginDir, "page.tsx"), generateSwaLoginPage(), managedMeta);
+  updateSwaRouteConfig(cwd, session);
 }
 
-function setupExternalTokenAuth(cwd: string, backendLanguage: BackendLanguage): void {
+function setupExternalTokenAuth(cwd: string, backendLanguage: BackendLanguage, session: FileOperationSession): void {
   const authDir = path.join(cwd, "lib", "auth");
-  fs.mkdirSync(authDir, { recursive: true });
-  writeIfMissing(path.join(authDir, "external-token-adapter.ts"), generateExternalTokenAdapter());
-  fs.writeFileSync(path.join(authDir, "authenticated-fetch.ts"), generateAuthenticatedFetch(), "utf-8");
-  fs.writeFileSync(path.join(authDir, "auth-context.tsx"), generateExternalTokenAuthContext(), "utf-8");
-  fs.writeFileSync(path.join(cwd, "lib", "api", "call-function.ts"), generateBFFCallFunctionWithAuth(), "utf-8");
+  writeIfMissing(session, path.join(authDir, "external-token-adapter.ts"), generateExternalTokenAdapter());
+  session.writeFile(path.join(authDir, "authenticated-fetch.ts"), generateAuthenticatedFetch(), managedMeta);
+  session.writeFile(path.join(authDir, "auth-context.tsx"), generateExternalTokenAuthContext(), managedMeta);
+  session.writeFile(path.join(cwd, "lib", "api", "call-function.ts"), generateBFFCallFunctionWithAuth(), managedMeta);
   const meDir = path.join(cwd, "app", "api", "auth", "me");
-  fs.mkdirSync(meDir, { recursive: true });
-  fs.writeFileSync(path.join(meDir, "route.ts"), generateExternalTokenBFFMeRoute(), "utf-8");
-  updateRootLayoutWithAuthProvider(cwd);
+  session.writeFile(path.join(meDir, "route.ts"), generateExternalTokenBFFMeRoute(), managedMeta);
+  updateRootLayoutWithAuthProvider(cwd, session);
 
   if (backendLanguage === "typescript") {
     const verifier = path.join(cwd, "functions", "src", "auth", "external-token-verifier.ts");
-    writeIfMissing(verifier, generateExternalTokenVerifierTS());
-    fs.writeFileSync(path.join(cwd, "functions", "src", "auth", "jwt-helper.ts"), generateExternalTokenHelperTS(), "utf-8");
-    fs.writeFileSync(path.join(cwd, "functions", "src", "auth-me.ts"), generateExternalAuthMeTS(), "utf-8");
+    writeIfMissing(session, verifier, generateExternalTokenVerifierTS());
+    session.writeFile(path.join(cwd, "functions", "src", "auth", "jwt-helper.ts"), generateExternalTokenHelperTS(), managedMeta);
+    session.writeFile(path.join(cwd, "functions", "src", "auth-me.ts"), generateExternalAuthMeTS(), managedMeta);
   } else if (backendLanguage === "csharp") {
     const verifier = path.join(cwd, "functions", "Auth", "ExternalTokenVerifier.cs");
-    writeIfMissing(verifier, generateExternalTokenVerifierCSharp());
-    fs.writeFileSync(path.join(cwd, "functions", "Auth", "JwtHelper.cs"), generateExternalTokenHelperCSharp(), "utf-8");
-    fs.writeFileSync(path.join(cwd, "functions", "Auth", "ExternalAuthMe.cs"), generateExternalAuthMeCSharp(), "utf-8");
+    writeIfMissing(session, verifier, generateExternalTokenVerifierCSharp());
+    session.writeFile(path.join(cwd, "functions", "Auth", "JwtHelper.cs"), generateExternalTokenHelperCSharp(), managedMeta);
+    session.writeFile(path.join(cwd, "functions", "Auth", "ExternalAuthMe.cs"), generateExternalAuthMeCSharp(), managedMeta);
   } else {
     const verifier = path.join(cwd, "functions", "auth", "external_token_verifier.py");
-    writeIfMissing(verifier, generateExternalTokenVerifierPython());
-    fs.writeFileSync(path.join(cwd, "functions", "auth", "jwt_helper.py"), generateExternalTokenHelperPython(), "utf-8");
+    writeIfMissing(session, verifier, generateExternalTokenVerifierPython());
+    session.writeFile(path.join(cwd, "functions", "auth", "jwt_helper.py"), generateExternalTokenHelperPython(), managedMeta);
     const authMePath = path.join(cwd, "functions", "blueprints", "auth_me.py");
-    fs.mkdirSync(path.dirname(authMePath), { recursive: true });
-    fs.writeFileSync(authMePath, generateExternalAuthMePython(), "utf-8");
-    updatePythonAuthMeRegistration(cwd);
+    session.writeFile(authMePath, generateExternalAuthMePython(), managedMeta);
+    updatePythonAuthMeRegistration(cwd, session);
   }
 }
 
-function updatePythonAuthMeRegistration(cwd: string): void {
+function updatePythonAuthMeRegistration(cwd: string, session: FileOperationSession): void {
   const appPath = path.join(cwd, "functions", "function_app.py");
-  if (!fs.existsSync(appPath)) return;
+  if (!session.fileExists(appPath)) return;
   const importLine = "from blueprints.auth_me import bp as external_auth_me_bp";
   const registerLine = "app.register_blueprint(external_auth_me_bp)";
-  let content = fs.readFileSync(appPath, "utf-8");
+  let content = session.readFile(appPath);
   if (content.includes(importLine)) return;
   const marker = "# SwallowKit scaffold registrations";
   content = content.includes(marker)
     ? content.replace(marker, `${importLine}\n${registerLine}\n${marker}`)
     : `${content.trimEnd()}\n${importLine}\n${registerLine}\n`;
-  fs.writeFileSync(appPath, content, "utf-8");
+  session.writeFile(appPath, content, extensionMeta);
 }
 
 function generateSwaLoginPage(): string {
@@ -210,25 +209,25 @@ export function addAuthProviderToRootLayout(layout: string): string {
   return updated;
 }
 
-function updateRootLayoutWithAuthProvider(cwd: string): void {
+function updateRootLayoutWithAuthProvider(cwd: string, session: FileOperationSession): void {
   const layoutPath = path.join(cwd, "app", "layout.tsx");
-  if (!fs.existsSync(layoutPath)) {
+  if (!session.fileExists(layoutPath)) {
     throw new Error("app/layout.tsx was not found; cannot install AuthProvider");
   }
-  const layout = fs.readFileSync(layoutPath, "utf-8");
+  const layout = session.readFile(layoutPath);
   const updated = addAuthProviderToRootLayout(layout);
-  if (updated !== layout) fs.writeFileSync(layoutPath, updated, "utf-8");
+  if (updated !== layout) session.writeFile(layoutPath, updated, extensionMeta);
 }
 
-function updateSwaRouteConfig(cwd: string): void {
+function updateSwaRouteConfig(cwd: string, session: FileOperationSession): void {
   const configPath = path.join(cwd, "staticwebapp.config.json");
-  const config = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, "utf-8")) : {};
+  const config = session.fileExists(configPath) ? JSON.parse(session.readFile(configPath)) : {};
   config.routes = Array.isArray(config.routes)
     ? config.routes.filter((route: { route?: string }) => route.route !== "/api/*")
     : [];
   config.routes.unshift({ route: "/api/*", allowedRoles: ["authenticated"] });
   config.responseOverrides = { ...(config.responseOverrides || {}), "401": { statusCode: 302, redirect: "/.auth/login/aad?post_login_redirect_uri=.referrer" } };
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+  session.writeFile(configPath, JSON.stringify(config, null, 2), extensionMeta);
 }
 
 export async function addAuthCommand(options: AddAuthOptions) {
@@ -246,11 +245,20 @@ export async function addAuthCommand(options: AddAuthOptions) {
   const config = getValidatedFullConfig();
   const cwd = process.cwd();
 
+  // Plan(dry-run) や Apply からセッションが供給される。単体実行時は commit セッションを生成。
+  const session = getActiveFileSession() ?? new FileOperationSession("commit");
+  const finalize = async () => {
+    if (session.mode === "commit") {
+      recordSessionOperations(session.operations);
+      await syncProjectManifest();
+    }
+  };
+
   if (options.scheme) {
     if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(options.scheme)) throw new Error("--scheme must start with a letter and contain only letters, digits, '_' or '-'");
     if (provider === "none" || provider === "swa-custom") throw new Error(`Provider '${provider}' cannot be added as a named scheme`);
-    addNamedScheme(cwd, options.scheme, provider, backendLanguage);
-    await syncProjectManifest();
+    addNamedScheme(cwd, options.scheme, provider, backendLanguage, session);
+    await finalize();
     console.log(`\n Named authentication scheme '${options.scheme}' added.`);
     return;
   }
@@ -259,22 +267,22 @@ export async function addAuthCommand(options: AddAuthOptions) {
     throw new Error("The swa-custom provider is not implemented. Use --provider swa or --provider custom-jwt.");
   }
   if (provider === "none") {
-    updateConfigWithAuth(cwd, provider, config.auth?.customJwt || defaultCustomJwtConfig());
-    await syncProjectManifest();
+    updateConfigWithAuth(cwd, provider, config.auth?.customJwt || defaultCustomJwtConfig(), session);
+    await finalize();
     console.log(" Authentication disabled in swallowkit.config.js");
     return;
   }
   if (provider === "swa") {
-    setupSwaAuth(cwd, backendLanguage);
-    updateConfigWithAuth(cwd, provider, config.auth?.customJwt || defaultCustomJwtConfig());
-    await syncProjectManifest();
+    setupSwaAuth(cwd, backendLanguage, session);
+    updateConfigWithAuth(cwd, provider, config.auth?.customJwt || defaultCustomJwtConfig(), session);
+    await finalize();
     console.log("\n SWA built-in authentication setup complete!");
     return;
   }
   if (provider === "external-token") {
-    setupExternalTokenAuth(cwd, backendLanguage);
-    updateConfigWithAuth(cwd, provider, config.auth?.customJwt || defaultCustomJwtConfig());
-    await syncProjectManifest();
+    setupExternalTokenAuth(cwd, backendLanguage, session);
+    updateConfigWithAuth(cwd, provider, config.auth?.customJwt || defaultCustomJwtConfig(), session);
+    await finalize();
     console.log("\n External token authentication setup complete!");
     console.log(" Implement the generated frontend adapter and backend verifier before use.");
     return;
@@ -301,16 +309,15 @@ export async function addAuthCommand(options: AddAuthOptions) {
   // 1. Generate shared/models/auth.ts
   console.log(" Generating auth models...");
   const modelsDir = path.join(cwd, "shared", "models");
-  fs.mkdirSync(modelsDir, { recursive: true });
   const authModelPath = path.join(modelsDir, "auth.ts");
-  fs.writeFileSync(authModelPath, generateAuthModels(), "utf-8");
+  session.writeFile(authModelPath, generateAuthModels(), managedMeta);
   console.log(` Created: shared/models/auth.ts`);
 
   // Ensure shared package has build infrastructure (tsconfig, build script)
-  ensureSharedBuildInfrastructure(cwd);
+  ensureSharedBuildInfrastructure(cwd, session);
 
   // Update shared/index.ts to re-export auth
-  updateSharedIndex(cwd);
+  updateSharedIndex(cwd, session);
 
   // Resolve RDB provider for dependency installation
   const connDef = getConnectorDefinition(customJwtConfig.userConnector);
@@ -318,52 +325,48 @@ export async function addAuthCommand(options: AddAuthOptions) {
 
   // 2. Generate Functions auth code
   console.log("\n Generating auth functions...");
-  generateFunctionsAuth(cwd, backendLanguage, sharedPackageName, customJwtConfig);
+  generateFunctionsAuth(cwd, backendLanguage, sharedPackageName, customJwtConfig, session);
 
   // 3. Generate BFF auth routes
   console.log("\n Generating BFF auth routes...");
-  generateBFFAuth(cwd, projectName, sharedPackageName);
+  generateBFFAuth(cwd, projectName, sharedPackageName, session);
 
   // 4. Generate proxy
   console.log("\n  Generating proxy...");
   const proxyPath = path.join(cwd, "proxy.ts");
-  fs.writeFileSync(proxyPath, generateProxy(projectName), "utf-8");
+  session.writeFile(proxyPath, generateProxy(projectName), managedMeta);
   console.log(` Created: proxy.ts`);
 
   // 5. Generate login page
   console.log("\n Generating login page...");
   const loginDir = path.join(cwd, "app", "login");
-  fs.mkdirSync(loginDir, { recursive: true });
-  fs.writeFileSync(path.join(loginDir, "page.tsx"), generateLoginPage(), "utf-8");
+  session.writeFile(path.join(loginDir, "page.tsx"), generateLoginPage(), managedMeta);
   console.log(` Created: app/login/page.tsx`);
 
   // 6. Generate auth context
   console.log("\n Generating auth context...");
   const authLibDir = path.join(cwd, "lib", "auth");
-  fs.mkdirSync(authLibDir, { recursive: true });
-  fs.writeFileSync(path.join(authLibDir, "auth-context.tsx"), generateAuthContext(), "utf-8");
+  session.writeFile(path.join(authLibDir, "auth-context.tsx"), generateAuthContext(), managedMeta);
   console.log(`✅ Created: lib/auth/auth-context.tsx`);
 
   // 7. Update callFunction with auth support
   console.log("\n Updating callFunction with auth support...");
   const callFnPath = path.join(cwd, "lib", "api", "call-function.ts");
-  const callFnDir = path.dirname(callFnPath);
-  fs.mkdirSync(callFnDir, { recursive: true });
-  fs.writeFileSync(callFnPath, generateBFFCallFunctionWithAuth(), "utf-8");
+  session.writeFile(callFnPath, generateBFFCallFunctionWithAuth(), managedMeta);
   console.log(` Updated: lib/api/call-function.ts`);
 
   // 8. Update swallowkit.config.js
   console.log("\n Updating configuration...");
-  updateConfigWithAuth(cwd, provider, customJwtConfig);
+  updateConfigWithAuth(cwd, provider, customJwtConfig, session);
 
   // 9. Update environment files
   console.log("\n Updating environment files...");
-  updateEnvironmentFiles(cwd);
+  updateEnvironmentFiles(cwd, session);
 
   // 10. Install dependencies
   console.log("\n Installing auth dependencies...");
-  await installAuthDependencies(cwd, backendLanguage, rdbProvider);
-  await syncProjectManifest();
+  await installAuthDependencies(cwd, backendLanguage, rdbProvider, session);
+  await finalize();
 
   console.log("\n Authentication setup complete!");
   console.log("\n Next steps:");
@@ -389,22 +392,22 @@ function findObjectEnd(content: string, open: number): number {
   return -1;
 }
 
-function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: AuthProvider): void {
+function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: AuthProvider, session: FileOperationSession): void {
   const jsPath = path.join(cwd, "swallowkit.config.js");
   const jsonPath = path.join(cwd, "swallowkit.config.json");
-  const configPath = fs.existsSync(jsPath) ? jsPath : jsonPath;
-  if (!fs.existsSync(configPath)) throw new Error("swallowkit.config.js or swallowkit.config.json is required");
+  const configPath = session.fileExists(jsPath) ? jsPath : jsonPath;
+  if (!session.fileExists(configPath)) throw new Error("swallowkit.config.js or swallowkit.config.json is required");
   if (configPath.endsWith(".json")) {
-    const value = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const value = JSON.parse(session.readFile(configPath));
     value.auth ??= {};
     value.auth.schemes ??= {};
     if (value.auth.schemes[scheme]) throw new Error(`auth.schemes.${scheme} already exists; no files were changed`);
     value.auth.schemes[scheme] = provider === "custom-jwt" ? { provider, customJwt: defaultCustomJwtConfig() } : { provider };
     value.auth.authorization ??= { defaultPolicy: "anonymous", policies: {} };
-    fs.writeFileSync(configPath, JSON.stringify(value, null, 2) + "\n", "utf-8");
+    session.writeFile(configPath, JSON.stringify(value, null, 2) + "\n", extensionMeta);
     return;
   }
-  let content = fs.readFileSync(configPath, "utf-8");
+  let content = session.readFile(configPath);
   const authMatch = /\bauth\s*:\s*\{/.exec(content);
   const customJwt = defaultCustomJwtConfig();
   const entry = provider === "custom-jwt"
@@ -430,45 +433,45 @@ function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: Auth
       content = content.slice(0, authOpen + 1) + `\n    schemes: {${entry}\n    },` + content.slice(authOpen + 1);
     }
   }
-  fs.writeFileSync(configPath, content, "utf-8");
+  session.writeFile(configPath, content, extensionMeta);
 }
 
-function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, language: BackendLanguage): void {
+function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, language: BackendLanguage, session: FileOperationSession): void {
   // Validate/update config before creating files, so duplicate names stop safely.
-  updateConfigWithNamedScheme(cwd, scheme, provider);
+  updateConfigWithNamedScheme(cwd, scheme, provider, session);
   const slug = scheme.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
   if (language === "typescript") {
     const dir = path.join(cwd, "functions", "src", "auth", "schemes", slug);
-    if (provider === "external-token") writeIfMissing(path.join(dir, "verifier.ts"), generateExternalTokenVerifierTS());
-    else if (provider === "swa") writeIfMissing(path.join(dir, "adapter.ts"), generateSwaAuthHelperTS());
-    else writeIfMissing(path.join(dir, "jwt-helper.ts"), generateJwtHelperTS());
+    if (provider === "external-token") writeIfMissing(session, path.join(dir, "verifier.ts"), generateExternalTokenVerifierTS());
+    else if (provider === "swa") writeIfMissing(session, path.join(dir, "adapter.ts"), generateSwaAuthHelperTS());
+    else writeIfMissing(session, path.join(dir, "jwt-helper.ts"), generateJwtHelperTS());
   } else if (language === "csharp") {
     const dir = path.join(cwd, "functions", "Auth", "Schemes", slug);
-    if (provider === "external-token") writeIfMissing(path.join(dir, "ExternalTokenVerifier.cs"), generateNamedExternalTokenVerifierCSharp(scheme));
-    else if (provider === "swa") writeIfMissing(path.join(dir, "SwaAdapter.cs"), generateSwaAuthHelperCSharp());
-    else writeIfMissing(path.join(dir, "JwtHelper.cs"), generateJwtHelperCSharp());
+    if (provider === "external-token") writeIfMissing(session, path.join(dir, "ExternalTokenVerifier.cs"), generateNamedExternalTokenVerifierCSharp(scheme));
+    else if (provider === "swa") writeIfMissing(session, path.join(dir, "SwaAdapter.cs"), generateSwaAuthHelperCSharp());
+    else writeIfMissing(session, path.join(dir, "JwtHelper.cs"), generateJwtHelperCSharp());
   } else {
     const dir = path.join(cwd, "functions", "auth", "schemes", slug.replace(/-/g, "_"));
-    if (provider === "external-token") writeIfMissing(path.join(dir, "verifier.py"), generateNamedExternalTokenVerifierPython(scheme));
-    else if (provider === "swa") writeIfMissing(path.join(dir, "adapter.py"), generateSwaAuthHelperPython());
-    else writeIfMissing(path.join(dir, "jwt_helper.py"), generateJwtHelperPython());
+    if (provider === "external-token") writeIfMissing(session, path.join(dir, "verifier.py"), generateNamedExternalTokenVerifierPython(scheme));
+    else if (provider === "swa") writeIfMissing(session, path.join(dir, "adapter.py"), generateSwaAuthHelperPython());
+    else writeIfMissing(session, path.join(dir, "jwt_helper.py"), generateJwtHelperPython());
   }
   const clientDir = path.join(cwd, "lib", "auth", "schemes", slug);
   if (provider === "external-token") {
-    writeIfMissing(path.join(clientDir, "token-adapter.ts"), generateExternalTokenAdapter());
-    writeIfMissing(path.join(clientDir, "authenticated-fetch.ts"), generateAuthenticatedFetch().replace("'./external-token-adapter'", "'./token-adapter'"));
-    writeIfMissing(path.join(clientDir, "auth-context.tsx"), generateExternalTokenAuthContext().replace(/external-token-adapter/g, "token-adapter"));
+    writeIfMissing(session, path.join(clientDir, "token-adapter.ts"), generateExternalTokenAdapter());
+    writeIfMissing(session, path.join(clientDir, "authenticated-fetch.ts"), generateAuthenticatedFetch().replace("'./external-token-adapter'", "'./token-adapter'"));
+    writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), generateExternalTokenAuthContext().replace(/external-token-adapter/g, "token-adapter"));
   } else if (provider === "swa") {
-    writeIfMissing(path.join(clientDir, "auth-context.tsx"), generateSwaAuthContext());
+    writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), generateSwaAuthContext());
   } else if (provider === "custom-jwt") {
-    writeIfMissing(path.join(clientDir, "auth-context.tsx"), generateAuthContext());
+    writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), generateAuthContext());
   }
   const callFunctionPath = path.join(cwd, "lib", "api", "call-function.ts");
-  if (!fs.existsSync(callFunctionPath)) writeIfMissing(callFunctionPath, generateBFFCallFunctionWithMultipleAuth());
+  if (!session.fileExists(callFunctionPath)) writeIfMissing(session, callFunctionPath, generateBFFCallFunctionWithMultipleAuth());
   else {
-    const current = fs.readFileSync(callFunctionPath, "utf-8");
+    const current = session.readFile(callFunctionPath);
     if (!current.includes("x-ms-client-principal") || !current.includes("fetchHeaders['Authorization']")) {
-      if (current.includes("SwallowKit BFF Call Function Helper")) fs.writeFileSync(callFunctionPath, generateBFFCallFunctionWithMultipleAuth(), "utf-8");
+      if (current.includes("SwallowKit BFF Call Function Helper")) session.writeFile(callFunctionPath, generateBFFCallFunctionWithMultipleAuth(), managedMeta);
       else console.warn(" Existing customized lib/api/call-function.ts was preserved. Ensure it forwards Bearer and SWA credentials without logging them.");
     }
   }
@@ -479,12 +482,12 @@ function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, lan
  * (tsconfig.json, build script, typescript devDependency).
  * Required for `dev` command which runs `npm run --workspace=shared build`.
  */
-function ensureSharedBuildInfrastructure(cwd: string): void {
+function ensureSharedBuildInfrastructure(cwd: string, session: FileOperationSession): void {
   const sharedDir = path.join(cwd, "shared");
   const pkgPath = path.join(sharedDir, "package.json");
-  if (!fs.existsSync(pkgPath)) return;
+  if (!session.fileExists(pkgPath)) return;
 
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+  const pkg = JSON.parse(session.readFile(pkgPath));
   let updated = false;
 
   // Ensure scripts.build exists
@@ -510,29 +513,29 @@ function ensureSharedBuildInfrastructure(cwd: string): void {
   }
 
   if (updated) {
-    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2), "utf-8");
+    session.writeFile(pkgPath, JSON.stringify(pkg, null, 2), extensionMeta);
     console.log(` Updated: shared/package.json (added build infrastructure)`);
   }
 
   // Ensure tsconfig.json exists
   const tsconfigPath = path.join(sharedDir, "tsconfig.json");
-  if (!fs.existsSync(tsconfigPath)) {
-    fs.writeFileSync(tsconfigPath, JSON.stringify(buildSharedTsConfig(), null, 2), "utf-8");
+  if (!session.fileExists(tsconfigPath)) {
+    session.writeFile(tsconfigPath, JSON.stringify(buildSharedTsConfig(), null, 2), onceMeta);
     console.log(` Created: shared/tsconfig.json`);
   }
 }
 
-function updateSharedIndex(cwd: string): void {
+function updateSharedIndex(cwd: string, session: FileOperationSession): void {
   const indexPath = path.join(cwd, "shared", "index.ts");
-  if (fs.existsSync(indexPath)) {
-    let content = fs.readFileSync(indexPath, "utf-8");
+  if (session.fileExists(indexPath)) {
+    let content = session.readFile(indexPath);
     if (!content.includes("./models/auth")) {
       content += `\nexport { LoginRequest, AuthUser, LoginResponse } from './models/auth';\n`;
-      fs.writeFileSync(indexPath, content, "utf-8");
+      session.writeFile(indexPath, content, extensionMeta);
       console.log(` Updated: shared/index.ts`);
     }
   } else {
-    fs.writeFileSync(indexPath, `export { LoginRequest, AuthUser, LoginResponse } from './models/auth';\n`, "utf-8");
+    session.writeFile(indexPath, `export { LoginRequest, AuthUser, LoginResponse } from './models/auth';\n`, extensionMeta);
     console.log(` Created: shared/index.ts`);
   }
 }
@@ -542,6 +545,7 @@ function generateFunctionsAuth(
   backendLanguage: BackendLanguage,
   sharedPackageName: string,
   config: CustomJwtConfig,
+  session: FileOperationSession,
 ): void {
   const functionsDir = path.join(cwd, "functions");
 
@@ -552,64 +556,61 @@ function generateFunctionsAuth(
   if (backendLanguage === "typescript") {
     // Auth functions
     const srcDir = path.join(functionsDir, "src");
-    fs.mkdirSync(srcDir, { recursive: true });
-    fs.writeFileSync(
+    session.writeFile(
       path.join(srcDir, "auth.ts"),
       generateAuthFunctionsTS(sharedPackageName, config, provider),
-      "utf-8"
+      managedMeta
     );
     console.log(` Created: functions/src/auth.ts`);
 
     // JWT helper
     const authDir = path.join(srcDir, "auth");
-    fs.mkdirSync(authDir, { recursive: true });
-    fs.writeFileSync(
+    session.writeFile(
       path.join(authDir, "jwt-helper.ts"),
       generateJwtHelperTS(),
-      "utf-8"
+      managedMeta
     );
     console.log(` Created: functions/src/auth/jwt-helper.ts`);
   } else if (backendLanguage === "csharp") {
     const authDir = path.join(functionsDir, "Auth");
-    fs.mkdirSync(authDir, { recursive: true });
-    fs.writeFileSync(
+    session.writeFile(
       path.join(authDir, "AuthFunctions.cs"),
       generateAuthFunctionsCSharp(config, provider),
-      "utf-8"
+      managedMeta
     );
     console.log(` Created: functions/Auth/AuthFunctions.cs`);
-    fs.writeFileSync(
+    session.writeFile(
       path.join(authDir, "JwtHelper.cs"),
       generateJwtHelperCSharp(),
-      "utf-8"
+      managedMeta
     );
     console.log(` Created: functions/Auth/JwtHelper.cs`);
   } else if (backendLanguage === "python") {
     const blueprintsDir = path.join(functionsDir, "blueprints");
-    fs.mkdirSync(blueprintsDir, { recursive: true });
-    fs.writeFileSync(
+    session.writeFile(
       path.join(blueprintsDir, "auth.py"),
       generateAuthFunctionsPython(config, provider),
-      "utf-8"
+      managedMeta
     );
     console.log(` Created: functions/blueprints/auth.py`);
 
     const authDir = path.join(functionsDir, "auth");
-    fs.mkdirSync(authDir, { recursive: true });
-    fs.writeFileSync(
+    session.writeFile(
       path.join(authDir, "jwt_helper.py"),
       generateJwtHelperPython(),
-      "utf-8"
+      managedMeta
     );
     console.log(` Created: functions/auth/jwt_helper.py`);
 
     // __init__.py
-    fs.writeFileSync(path.join(authDir, "__init__.py"), "", "utf-8");
+    if (!session.fileExists(path.join(authDir, "__init__.py"))) {
+      session.writeFile(path.join(authDir, "__init__.py"), "", onceMeta);
+    }
 
     // Register auth blueprint in function_app.py
     const functionAppPath = path.join(functionsDir, "function_app.py");
-    if (fs.existsSync(functionAppPath)) {
-      const content = fs.readFileSync(functionAppPath, "utf-8");
+    if (session.fileExists(functionAppPath)) {
+      const content = session.readFile(functionAppPath);
       const authImport = "from blueprints.auth import bp as auth_bp";
       const authRegister = "app.register_blueprint(auth_bp)";
       if (!content.includes(authImport)) {
@@ -619,7 +620,7 @@ function generateFunctionsAuth(
             marker,
             `${authImport}\n${authRegister}\n${marker}`
           );
-          fs.writeFileSync(functionAppPath, updated, "utf-8");
+          session.writeFile(functionAppPath, updated, extensionMeta);
           console.log(` Updated: functions/function_app.py (registered auth blueprint)`);
         }
       }
@@ -627,48 +628,45 @@ function generateFunctionsAuth(
   }
 }
 
-function generateBFFAuth(cwd: string, projectName: string, sharedPackageName: string): void {
+function generateBFFAuth(cwd: string, projectName: string, sharedPackageName: string, session: FileOperationSession): void {
   const authApiDir = path.join(cwd, "app", "api", "auth");
 
   // Login route
   const loginDir = path.join(authApiDir, "login");
-  fs.mkdirSync(loginDir, { recursive: true });
-  fs.writeFileSync(
+  session.writeFile(
     path.join(loginDir, "route.ts"),
     generateBFFAuthLoginRoute(projectName, sharedPackageName),
-    "utf-8"
+    managedMeta
   );
   console.log(` Created: app/api/auth/login/route.ts`);
 
   // Logout route
   const logoutDir = path.join(authApiDir, "logout");
-  fs.mkdirSync(logoutDir, { recursive: true });
-  fs.writeFileSync(
+  session.writeFile(
     path.join(logoutDir, "route.ts"),
     generateBFFAuthLogoutRoute(projectName),
-    "utf-8"
+    managedMeta
   );
   console.log(` Created: app/api/auth/logout/route.ts`);
 
   // Me route
   const meDir = path.join(authApiDir, "me");
-  fs.mkdirSync(meDir, { recursive: true });
-  fs.writeFileSync(
+  session.writeFile(
     path.join(meDir, "route.ts"),
     generateBFFAuthMeRoute(),
-    "utf-8"
+    managedMeta
   );
   console.log(` Created: app/api/auth/me/route.ts`);
 }
 
-function updateConfigWithAuth(cwd: string, provider: AuthProvider, config: CustomJwtConfig): void {
+function updateConfigWithAuth(cwd: string, provider: AuthProvider, config: CustomJwtConfig, session: FileOperationSession): void {
   const configPath = path.join(cwd, "swallowkit.config.js");
-  if (!fs.existsSync(configPath)) {
+  if (!session.fileExists(configPath)) {
     console.warn("  swallowkit.config.js not found. Please add auth config manually.");
     return;
   }
 
-  const content = fs.readFileSync(configPath, "utf-8");
+  const content = session.readFile(configPath);
 
   if (content.includes("auth:") || content.includes("auth :")) {
     console.log("  'auth' section already exists in swallowkit.config.js");
@@ -712,40 +710,40 @@ ${providerSettings}
 `;
 
   const newContent = content.substring(0, closingBraceIdx) + authBlock + content.substring(closingBraceIdx);
-  fs.writeFileSync(configPath, newContent, "utf-8");
+  session.writeFile(configPath, newContent, extensionMeta);
   console.log(` Updated: swallowkit.config.js`);
 }
 
-function updateEnvironmentFiles(cwd: string): void {
+function updateEnvironmentFiles(cwd: string, session: FileOperationSession): void {
   // Update functions/local.settings.json
   const localSettingsPath = path.join(cwd, "functions", "local.settings.json");
-  if (fs.existsSync(localSettingsPath)) {
-    const settings = JSON.parse(fs.readFileSync(localSettingsPath, "utf-8"));
+  if (session.fileExists(localSettingsPath)) {
+    const settings = JSON.parse(session.readFile(localSettingsPath));
     if (!settings.Values) settings.Values = {};
     if (!settings.Values.JWT_SECRET) {
       settings.Values.JWT_SECRET = "dev-jwt-secret-change-in-production-min-32-chars!!";
     }
-    fs.writeFileSync(localSettingsPath, JSON.stringify(settings, null, 2), "utf-8");
+    session.writeFile(localSettingsPath, JSON.stringify(settings, null, 2), extensionMeta);
     console.log(` Updated: functions/local.settings.json`);
   }
 
   // Update .env.example
   const envExamplePath = path.join(cwd, ".env.example");
-  if (fs.existsSync(envExamplePath)) {
-    let content = fs.readFileSync(envExamplePath, "utf-8");
+  if (session.fileExists(envExamplePath)) {
+    let content = session.readFile(envExamplePath);
     if (!content.includes("JWT_SECRET")) {
       content += "\n# Authentication\nJWT_SECRET=your-jwt-secret-key-at-least-32-chars\n";
-      fs.writeFileSync(envExamplePath, content, "utf-8");
+      session.writeFile(envExamplePath, content, extensionMeta);
       console.log(` Updated: .env.example`);
     }
   }
 }
 
-async function installAuthDependencies(cwd: string, backendLanguage: BackendLanguage, provider: "mysql" | "postgres" | "sqlserver" = "mysql"): Promise<void> {
+async function installAuthDependencies(cwd: string, backendLanguage: BackendLanguage, provider: "mysql" | "postgres" | "sqlserver" = "mysql", session: FileOperationSession): Promise<void> {
   if (backendLanguage === "typescript") {
     const funcPkgPath = path.join(cwd, "functions", "package.json");
-    if (fs.existsSync(funcPkgPath)) {
-      const funcPkg = JSON.parse(fs.readFileSync(funcPkgPath, "utf-8"));
+    if (session.fileExists(funcPkgPath)) {
+      const funcPkg = JSON.parse(session.readFile(funcPkgPath));
       if (!funcPkg.dependencies) funcPkg.dependencies = {};
       funcPkg.dependencies["jsonwebtoken"] = "^9.0.0";
       funcPkg.dependencies["bcryptjs"] = "^2.4.3";
@@ -757,16 +755,18 @@ async function installAuthDependencies(cwd: string, backendLanguage: BackendLang
       funcPkg.devDependencies["@types/jsonwebtoken"] = "^9.0.0";
       funcPkg.devDependencies["@types/bcryptjs"] = "^2.4.0";
       if (provider === "postgres") funcPkg.devDependencies["@types/pg"] = "^8.11.0";
-      fs.writeFileSync(funcPkgPath, JSON.stringify(funcPkg, null, 2), "utf-8");
+      session.writeFile(funcPkgPath, JSON.stringify(funcPkg, null, 2), extensionMeta);
       console.log(` Updated: functions/package.json with auth dependencies (${provider})`);
     }
   } else if (backendLanguage === "csharp") {
     // Add NuGet package references to .csproj
     const functionsDir = path.join(cwd, "functions");
-    const csprojFiles = fs.readdirSync(functionsDir).filter((f: string) => f.endsWith(".csproj"));
+    const csprojFiles = fs.existsSync(functionsDir)
+      ? fs.readdirSync(functionsDir).filter((f: string) => f.endsWith(".csproj"))
+      : [];
     if (csprojFiles.length > 0) {
       const csprojPath = path.join(functionsDir, csprojFiles[0]);
-      let csprojContent = fs.readFileSync(csprojPath, "utf-8");
+      let csprojContent = session.readFile(csprojPath);
       const nugetPackages: { name: string; version: string }[] = [
         { name: "System.IdentityModel.Tokens.Jwt", version: "7.0.0" },
         { name: "Microsoft.IdentityModel.Tokens", version: "7.0.0" },
@@ -787,7 +787,7 @@ async function installAuthDependencies(cwd: string, backendLanguage: BackendLang
           }
         }
       }
-      fs.writeFileSync(csprojPath, csprojContent, "utf-8");
+      session.writeFile(csprojPath, csprojContent, extensionMeta);
       console.log(` Updated: ${csprojFiles[0]} with auth NuGet packages (${provider})`);
     }
   } else if (backendLanguage === "python") {
@@ -798,17 +798,17 @@ async function installAuthDependencies(cwd: string, backendLanguage: BackendLang
     if (provider === "mysql") baseDeps.push("mysql-connector-python>=8.3.0");
     else if (provider === "postgres") baseDeps.push("psycopg2-binary>=2.9.0");
     else baseDeps.push("pymssql>=2.2.0");
-    if (fs.existsSync(requirementsPath)) {
-      let content = fs.readFileSync(requirementsPath, "utf-8");
+    if (session.fileExists(requirementsPath)) {
+      let content = session.readFile(requirementsPath);
       for (const dep of baseDeps) {
         const pkgName = dep.split(">=")[0].split("==")[0];
         if (!content.includes(pkgName)) {
           content += `${dep}\n`;
         }
       }
-      fs.writeFileSync(requirementsPath, content, "utf-8");
+      session.writeFile(requirementsPath, content, extensionMeta);
     } else {
-      fs.writeFileSync(requirementsPath, baseDeps.join("\n") + "\n", "utf-8");
+      session.writeFile(requirementsPath, baseDeps.join("\n") + "\n", extensionMeta);
     }
     console.log(` Updated: functions/requirements.txt with auth dependencies`);
   }

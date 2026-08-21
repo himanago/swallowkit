@@ -8,6 +8,10 @@ import { initCommand, devCommand, devSeedsCommand, scaffoldCommand, createModelC
 import { provisionCommand } from "./commands/provision";
 import { addConnectorCommand } from "./commands/add-connector";
 import { addAuthCommand } from "./commands/add-auth";
+import { planScaffoldOperation } from "../core/operations/scaffold-plan";
+import { inspectArtifacts } from "../core/project/artifacts";
+import { detectDrift } from "../core/project/drift";
+import { runVerify } from "../core/verify";
 import { isMachineCommand, runMachineCli } from "../machine";
 
 const packageJsonPath = path.resolve(__dirname, "../../package.json");
@@ -147,8 +151,19 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
     .option("--functions-dir <dir>", "Azure Functions directory", "functions")
     .option("--api-dir <dir>", "Next.js API routes directory", "app/api")
     .option("--api-only", "Skip UI components; still update Functions, BFF routes, OpenAPI, and native schema assets", false)
-    .action((model, options) => {
-      scaffoldCommand({
+    .option("--dry-run", "Show planned file changes without writing anything", false)
+    .action(async (model, options) => {
+      if (options.dryRun) {
+        await runScaffoldDryRun({
+          model,
+          functionsDir: options.functionsDir,
+          apiDir: options.apiDir,
+          apiOnly: options.apiOnly,
+        });
+        return;
+      }
+
+      await scaffoldCommand({
         model,
         functionsDir: options.functionsDir,
         apiDir: options.apiDir,
@@ -181,7 +196,138 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
       });
     });
 
+  program
+    .command("status")
+    .description("Show generated artifact status and drift against the current project state")
+    .option("--artifacts", "List all tracked artifacts with ownership", false)
+    .action(async (options) => {
+      await runStatusCommand({ artifacts: options.artifacts });
+    });
+
+  program
+    .command("verify")
+    .description("Run verification checks (structure, drift, typecheck)")
+    .option("--checks <ids>", "Comma-separated check ids to run (structure,drift,typecheck)")
+    .action(async (options) => {
+      await runVerifyCommand({ checks: options.checks });
+    });
+
   return program;
+}
+
+async function runScaffoldDryRun(options: { model: string; functionsDir?: string; apiDir?: string; apiOnly?: boolean }): Promise<void> {
+  console.log("🔍 Scaffold dry-run — no files will be written.\n");
+
+  const plan = await planScaffoldOperation(options);
+
+  const actionIcons: Record<string, string> = {
+    create: "➕",
+    update: "♻️ ",
+    overwrite: "⚠️ ",
+    append: "🔗",
+    delete: "🗑️ ",
+    skip: "⏭️ ",
+  };
+
+  for (const operation of plan.operations) {
+    if (operation.action === "skip") continue;
+    const icon = actionIcons[operation.action] ?? "•";
+    const conflictNote = operation.conflict ? ` (conflict: ${operation.conflictReason})` : "";
+    console.log(`  ${icon} ${operation.action.padEnd(9)} ${operation.path} [${operation.ownership}]${conflictNote}`);
+  }
+
+  const skipped = plan.operations.filter((operation) => operation.action === "skip").length;
+  if (skipped > 0) {
+    console.log(`  ⏭️  ${skipped} file(s) unchanged (skipped)`);
+  }
+
+  if (plan.warnings.length > 0) {
+    console.log("\n⚠️  Warnings:");
+    for (const warning of plan.warnings) {
+      console.log(`  - ${warning}`);
+    }
+  }
+
+  console.log(`\n📋 Plan ${plan.planId} saved.`);
+  if (plan.requiresApproval) {
+    console.log(`⚠️  ${plan.conflicts.length} file(s) were modified after generation and would be overwritten.`);
+    console.log(`   Review the conflicts, then run: swallowkit scaffold ${options.model} (or machine apply scaffold --plan ${plan.planId} --approve)`);
+  } else {
+    console.log(`   Run without --dry-run to apply: swallowkit scaffold ${options.model}`);
+  }
+}
+
+async function runStatusCommand(options: { artifacts?: boolean }): Promise<void> {
+  const inspection = inspectArtifacts();
+  const drift = await detectDrift();
+
+  console.log("📦 SwallowKit project status\n");
+
+  if (!inspection.ledgerFound) {
+    console.log("ℹ️  No artifact ledger (.swallowkit/artifacts.json) found yet.");
+    console.log("   Run scaffold once with this SwallowKit version to start tracking artifacts.\n");
+  } else {
+    const total = inspection.artifacts.length;
+    const missing = inspection.artifacts.filter((artifact) => !artifact.exists).length;
+    const modified = inspection.artifacts.filter((artifact) => artifact.modified).length;
+    console.log(`  Tracked artifacts: ${total}`);
+    console.log(`  Modified after generation: ${modified}`);
+    console.log(`  Missing: ${missing}\n`);
+
+    if (options.artifacts) {
+      for (const artifact of inspection.artifacts) {
+        const flags = [
+          artifact.modified ? "modified" : null,
+          !artifact.exists ? "missing" : null,
+        ].filter(Boolean);
+        const suffix = flags.length > 0 ? ` (${flags.join(", ")})` : "";
+        console.log(`  - ${artifact.path} [${artifact.ownership}]${suffix}`);
+      }
+      console.log("");
+    }
+  }
+
+  if (drift.findings.length === 0) {
+    console.log("✅ No drift detected.");
+    return;
+  }
+
+  console.log(`⚠️  Drift findings (${drift.findings.length}):`);
+  for (const finding of drift.findings) {
+    console.log(`  [${finding.severity}] ${finding.kind}: ${finding.message}`);
+    console.log(`     → ${finding.repairAction}`);
+  }
+}
+
+async function runVerifyCommand(options: { checks?: string }): Promise<void> {
+  console.log("🔎 Running verification checks...\n");
+
+  const result = await runVerify(options.checks ? options.checks.split(",") : undefined);
+
+  const statusIcons: Record<string, string> = {
+    pass: "✅",
+    fail: "❌",
+    skip: "⏭️ ",
+    error: "💥",
+  };
+
+  for (const check of result.checks) {
+    console.log(`  ${statusIcons[check.status]} ${check.id.padEnd(10)} ${check.title} (${check.durationMs}ms)`);
+    if (check.status === "fail" || check.status === "error") {
+      for (const action of check.suggestedActions) {
+        console.log(`     → ${action}`);
+      }
+    }
+  }
+
+  console.log(
+    `\n${result.summary.done ? "✅" : "❌"} ${result.summary.passed} passed, ${result.summary.failed} failed, ${result.summary.skipped} skipped, ${result.summary.errors} error(s)`
+  );
+
+  if (!result.summary.done) {
+    console.log('   Details: swallowkit machine explain failure');
+    process.exitCode = 1;
+  }
 }
 
 export async function runCli(argv: string[] = process.argv): Promise<void> {

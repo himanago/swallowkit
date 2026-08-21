@@ -37,7 +37,7 @@ const DEFAULT_CONFIG: SwallowKitConfig = {
 /**
  * 設定ファイルを読み込み
  */
-export function loadConfig(configPath?: string, throwOnError = false): SwallowKitConfig {
+export function loadConfig(configPath?: string, throwOnError = false, quiet = false): SwallowKitConfig {
   const defaultPaths = [
     "swallowkit.config.json",
     "swallowkit.config.js",
@@ -51,7 +51,7 @@ export function loadConfig(configPath?: string, throwOnError = false): SwallowKi
     
     if (fs.existsSync(fullPath)) {
       try {
-        console.log(`📋 設定ファイルを読み込み: ${filePath}`);
+        if (!quiet) console.log(`📋 設定ファイルを読み込み: ${filePath}`);
         
         if (filePath.endsWith(".json")) {
           const configData = fs.readFileSync(fullPath, "utf-8");
@@ -64,12 +64,12 @@ export function loadConfig(configPath?: string, throwOnError = false): SwallowKi
         }
       } catch (error) {
         if (throwOnError) throw error;
-        console.warn(`⚠️ 設定ファイルの読み込みに失敗: ${filePath}`, error);
+        if (!quiet) console.warn(`⚠️ 設定ファイルの読み込みに失敗: ${filePath}`, error);
       }
     }
   }
 
-  console.log("📋 デフォルト設定を使用");
+  if (!quiet) console.log("📋 デフォルト設定を使用");
   return DEFAULT_CONFIG;
 }
 
@@ -98,6 +98,7 @@ function mergeConfig(defaultConfig: SwallowKitConfig, userConfig: Partial<Swallo
     auth: userConfig.auth
       ? { ...defaultConfig.auth, ...userConfig.auth }
       : defaultConfig.auth,
+    verify: userConfig.verify ?? defaultConfig.verify,
   };
 }
 

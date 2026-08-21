@@ -53,8 +53,8 @@ export default function TodoDetailPage() {
       if (!res.ok) throw new Error('Failed to delete todo');
 
       router.push('/todo');
-    } catch (err: any) {
-      alert(\`Error: \${err.message}\`);
+    } catch (err) {
+      alert(\`Error: \${err instanceof Error ? err.message : String(err)}\`);
     }
   };
 
@@ -241,7 +241,7 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 
     try {
       // Array フィールドをカンマ区切りから配列に変換
-      const submitData: any = { ...formData };
+      const submitData: Record<string, unknown> = { ...formData };
 
 
 
@@ -265,17 +265,17 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
       }
 
       router.push('/todo');
-    } catch (err: any) {
-      if (err.issues) {
+    } catch (err) {
+      if (err instanceof z.ZodError) {
         // Zod validation errors
         const fieldErrors: Record<string, string> = {};
-        err.issues.forEach((error: any) => {
-          const field = error.path[0];
-          fieldErrors[field] = error.message;
+        err.issues.forEach((issue) => {
+          const field = String(issue.path[0]);
+          fieldErrors[field] = issue.message;
         });
         setErrors(fieldErrors);
       } else {
-        alert(\`Error: \${err.message}\`);
+        alert(\`Error: \${err instanceof Error ? err.message : String(err)}\`);
       }
       setLoading(false);
     }
@@ -405,8 +405,8 @@ export default function TodoListPage() {
       if (!res.ok) throw new Error('Failed to delete todo');
 
       setTodos(todos.filter((item) => item.id !== id));
-    } catch (err: any) {
-      alert(\`Error: \${err.message}\`);
+    } catch (err) {
+      alert(\`Error: \${err instanceof Error ? err.message : String(err)}\`);
     }
   };
 

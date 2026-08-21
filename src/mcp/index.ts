@@ -4,12 +4,14 @@ import * as path from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
-import type { MachineResponse } from "../machine/contracts";
+import type { MachineNextAction, MachineOperationStatus, MachineResponse } from "../machine/contracts";
 import { getSwallowKitVersion } from "../version";
 
 interface MachineSuccessPayload<TData> {
   ok: true;
   command: string;
+  status?: MachineOperationStatus;
+  nextActions?: MachineNextAction[];
   data: TData;
 }
 
@@ -59,10 +61,24 @@ async function executeMachineCommand<TData>(
   }
 
   if (!parsed.ok) {
-    throw new Error(parsed.error.message);
+    const detailsSuffix =
+      parsed.error.details !== undefined ? `\ndetails: ${JSON.stringify(parsed.error.details)}` : "";
+    const statusSuffix = parsed.status ? ` (status: ${parsed.status})` : "";
+    throw new Error(`[${parsed.error.code}] ${parsed.error.message}${statusSuffix}${detailsSuffix}`);
   }
 
   return parsed;
+}
+
+function withOperationStatus<TData>(response: MachineSuccessPayload<TData>): Record<string, unknown> {
+  const data = response.data && typeof response.data === "object"
+    ? (response.data as Record<string, unknown>)
+    : { data: response.data };
+  return {
+    status: response.status ?? "complete",
+    ...(response.nextActions && response.nextActions.length > 0 ? { nextActions: response.nextActions } : {}),
+    ...data,
+  };
 }
 
 function jsonTextContent(value: unknown): { content: Array<{ type: "text"; text: string }> } {
@@ -168,6 +184,186 @@ export function buildSwallowKitToolDefinitions(
 
       const response = await executeMachineCommand(args, runMachineCli);
       return jsonTextContent(response.data);
+      },
+    },
+    {
+      name: "swallowkit_plan_scaffold",
+      description: "Compute the scaffold change plan (files to create/update/overwrite, conflicts, warnings) without writing any files. Returns a planId usable with swallowkit_apply_scaffold.",
+      inputSchema: z.object({
+        model: z.string(),
+        functionsDir: z.string().optional(),
+        apiDir: z.string().optional(),
+        apiOnly: z.boolean().optional(),
+      }),
+      handler: async ({ model, functionsDir, apiDir, apiOnly }: { model: string; functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
+        const args = ["plan", "scaffold", model];
+        if (functionsDir) args.push("--functions-dir", functionsDir);
+        if (apiDir) args.push("--api-dir", apiDir);
+        if (apiOnly) args.push("--api-only");
+
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_apply_scaffold",
+      description: "Apply scaffold changes. Rejects stale plans (files changed after planning) and requires approve=true when user-modified files would be overwritten.",
+      inputSchema: z.object({
+        model: z.string().optional(),
+        planId: z.string().optional(),
+        approve: z.boolean().optional(),
+        functionsDir: z.string().optional(),
+        apiDir: z.string().optional(),
+        apiOnly: z.boolean().optional(),
+      }),
+      handler: async ({ model, planId, approve, functionsDir, apiDir, apiOnly }: { model?: string; planId?: string; approve?: boolean; functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
+        const args = ["apply", "scaffold"];
+        if (model) args.push(model);
+        if (planId) args.push("--plan", planId);
+        if (approve) args.push("--approve");
+        if (functionsDir) args.push("--functions-dir", functionsDir);
+        if (apiDir) args.push("--api-dir", apiDir);
+        if (apiOnly) args.push("--api-only");
+
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_inspect_artifacts",
+      description: "Return the generated-artifact ledger with ownership, source model, and modified/missing flags.",
+      inputSchema: z.object({}),
+      handler: async () => {
+        const response = await executeMachineCommand(["inspect", "artifacts"], runMachineCli);
+        return jsonTextContent(withSwallowKitMetadata(response.data));
+      },
+    },
+    {
+      name: "swallowkit_inspect_drift",
+      description: "Detect drift between generated artifacts and the current project state (schema changes, manual edits, missing files, manifest mismatch). Each finding includes a repairAction.",
+      inputSchema: z.object({}),
+      handler: async () => {
+        const response = await executeMachineCommand(["inspect", "drift"], runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_verify_project",
+      description: "Run verification checks (structure, drift, typecheck by default; build, lint, test and custom checks from swallowkit.config verify.checks are also available) and return machine-readable evidence. summary.done=true means the project passed all checks.",
+      inputSchema: z.object({
+        checks: z.array(z.string()).optional(),
+      }),
+      handler: async ({ checks }: { checks?: string[] }) => {
+        const args = ["verify", "project"];
+        if (checks && checks.length > 0) {
+          args.push("--checks", checks.join(","));
+        }
+
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_explain_failure",
+      description: "Explain failures from the most recent swallowkit_verify_project run, including evidence and suggested actions.",
+      inputSchema: z.object({
+        check: z.string().optional(),
+      }),
+      handler: async ({ check }: { check?: string }) => {
+        const args = ["explain", "failure"];
+        if (check) {
+          args.push("--check", check);
+        }
+
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_inspect_boundaries",
+      description: "Return the responsibility boundary contract: which paths are deterministic (regenerate via plan/apply), which are AI/human-authored (free edit), and which are shared extension points.",
+      inputSchema: z.object({}),
+      handler: async () => {
+        const response = await executeMachineCommand(["inspect", "boundaries"], runMachineCli);
+        return jsonTextContent(withSwallowKitMetadata(response.data));
+      },
+    },
+    {
+      name: "swallowkit_plan_auth",
+      description: "Compute the add-auth change plan (files to create/update/overwrite, conflicts, warnings) without writing any files. Returns a planId usable with swallowkit_apply_auth.",
+      inputSchema: z.object({
+        provider: z.enum(["custom-jwt", "swa", "external-token", "none"]),
+        scheme: z.string().optional(),
+      }),
+      handler: async ({ provider, scheme }: { provider: string; scheme?: string }) => {
+        const args = ["plan", "auth", "--provider", provider];
+        if (scheme) args.push("--scheme", scheme);
+
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_apply_auth",
+      description: "Apply add-auth changes. Rejects stale plans and requires approve=true when user-modified files would be overwritten.",
+      inputSchema: z.object({
+        provider: z.enum(["custom-jwt", "swa", "external-token", "none"]).optional(),
+        scheme: z.string().optional(),
+        planId: z.string().optional(),
+        approve: z.boolean().optional(),
+      }),
+      handler: async ({ provider, scheme, planId, approve }: { provider?: string; scheme?: string; planId?: string; approve?: boolean }) => {
+        const args = ["apply", "auth"];
+        if (planId) args.push("--plan", planId);
+        if (provider) args.push("--provider", provider);
+        if (scheme) args.push("--scheme", scheme);
+        if (approve) args.push("--approve");
+
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_inspect_infra",
+      description: "Inspect Bicep infrastructure assets deterministically (params, modules, outputs, container wiring). Does not call Azure.",
+      inputSchema: z.object({}),
+      handler: async () => {
+        const response = await executeMachineCommand(["inspect", "infra"], runMachineCli);
+        return jsonTextContent(withSwallowKitMetadata(response.data));
+      },
+    },
+    {
+      name: "swallowkit_plan_provision",
+      description: "Preflight Azure provisioning locally (Bicep analysis, az CLI availability, command preview). Never deploys. Set whatIf=true to run az what-if (requires az login). The returned plan always requires human approval.",
+      inputSchema: z.object({
+        resourceGroup: z.string(),
+        location: z.string(),
+        swaLocation: z.string(),
+        subscription: z.string().optional(),
+        whatIf: z.boolean().optional(),
+      }),
+      handler: async ({ resourceGroup, location, swaLocation, subscription, whatIf }: { resourceGroup: string; location: string; swaLocation: string; subscription?: string; whatIf?: boolean }) => {
+        const args = ["plan", "provision", "--resource-group", resourceGroup, "--location", location, "--swa-location", swaLocation];
+        if (subscription) args.push("--subscription", subscription);
+        if (whatIf) args.push("--what-if");
+
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_apply_provision",
+      description: "Apply an approved provisioning plan. Creates billable Azure resources; approve=true is always required and must reflect explicit human consent.",
+      inputSchema: z.object({
+        planId: z.string(),
+        approve: z.boolean().optional(),
+      }),
+      handler: async ({ planId, approve }: { planId: string; approve?: boolean }) => {
+        const args = ["apply", "provision", "--plan", planId];
+        if (approve) args.push("--approve");
+
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
       },
     },
   ];

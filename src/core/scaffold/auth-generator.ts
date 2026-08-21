@@ -20,6 +20,7 @@ export function generateNamedAuthRouterTS(config: NormalizedAuthConfig): string 
   })).join("\n");
   const verifiers = external.map(([name]) => { const id = safeIdentifier(name); return `${JSON.stringify(name)}: async (token: string) => { try { return await verify_${id}(token); } catch (e) { if (e instanceof Error_${id}) throw new AuthError(e.status, e.message); throw e; } }`; }).join(",\n  ");
   return `import type { HttpRequest, HttpResponseInit } from '@azure/functions';
+/* eslint-disable @typescript-eslint/no-explicit-any -- generated multi-scheme router works with dynamically shaped principals */
 ${imports}
 export type AuthPrincipal = { subject: string; scheme: string; issuer: string; roles: string[]; claims: Record<string, unknown>; /** @deprecated */ userId?: string; /** @deprecated */ userDetails?: string };
 export class AuthError extends Error { constructor(public status: 401 | 403 | 503, message: string) { super(message); } }
@@ -283,6 +284,7 @@ export function generateAuthFunctionsTS(
           'SELECT * FROM ${config.userTable} WHERE ${config.loginIdColumn} = ?',
           [body.loginId]
         );
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mysql2 rows are dynamically shaped
         const users = rows as any[];`
     : provider === "postgres"
     ? `const result = await ${connVar}.query(
@@ -360,7 +362,7 @@ app.http('auth-login', {
       } finally {
         ${cleanup}
       }
-    } catch (error: any) {
+    } catch (error) {
       context.error('Login error:', error);
       return { status: 500, jsonBody: { error: 'Login failed' } };
     }
@@ -998,7 +1000,7 @@ export async function POST(request: NextRequest) {
       maxAge: 86400,
     });
     return response;
-  } catch (error: any) {
+  } catch (error) {
     console.error('[BFF] Login error:', error);
     return NextResponse.json({ error: 'Login failed' }, { status: 500 });
   }
@@ -1043,7 +1045,7 @@ export async function GET() {
 
     const data = await result.json();
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error) {
     console.error('[BFF] Auth/me error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
@@ -1212,7 +1214,7 @@ export default function LoginPage() {
 export function generateAuthContext(): string {
   return `'use client';
 
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 
 interface AuthUser {
@@ -1239,25 +1241,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  const fetchUser = useCallback(async () => {
-    try {
-      const res = await fetch('/api/auth/me');
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data);
-      } else {
-        setUser(null);
-      }
-    } catch {
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    fetchUser();
-  }, [fetchUser]);
+    let cancelled = false;
+    fetch('/api/auth/me')
+      .then((res) => (res.ok ? res.json() : null))
+      .catch(() => null)
+      .then((data) => {
+        if (cancelled) return;
+        setUser(data);
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const login = async (loginId: string, password: string) => {
     try {
@@ -1311,7 +1308,7 @@ export function useAuth() {
 // ============================================================
 
 export function generateBFFCallFunctionWithAuth(): string {
-  return `import { NextRequest, NextResponse } from 'next/server';
+  return `import { NextResponse } from 'next/server';
 import { headers } from 'next/headers';
 import { z } from 'zod/v4';
 
@@ -1335,13 +1332,13 @@ function getFunctionsKeyHeaders(functionsBaseUrl: string): Record<string, string
   throw new Error('BACKEND_FUNCTIONS_KEY is required for non-local Functions calls');
 }
 
-interface CallFunctionConfig<TInput = any, TOutput = any> {
+interface CallFunctionConfig<TInput = unknown, TOutput = unknown> {
   /** HTTP メソッド */
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   /** Azure Functions のパス (例: '/api/todo', '/api/todo/123') */
   path: string;
   /** リクエストボディ (POST/PUT 用) */
-  body?: any;
+  body?: unknown;
   /** 入力バリデーション用 Zod スキーマ (省略時はバリデーションなし) */
   inputSchema?: z.ZodSchema<TInput>;
   /** 出力バリデーション用 Zod スキーマ (省略時はそのまま返す) */
@@ -1350,7 +1347,7 @@ interface CallFunctionConfig<TInput = any, TOutput = any> {
   successStatus?: number;
 }
 
-export async function callFunction<TInput = any, TOutput = any>(
+export async function callFunction<TInput = unknown, TOutput = unknown>(
   config: CallFunctionConfig<TInput, TOutput>
 ): Promise<NextResponse> {
   const { method, path, body, inputSchema, responseSchema, successStatus = 200 } = config;
@@ -1428,10 +1425,10 @@ export async function callFunction<TInput = any, TOutput = any>(
     }
 
     return NextResponse.json(data, { status: successStatus });
-  } catch (error: any) {
+  } catch (error) {
     console.error(\`[BFF] Error:\`, error);
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: error instanceof Error ? error.message : 'Internal server error' },
       { status: 500 }
     );
   }

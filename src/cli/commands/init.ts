@@ -17,6 +17,7 @@ import {
   getSwaAppBuildCommand,
 } from "../../utils/package-manager";
 import { syncProjectManifest } from "../../core/project/manifest";
+import { writeWorkflowDocs, writeAgentSkills } from "../../core/project/workflows";
 import {
   buildCSharpCodegenToolManifestSource,
   buildPythonCodegenRequirementsSource,
@@ -296,6 +297,25 @@ export async function initCommand(options: InitOptions) {
       process.exit(1);
     }
 
+    // 非対話環境でプロンプトに入るとハングするため、不足フラグを明示エラーで案内する
+    const interactive =
+      process.stdin.isTTY === true && process.stdout.isTTY === true && !process.env.CI;
+    if (!interactive) {
+      const missing: string[] = [];
+      if (!options.cicd) missing.push('--cicd <github|azure|skip>');
+      if (!options.backendLanguage) missing.push('--backend-language <typescript|csharp|python>');
+      if (!options.cosmosDbMode) missing.push('--cosmos-db-mode <freetier|serverless>');
+      if (!options.vnet) missing.push('--vnet <outbound|none>');
+      if (!options.swaPlan) missing.push('--swa-plan <free|standard>');
+      if (missing.length > 0) {
+        console.error(
+          `❌ Non-interactive environment detected. Pass all configuration flags to run init without prompts:\n` +
+            missing.map((flag) => `   ${flag}`).join('\n')
+        );
+        process.exit(1);
+      }
+    }
+
     // Use flag values if provided, otherwise prompt interactively
     const cicdProvider: CiCdProvider = options.cicd || await promptCiCd();
     const backendLanguage: BackendLanguage = options.backendLanguage || await promptBackendLanguage();
@@ -564,8 +584,9 @@ export async function withNpmLockfileSafeManifests(projectDir: string, action: (
  * For pnpm, additionally tee stdout/stderr to a buffer so that if the command
  * fails due to `ERR_PNPM_IGNORED_BUILDS`, we can:
  *   1. detect which packages were ignored,
- *   2. interactively ask the user whether to approve them, and
- *   3. run `pnpm approve-builds` followed by a retry of the original command.
+ *   2. approve them (interactively or automatically),
+ *   3. clean-reinstall and retry — repeating if pnpm reports further ignored
+ *      packages (pnpm does not always list every unapproved package at once).
  */
 async function runPackageManagerCommand(
   pm: PackageManager,
@@ -573,24 +594,46 @@ async function runPackageManagerCommand(
   projectDir: string,
   label: string,
 ): Promise<void> {
-  const { code, output } = await spawnAndCapture(pm, args, projectDir, pm === 'pnpm');
+  let { code, output } = await spawnAndCapture(pm, args, projectDir, pm === 'pnpm');
 
   if (code === 0) return;
 
   if (pm === 'pnpm') {
-    const ignoredBuilds = parseIgnoredBuilds(output);
-    if (ignoredBuilds.length > 0) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const ignoredBuilds = parseIgnoredBuilds(output);
+      if (ignoredBuilds.length === 0) break;
       const approved = await maybeApproveBuilds(projectDir, ignoredBuilds);
-      if (approved) {
-        // Retry the original command now that build scripts are approved.
-        const retry = await spawnAndCapture(pm, args, projectDir, true);
-        if (retry.code === 0) return;
-        throw new Error(`${label} exited with code ${retry.code} after approving builds`);
-      }
+      if (!approved) break;
+      // 中断された install はパッケージ抽出が不完全なまま "Already up to date"
+      // と判定されることがあるため、node_modules を消して決定論的に入れ直す
+      removeWorkspaceNodeModules(projectDir);
+      const retry = await spawnAndCapture(pm, args, projectDir, true);
+      code = retry.code;
+      output = retry.output;
+      if (code === 0) return;
+    }
+    if (parseIgnoredBuilds(output).length > 0) {
+      throw new Error(
+        `${label} exited with code ${code}: pnpm still reports unapproved build scripts. ` +
+          'Run "pnpm approve-builds" inside the project, then re-run the command.'
+      );
     }
   }
 
   throw new Error(`${label} exited with code ${code}`);
+}
+
+/** workspace root と直下パッケージの node_modules を削除する(クリーン再インストール用)。 */
+function removeWorkspaceNodeModules(projectDir: string): void {
+  const targets = [projectDir, ...fs.readdirSync(projectDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.'))
+    .map((entry) => path.join(projectDir, entry.name))];
+  for (const dir of targets) {
+    const nodeModules = path.join(dir, 'node_modules');
+    if (fs.existsSync(nodeModules)) {
+      fs.rmSync(nodeModules, { recursive: true, force: true });
+    }
+  }
 }
 
 /**
@@ -651,12 +694,28 @@ export function parseIgnoredBuilds(output: string): string[] {
  * Prompt the user and, if approved, run `pnpm approve-builds` followed by
  * `pnpm rebuild <packages>`. Returns true if the user approved (regardless of
  * which packages they actually selected inside approve-builds).
+ *
+ * In non-interactive environments (CI, coding agents, piped output) prompting
+ * would hang forever, so build scripts are approved automatically via
+ * package.json `pnpm.onlyBuiltDependencies` instead.
  */
 async function maybeApproveBuilds(projectDir: string, ignoredBuilds: string[]): Promise<boolean> {
   console.log(
     `\n⚠️  pnpm refused to run build scripts for: ${ignoredBuilds.join(', ')}\n` +
       '   These packages (e.g. sharp) need their build scripts to run correctly.\n',
   );
+
+  const interactive =
+    process.stdin.isTTY === true && process.stdout.isTTY === true && !process.env.CI;
+  if (!interactive) {
+    console.log(
+      'ℹ️  Non-interactive environment detected — approving build scripts automatically\n' +
+        '   via "allowBuilds" in pnpm-workspace.yaml.\n',
+    );
+    // rebuild は不要: 呼び出し側がクリーン再インストールで build script を実行する
+    approveBuildsViaWorkspaceYaml(projectDir, ignoredBuilds);
+    return true;
+  }
 
   const response = await prompts({
     type: 'confirm',
@@ -677,6 +736,43 @@ async function maybeApproveBuilds(projectDir: string, ignoredBuilds: string[]): 
 
   console.log('\n✅ Build scripts approved and packages rebuilt\n');
   return true;
+}
+
+/**
+ * pnpm-workspace.yaml の allowBuilds にパッケージを true で登録して build script を許可する。
+ * (pnpm 11+ の正準設定。失敗時に pnpm が追記する placeholder 行も true に置き換える)
+ */
+export function approveBuildsViaWorkspaceYaml(projectDir: string, packages: string[]): void {
+  const workspaceYamlPath = path.join(projectDir, 'pnpm-workspace.yaml');
+  const existing = fs.existsSync(workspaceYamlPath)
+    ? fs.readFileSync(workspaceYamlPath, 'utf-8')
+    : '';
+  const yamlKey = (pkg: string) => (/^[A-Za-z0-9_.-]+$/.test(pkg) ? pkg : `'${pkg}'`);
+
+  const lines = existing.length > 0 ? existing.split(/\r?\n/) : [];
+  const keyIndex = lines.findIndex((line) => /^allowBuilds\s*:/.test(line));
+
+  if (keyIndex === -1) {
+    const block = `allowBuilds:\n${packages.map((pkg) => `  ${yamlKey(pkg)}: true`).join('\n')}\n`;
+    const base = existing.length > 0 && !existing.endsWith('\n') ? `${existing}\n` : existing;
+    fs.writeFileSync(workspaceYamlPath, `${base}${block}`, 'utf-8');
+    return;
+  }
+
+  // 既存マップ内の対象パッケージ(placeholder 含む)を true に更新し、無いものは追記する
+  let endIndex = keyIndex + 1;
+  const updated = new Set<string>();
+  while (endIndex < lines.length && /^\s+\S/.test(lines[endIndex])) {
+    const entry = lines[endIndex].match(/^\s+['"]?([A-Za-z0-9@/_.-]+)['"]?\s*:/);
+    if (entry && packages.includes(entry[1])) {
+      lines[endIndex] = `  ${yamlKey(entry[1])}: true`;
+      updated.add(entry[1]);
+    }
+    endIndex++;
+  }
+  const additions = packages.filter((pkg) => !updated.has(pkg)).map((pkg) => `  ${yamlKey(pkg)}: true`);
+  lines.splice(endIndex, 0, ...additions);
+  fs.writeFileSync(workspaceYamlPath, lines.join('\n'), 'utf-8');
 }
 
 function runSimple(command: string, args: string[], cwd: string): Promise<void> {
@@ -946,7 +1042,7 @@ function getFunctionsKeyHeaders(functionsBaseUrl: string): Record<string, string
 async function request<T>(
   endpoint: string,
   method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-  body?: any,
+  body?: unknown,
   queryParams?: Record<string, string>
 ): Promise<T> {
   const functionsBaseUrl = getFunctionsBaseUrl();
@@ -1018,14 +1114,14 @@ export const api = {
   /**
    * Make a POST request
    */
-  post: <T>(endpoint: string, body?: any): Promise<T> => {
+  post: <T>(endpoint: string, body?: unknown): Promise<T> => {
     return request<T>(endpoint, 'POST', body);
   },
 
   /**
    * Make a PUT request
    */
-  put: <T>(endpoint: string, body?: any): Promise<T> => {
+  put: <T>(endpoint: string, body?: unknown): Promise<T> => {
     return request<T>(endpoint, 'PUT', body);
   },
 
@@ -1086,7 +1182,7 @@ export async function register() {
       const originalConsoleError = console.error;
       const originalConsoleWarn = console.warn;
       
-      console.log = function(...args: any[]) {
+      console.log = function(...args: unknown[]) {
         originalConsoleLog.apply(console, args);
         const message = args.map(arg => 
           typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
@@ -1097,7 +1193,7 @@ export async function register() {
         });
       };
       
-      console.error = function(...args: any[]) {
+      console.error = function(...args: unknown[]) {
         originalConsoleError.apply(console, args);
         const message = args.map(arg => 
           typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
@@ -1108,7 +1204,7 @@ export async function register() {
         });
       };
       
-      console.warn = function(...args: any[]) {
+      console.warn = function(...args: unknown[]) {
         originalConsoleWarn.apply(console, args);
         const message = args.map(arg => 
           typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
@@ -2069,17 +2165,65 @@ ${functionsStructureLine}
 └── .github/workflows/     # CI/CD workflows (if configured)
 \`\`\`
 
+## Setup & Everyday Commands
+
+\`\`\`bash
+${pm} install                                  # install dependencies
+${runCmd} swallowkit dev                       # Next.js (3000) + Azure Functions (7071)
+${pm} run build                                # production build
+${pm} run lint                                 # ESLint (generated code must stay error-free)
+${runCmd} swallowkit verify                    # structure / drift / typecheck (exit 1 on failure)
+\`\`\`
+
+Run \`${runCmd} swallowkit verify\` (or \`machine verify project\`) before finishing any task.
+
 ## SwallowKit MCP / Machine Workflow
 
 - This repository includes a project-scoped \`.mcp.json\` file that resolves and starts the latest SwallowKit MCP server on each launch. Set \`SWALLOWKIT_MCP_VERSION\` in that file to pin a specific version.
 - Prefer the \`swallowkit_*\` MCP tools for framework-owned inspection, validation, and generation when they are available.
 - If MCP is unavailable in your runtime, fall back to the machine CLI:
   - \`${runCmd} swallowkit machine inspect project\`
+  - \`${runCmd} swallowkit machine inspect boundaries\` — responsibility boundary contract (which files you may edit freely)
   - \`${runCmd} swallowkit machine validate project\`
-  - \`${runCmd} swallowkit machine generate scaffold <name> --api-only\`
+  - \`${runCmd} swallowkit machine plan scaffold <name>\` → \`apply scaffold --plan <planId>\` — safe two-phase generation
+  - \`${runCmd} swallowkit machine verify project\` → \`explain failure\` — verification loop
 - Do not hand-edit framework-owned artifacts when the MCP or machine interface can generate or validate them for you.
 - The MCP bootstrap uses ${pm} and requires network access when the selected version is not cached.
 - **Always invoke SwallowKit via \`${runCmd}\`.** Do not mix package manager commands.
+
+## Autonomous Loop (Plan / Apply / Verify)
+
+Machine commands return a \`status\` terminal state (\`complete\` / \`in-progress\` / \`blocked\` / \`requires-human\` / \`failed\`) and \`nextActions\`. Standard loop:
+
+1. \`plan scaffold <model>\` — compute changes without writing (get \`planId\`)
+2. \`apply scaffold --plan <planId>\` — apply with freshness + approval checks
+3. \`verify project\` — structure / drift / typecheck (and project-specific checks)
+4. \`explain failure\` — evidence and repair actions when verification fails
+
+Step-by-step runbooks live in \`.swallowkit/workflows/\` (agent-agnostic Markdown):
+
+- \`.swallowkit/workflows/add-model.md\`
+- \`.swallowkit/workflows/modify-model.md\`
+- \`.swallowkit/workflows/verify-and-repair.md\`
+- \`.swallowkit/workflows/provision.md\`
+
+The same runbooks are installed as **Agent Skills** ([agentskills.io](https://agentskills.io/) open standard) under \`.github/skills/\`:
+
+| Skill | Use when |
+|-------|----------|
+| \`swallowkit-add-model\` | adding a new model / entity / CRUD feature |
+| \`swallowkit-modify-model\` | changing an existing schema and re-aligning artifacts |
+| \`swallowkit-verify-repair\` | converging to a verified state after any change |
+| \`swallowkit-provision\` | provisioning Azure infrastructure (human approval required) |
+
+Skills-aware agents (GitHub Copilot in VS Code / CLI / cloud agent, and other agents supporting the standard) discover these automatically from their \`name\`/\`description\` and load the body on demand. If your agent does not support skills, read the equivalent runbook in \`.swallowkit/workflows/\` before performing these tasks.
+
+## Responsibility Boundary (AI × Deterministic Generation)
+
+- **ai-authored (write freely)**: \`shared/models/\`, business logic, custom pages/components, tests.
+- **deterministic (never hand-edit)**: artifacts recorded in \`.swallowkit/artifacts.json\` with \`managed\` ownership, and \`.swallowkit/\` metadata. Change the model/config and regenerate via plan/apply instead.
+- **shared (edit outside markers)**: \`infra/main.bicep\`, \`functions/function_app.py\`, \`shared/index.ts\`.
+- Full machine-readable contract: \`${runCmd} swallowkit machine inspect boundaries\`
 
 ## Critical Design Principles
 
@@ -2191,11 +2335,12 @@ app.http('{model}-get-all', {
 | Cosmos DB partition key | \`/id\` (default) | Custom: \`export const partitionKey = '/field'\` |
 | Bicep container file | \`infra/containers/{kebab-case}-container.bicep\` | \`infra/containers/todo-container.bicep\` |
 
-## Adding New Models (SwallowKit CLI Skills)
+## Adding New Models (SwallowKit CLI)
 
 Use the SwallowKit CLI — do **not** manually create model files or CRUD boilerplate.
+For autonomous agents, prefer the plan/apply loop above (or the \`swallowkit-add-model\` skill); the commands below are the human-friendly equivalents.
 
-### Skill: Create a new data model
+### Create a new data model
 
 \`\`\`bash
 ${runCmd} swallowkit create-model <name>
@@ -2206,7 +2351,7 @@ ${runCmd} swallowkit create-model user post comment
 Creates \`shared/models/<name>.ts\` with a Zod schema template including \`id\`, \`createdAt\`, \`updatedAt\`.
 Edit the generated file to add your domain-specific fields, then run scaffold.
 
-### Skill: Generate full CRUD from a model
+### Generate full CRUD from a model
 
 \`\`\`bash
 ${runCmd} swallowkit scaffold shared/models/<name>.ts
@@ -2218,7 +2363,7 @@ Generates:
 - UI pages (\`app/<name>/page.tsx\`, detail, create, edit pages)
 - Cosmos DB Bicep container config (\`infra/containers/<name>-container.bicep\`)
 
-### Skill: Start development servers
+### Start development servers
 
 \`\`\`bash
 ${runCmd} swallowkit dev
@@ -2227,7 +2372,7 @@ ${runCmd} swallowkit dev
 Runs Next.js (http://localhost:3000) and Azure Functions (http://localhost:7071) concurrently.
 Checks for Cosmos DB Emulator availability.
 
-### Skill: Provision Azure resources
+### Provision Azure resources
 
 \`\`\`bash
 ${runCmd} swallowkit provision --resource-group <name> --location <region>
@@ -2287,6 +2432,9 @@ This file is for Claude Code. Read AGENTS.md in the project root for the full ar
 - This repository includes a project-scoped \`.mcp.json\` that resolves and starts the latest SwallowKit MCP server on each launch. Set \`SWALLOWKIT_MCP_VERSION\` in that file to pin a specific version.
 - When the \`swallowkit_*\` tools are available, prefer them for inspect / validate / generate tasks.
 - If MCP is unavailable, use \`${runCmd} swallowkit machine ...\` instead.
+- For generation, prefer the two-phase flow: \`plan scaffold <name>\` → \`apply scaffold --plan <planId>\` → \`verify project\`. Runbooks: \`.swallowkit/workflows/\`.
+- Agent Skills (agentskills.io) for the same workflows live in \`.github/skills/\` (\`swallowkit-add-model\`, \`swallowkit-modify-model\`, \`swallowkit-verify-repair\`, \`swallowkit-provision\`). If your runtime does not auto-discover them, read the relevant \`SKILL.md\` before performing these tasks.
+- Boundary contract (what you may edit freely vs what SwallowKit regenerates): \`${runCmd} swallowkit machine inspect boundaries\`
 - **Always invoke SwallowKit via \`${runCmd}\`.** Do not mix package manager commands.
 
 ## SwallowKit CLI Commands
@@ -2340,7 +2488,9 @@ Frontend (Next.js App Router) → BFF (Next.js API Routes) → Backend (Azure Fu
 
 - Prefer the SwallowKit MCP or machine interface for framework-owned inspection, validation, and generation instead of hand-editing generated files.
 - If your runtime loads project-scoped MCP config from \`.mcp.json\`, use the \`swallowkit_*\` tools.
-- Otherwise use \`${runCmd} swallowkit machine inspect project\`, \`${runCmd} swallowkit machine validate project\`, and \`${runCmd} swallowkit machine generate scaffold <name> --api-only\`.
+- Otherwise use \`${runCmd} swallowkit machine inspect project\`, \`${runCmd} swallowkit machine validate project\`, and the two-phase flow \`${runCmd} swallowkit machine plan scaffold <name>\` → \`apply scaffold --plan <planId>\` → \`verify project\`.
+- Agent Skills in \`.github/skills/\` (\`swallowkit-add-model\`, \`swallowkit-modify-model\`, \`swallowkit-verify-repair\`, \`swallowkit-provision\`) cover these workflows — load them when the task matches.
+- Boundary contract: \`${runCmd} swallowkit machine inspect boundaries\` tells you which files are free to edit and which are regenerated. Runbooks live in \`.swallowkit/workflows/\`.
 - **Always invoke SwallowKit via \`${runCmd}\`.** Do not mix package manager commands.
 
 ## Naming
@@ -2476,6 +2626,17 @@ app.http('{model}-get-all', {
   console.log('     - bff-routes.instructions.md');
   console.log('     - azure-functions.instructions.md');
 
+  // ── 5. .swallowkit/workflows/*.md (agent-agnostic runbooks) ────────
+  writeWorkflowDocs(projectDir, runCmd);
+  console.log('  ✅ .swallowkit/workflows/ (agent-agnostic autonomous-loop runbooks)');
+
+  // ── 6. .github/skills/<name>/SKILL.md (Agent Skills, agentskills.io) ─
+  const skillPaths = writeAgentSkills(projectDir, runCmd);
+  console.log('  ✅ .github/skills/ (Agent Skills — agentskills.io open standard)');
+  for (const skillPath of skillPaths) {
+    console.log(`     - ${skillPath}`);
+  }
+
   console.log('\n✅ AI agent files created\n');
   console.log('   Supported agents:');
   console.log('   - OpenAI Codex          → AGENTS.md');
@@ -2483,6 +2644,7 @@ app.http('{model}-get-all', {
   console.log('   - Project MCP runtimes  → .mcp.json');
   console.log('   - GitHub Copilot        → .github/copilot-instructions.md');
   console.log('   - GitHub Copilot (edit) → .github/instructions/*.instructions.md');
+  console.log('   - Skills-aware agents   → .github/skills/*/SKILL.md');
   console.log('');
 }
 

@@ -43,6 +43,20 @@ SwallowKit generates code that you own. There is no hidden runtime layer.
 
 SwallowKit is a scaffolding tool, not a framework. It produces a starting point; you take it from there.
 
+### Ownership classes
+
+Generated artifacts are recorded in `.swallowkit/artifacts.json` (the artifact ledger, tracked in Git) together with an ownership class.
+
+| Ownership | Meaning | On regeneration |
+| --- | --- | --- |
+| `managed` | Fully managed by SwallowKit (Functions CRUD, BFF routes, UI pages, etc.) | Overwritten. Files hand-edited after generation are detected as conflicts and require approval (`--approve`) to overwrite |
+| `generated-once` | Templates generated only on first run | Never overwritten |
+| `user-owned` | Owned by the developer (e.g. model files) | SwallowKit only creates them; subsequent edits belong to you |
+| `extension-point` | Marker-based append points (`function_app.py`, `infra/main.bicep`, `shared/index.ts`, etc.) | SwallowKit only appends at the marker; your other edits are preserved |
+| `metadata` | Tooling metadata (under `.swallowkit/`) | Rebuilt entirely by SwallowKit |
+
+Editing a `managed` file is possible, but the change will be lost on regeneration — prefer making permanent changes in models, configuration, or extension points. If you do edit one, `swallowkit status` / `swallowkit machine inspect drift` will detect the divergence, and the plan / apply flow will ask for approval before overwriting.
+
 ## Layer responsibilities
 
 | Layer | Location | Responsibility |

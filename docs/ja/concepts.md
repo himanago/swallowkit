@@ -43,6 +43,20 @@ SwallowKit が生成するコードは開発者のものです。隠されたラ
 
 SwallowKit はフレームワークではなく scaffolding ツールです。出発点を提供し、そこから先は開発者が引き継ぎます。
 
+### Ownership の分類
+
+生成物は `.swallowkit/artifacts.json`（生成物台帳、Git 管理対象）に ownership 付きで記録されます。
+
+| Ownership | 意味 | 再生成時の扱い |
+| --- | --- | --- |
+| `managed` | SwallowKit が全体を管理（Functions CRUD、BFF ルート、UI ページなど） | 上書き再生成される。生成後に手編集したファイルは競合として検出され、上書きには承認（`--approve`）が必要 |
+| `generated-once` | 初回のみ生成されるテンプレート | 再生成で上書きされない |
+| `user-owned` | 開発者が所有（モデルファイルなど） | SwallowKit は作成のみ。以後の編集は開発者に委ねられる |
+| `extension-point` | マーカー付きの追記ポイント（`function_app.py`、`infra/main.bicep`、`shared/index.ts` など） | SwallowKit はマーカー部分にのみ追記し、それ以外の編集は保持される |
+| `metadata` | ツール向けメタデータ（`.swallowkit/` 配下） | SwallowKit が全体を再構築する |
+
+`managed` なファイルを編集すること自体は可能ですが、再生成すると失われるため、恒久的な変更はモデル・設定・extension-point 側で行うことを推奨します。編集した場合も、`swallowkit status` / `swallowkit machine inspect drift` が乖離を検出し、plan / apply フローが上書き前に承認を求めます。
+
 ## レイヤーの責任分担
 
 | レイヤー | 場所 | 責任 |

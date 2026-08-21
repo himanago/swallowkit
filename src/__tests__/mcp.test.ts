@@ -81,6 +81,110 @@ describe("SwallowKit MCP tool definitions", () => {
     expect(JSON.parse(result.content[0].text)).toEqual({ createdFiles: ["functions/src/todo.ts"] });
   });
 
+  it("exposes the agent-loop tools (plan/apply/artifacts/drift/verify/explain)", () => {
+    const names = buildSwallowKitToolDefinitions(jest.fn() as unknown as MachineCliRunner).map((tool) => tool.name);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "swallowkit_plan_scaffold",
+        "swallowkit_apply_scaffold",
+        "swallowkit_inspect_artifacts",
+        "swallowkit_inspect_drift",
+        "swallowkit_verify_project",
+        "swallowkit_explain_failure",
+      ])
+    );
+  });
+
+  it("delegates plan_scaffold and passes through status and nextActions", async () => {
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({
+        ok: true,
+        command: "plan-scaffold",
+        status: "requires-human",
+        nextActions: [{ command: "swallowkit machine apply scaffold --plan abc --approve", description: "Apply." }],
+        data: { planId: "abc", requiresApproval: true, operations: [] },
+      }),
+      stderr: "",
+      exitCode: 0,
+    }));
+
+    const tool = buildSwallowKitToolDefinitions(runner as MachineCliRunner).find(
+      (candidate) => candidate.name === "swallowkit_plan_scaffold"
+    );
+    const result = await tool!.handler({ model: "todo", apiOnly: true });
+
+    expect(runner).toHaveBeenCalledWith(["plan", "scaffold", "todo", "--api-only"]);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.status).toBe("requires-human");
+    expect(parsed.planId).toBe("abc");
+    expect(parsed.nextActions).toHaveLength(1);
+  });
+
+  it("delegates apply_scaffold with plan and approve flags", async () => {
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({
+        ok: true,
+        command: "apply-scaffold",
+        status: "complete",
+        data: { createdFiles: [] },
+      }),
+      stderr: "",
+      exitCode: 0,
+    }));
+
+    const tool = buildSwallowKitToolDefinitions(runner as MachineCliRunner).find(
+      (candidate) => candidate.name === "swallowkit_apply_scaffold"
+    );
+    await tool!.handler({ planId: "abc", approve: true });
+
+    expect(runner).toHaveBeenCalledWith(["apply", "scaffold", "--plan", "abc", "--approve"]);
+  });
+
+  it("surfaces machine error code, status, and details to the agent", async () => {
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({
+        ok: false,
+        command: "apply-scaffold",
+        status: "blocked",
+        error: {
+          code: "stale-plan",
+          message: "Plan is stale.",
+          details: { changedFiles: ["shared/models/todo.ts"] },
+        },
+      }),
+      stderr: "",
+      exitCode: 1,
+    }));
+
+    const tool = buildSwallowKitToolDefinitions(runner as MachineCliRunner).find(
+      (candidate) => candidate.name === "swallowkit_apply_scaffold"
+    );
+
+    await expect(tool!.handler({ planId: "abc" })).rejects.toThrow(
+      /\[stale-plan\] Plan is stale\. \(status: blocked\)[\s\S]*changedFiles/
+    );
+  });
+
+  it("delegates verify_project with selected checks", async () => {
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({
+        ok: true,
+        command: "verify-project",
+        status: "complete",
+        data: { summary: { done: true } },
+      }),
+      stderr: "",
+      exitCode: 0,
+    }));
+
+    const tool = buildSwallowKitToolDefinitions(runner as MachineCliRunner).find(
+      (candidate) => candidate.name === "swallowkit_verify_project"
+    );
+    await tool!.handler({ checks: ["structure", "drift"] });
+
+    expect(runner).toHaveBeenCalledWith(["verify", "project", "--checks", "structure,drift"]);
+  });
+
   itWhenBuiltEntrypointExists("keeps the built MCP entrypoint alive long enough to complete the handshake", async () => {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(process.execPath, [builtMcpEntrypoint], {
@@ -105,13 +209,17 @@ describe("SwallowKit MCP tool definitions", () => {
         }
       };
 
-      const timer = setTimeout(() => {
-        expectedShutdown = true;
-        child.kill();
-      }, 1000);
+      let timer: NodeJS.Timeout | undefined;
 
       child.stderr.on("data", (chunk) => {
         stderr += chunk.toString();
+        // Start the aliveness window once the entrypoint has actually booted.
+        if (!timer && /\[swallowkit-mcp\] version: /.test(stderr)) {
+          timer = setTimeout(() => {
+            expectedShutdown = true;
+            child.kill();
+          }, 1000);
+        }
       });
 
       child.on("error", (error) => {
@@ -135,7 +243,7 @@ describe("SwallowKit MCP tool definitions", () => {
         );
       });
     });
-  });
+  }, 20000);
 
   itWhenBuiltEntrypointExists("preserves a runtime dynamic execa import in the built MCP entrypoint", () => {
     const source = fs.readFileSync(builtMcpEntrypoint, "utf8");

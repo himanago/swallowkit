@@ -16,6 +16,7 @@ import {
   getGitHubFunctionsWorkflow,
   injectSwallowKitNextConfig,
   parseIgnoredBuilds,
+  approveBuildsViaWorkspaceYaml,
   buildCosmosDbFreeTierBicepSource,
   buildFunctionsHostKeyBicepExpression,
   buildStaticWebAppConfigBicepSource,
@@ -233,6 +234,55 @@ describe("parseIgnoredBuilds", () => {
 
   it("returns an empty array when no warning is present", () => {
     expect(parseIgnoredBuilds("everything is fine")).toEqual([]);
+  });
+});
+
+describe("approveBuildsViaWorkspaceYaml", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sk-allowbuilds-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const yamlPath = () => path.join(tempDir, "pnpm-workspace.yaml");
+
+  it("appends an allowBuilds map to an existing workspace file", () => {
+    fs.writeFileSync(yamlPath(), "packages:\n  - shared\n  - functions\n", "utf-8");
+    approveBuildsViaWorkspaceYaml(tempDir, ["esbuild", "protobufjs"]);
+    const content = fs.readFileSync(yamlPath(), "utf-8");
+    expect(content).toContain("packages:");
+    expect(content).toContain("allowBuilds:\n  esbuild: true\n  protobufjs: true");
+  });
+
+  it("replaces pnpm's placeholder entries with true", () => {
+    fs.writeFileSync(
+      yamlPath(),
+      "packages:\n  - shared\nallowBuilds:\n  esbuild: set this to true or false\n",
+      "utf-8"
+    );
+    approveBuildsViaWorkspaceYaml(tempDir, ["esbuild", "protobufjs"]);
+    const content = fs.readFileSync(yamlPath(), "utf-8");
+    expect(content).toContain("esbuild: true");
+    expect(content).toContain("protobufjs: true");
+    expect(content).not.toContain("set this to true or false");
+  });
+
+  it("quotes scoped package names and creates the file when missing", () => {
+    approveBuildsViaWorkspaceYaml(tempDir, ["@scope/pkg"]);
+    const content = fs.readFileSync(yamlPath(), "utf-8");
+    expect(content).toContain("allowBuilds:\n  '@scope/pkg': true");
+  });
+
+  it("keeps existing entries untouched", () => {
+    fs.writeFileSync(yamlPath(), "allowBuilds:\n  core-js: false\n", "utf-8");
+    approveBuildsViaWorkspaceYaml(tempDir, ["esbuild"]);
+    const content = fs.readFileSync(yamlPath(), "utf-8");
+    expect(content).toContain("core-js: false");
+    expect(content).toContain("esbuild: true");
   });
 });
 

@@ -71,7 +71,7 @@ export function generateListPage(model: ModelInfo, sharedPackageName: string, au
     const refModelCamel = toCamelCase(refModel);
     return `    fetch('/api/${refModelCamel}')
       .then(res => res.json())
-      .then((data: any[]) => {
+      .then((data: Array<{ id: string; name?: string; title?: string }>) => {
         const map: Record<string, string> = {};
         data.forEach(item => {
           // name または title フィールドを表示用文字列として使用
@@ -138,8 +138,8 @@ ${hasForeignKeys ? foreignKeyFetches : ''}
       if (!res.ok) throw new Error('Failed to delete ${modelCamel}');
 
       set${modelName}s(${modelCamel}s.filter((item) => item.id !== id));
-    } catch (err: any) {
-      alert(\`Error: \${err.message}\`);
+    } catch (err) {
+      alert(\`Error: \${err instanceof Error ? err.message : String(err)}\`);
     }
   };
 
@@ -216,7 +216,7 @@ ${displayFields.map(f => {
     const displayField = f.nestedDisplayField || 'name';
     if (f.isArray) {
       return `                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                    {Array.isArray(item.${f.name}) ? item.${f.name}.map((ref: any) => ref?.${displayField} || '-').join(', ') : '-'}
+                    {Array.isArray(item.${f.name}) ? item.${f.name}.map((ref: unknown) => (ref as { ${displayField}?: string } | null)?.${displayField} || '-').join(', ') : '-'}
                   </td>`;
     } else {
       return `                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
@@ -317,7 +317,7 @@ export function generateDetailPage(model: ModelInfo, sharedPackageName: string, 
     const refModelCamel = toCamelCase(refModel);
     return `    fetch('/api/${refModelCamel}')
       .then(res => res.json())
-      .then((data: any[]) => {
+      .then((data: Array<{ id: string; name?: string; title?: string }>) => {
         const map: Record<string, string> = {};
         data.forEach(item => {
           map[item.id] = item.name || item.title || item.id;
@@ -389,8 +389,8 @@ ${hasForeignKeys ? foreignKeyFetches : ''}
       if (!res.ok) throw new Error('Failed to delete ${modelCamel}');
 
       router.push('/${modelKebab}');
-    } catch (err: any) {
-      alert(\`Error: \${err.message}\`);
+    } catch (err) {
+      alert(\`Error: \${err instanceof Error ? err.message : String(err)}\`);
     }
   };
 
@@ -455,7 +455,7 @@ ${model.fields.map(f => {
     if (f.isArray) {
       return `            <div>
               <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">${label}</dt>
-              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{Array.isArray(${modelCamel}.${f.name}) ? ${modelCamel}.${f.name}.map((ref: any) => ref?.${displayField} || '-').join(', ') : '-'}</dd>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{Array.isArray(${modelCamel}.${f.name}) ? ${modelCamel}.${f.name}.map((ref: unknown) => (ref as { ${displayField}?: string } | null)?.${displayField} || '-').join(', ') : '-'}</dd>
             </div>`;
     } else {
       return `            <div>
@@ -547,7 +547,7 @@ export function generateFormComponent(model: ModelInfo, sharedPackageName: strin
     return `    // ${refModelPascal} の一覧を取得
     fetch('/api/${refModelCamel}')
       .then(res => res.json())
-      .then(data => set${refModelPascal}Options(data.map((item: any) => ({ id: item.id, name: item.${displayField} || item.name || item.title || item.id }))))
+      .then(data => set${refModelPascal}Options(data.map((item: Record<string, string>) => ({ id: item.id, name: item.${displayField} || item.name || item.title || item.id }))))
       .catch(err => console.error('Failed to load ${refModelPascal} options:', err));`;
   }).join('\n');
   
@@ -581,7 +581,7 @@ ${formFields.map(f => {
   // ネストスキーマの場合は参照ID（単一: string, 配列: string[]）を管理
   if (f.isNestedSchema) {
     if (f.isArray) {
-      return `    ${f.name}Ids: initialData?.${f.name} ? (Array.isArray(initialData.${f.name}) ? initialData.${f.name}.map((item: any) => item.id) : []) : [] as string[],`;
+      return `    ${f.name}Ids: initialData?.${f.name} ? (Array.isArray(initialData.${f.name}) ? initialData.${f.name}.map((item: { id: string }) => item.id) : []) : [] as string[],`;
     } else {
       return `    ${f.name}Id: initialData?.${f.name}?.id ?? '',`;
     }
@@ -615,7 +615,7 @@ ${needsUseEffect ? `
 ${hasForignKeys ? foreignKeyFields.map(f => `    // ${f.referencedModel} の一覧を取得
     fetch('/api/${toKebabCase(f.referencedModel!)}')
       .then(res => res.json())
-      .then(data => set${f.referencedModel}Options(data.map((item: any) => ({ id: item.id, name: item.name || item.title || item.id }))))
+      .then(data => set${f.referencedModel}Options(data.map((item: Record<string, string>) => ({ id: item.id, name: item.name || item.title || item.id }))))
       .catch(err => console.error('Failed to load ${f.referencedModel} options:', err));`).join('\n') : ''}
 ${hasNestedSchemas ? nestedSchemaFetches : ''}
   }, []);
@@ -627,7 +627,7 @@ ${hasNestedSchemas ? nestedSchemaFetches : ''}
 
     try {
       // Array フィールドをカンマ区切りから配列に変換
-      const submitData: any = { ...formData };
+      const submitData: Record<string, unknown> = { ...formData };
 ${formFields.filter(f => f.isArray && !f.isNestedSchema).map(f => `      if (typeof submitData.${f.name} === 'string') {
         submitData.${f.name} = submitData.${f.name}.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
       }`).join('\n')}
@@ -651,7 +651,7 @@ ${nestedSchemaFields.map(f => {
   if (f.isArray) {
     return `      // ${refModelPascal} 配列参照の変換
       if (submitData.${f.name}Ids) {
-        submitData.${f.name} = submitData.${f.name}Ids
+        submitData.${f.name} = (submitData.${f.name}Ids as string[])
           .map((refId: string) => ${refModelCamel}Options.find(opt => opt.id === refId))
           .filter(Boolean);
         delete submitData.${f.name}Ids;
@@ -688,17 +688,17 @@ ${nestedSchemaFields.map(f => {
       }
 
       router.push('/${toKebabCase(modelName)}');
-    } catch (err: any) {
-      if (err.issues) {
+    } catch (err) {
+      if (err instanceof z.ZodError) {
         // Zod validation errors
         const fieldErrors: Record<string, string> = {};
-        err.issues.forEach((error: any) => {
-          const field = error.path[0];
-          fieldErrors[field] = error.message;
+        err.issues.forEach((issue) => {
+          const field = String(issue.path[0]);
+          fieldErrors[field] = issue.message;
         });
         setErrors(fieldErrors);
       } else {
-        alert(\`Error: \${err.message}\`);
+        alert(\`Error: \${err instanceof Error ? err.message : String(err)}\`);
       }
       setLoading(false);
     }

@@ -25,6 +25,29 @@ export class ProcessExitInterceptError extends Error {
   }
 }
 
+/**
+ * Captured console 出力からエラーメッセージ全文を組み立てる。
+ * 最終行だけでなく全 error 行を保持し(装飾絵文字は除去)、機械可読な診断に使う。
+ */
+export function deriveCapturedErrorMessage(messages: CapturedConsoleMessages, fallback: string): string {
+  const errorText = messages.errors
+    .map((entry) => entry.replace(/[❌💡]\s*/gu, "").trim())
+    .filter((entry) => entry.length > 0)
+    .join("\n");
+  if (errorText) {
+    return errorText;
+  }
+  const warningText = messages.warnings[messages.warnings.length - 1];
+  if (warningText) {
+    return warningText.trim();
+  }
+  const logText = messages.logs[messages.logs.length - 1];
+  if (logText) {
+    return logText.trim();
+  }
+  return fallback;
+}
+
 function formatConsoleArgs(args: unknown[]): string {
   return args
     .map((arg) => {

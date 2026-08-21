@@ -1,8 +1,11 @@
-import * as fs from "fs";
 import * as path from "path";
 import { ensureSwallowKitProject, loadConfig } from "../config";
 import { toPascalCase } from "../scaffold/model-parser";
 import { syncProjectManifest } from "../project/manifest";
+import { recordSessionOperations } from "../project/artifacts";
+import { FileOperationSession, getActiveFileSession } from "./file-session";
+
+const CREATE_MODEL_GENERATOR = "create-model";
 
 export interface CreateModelOperationOptions {
   names: string[];
@@ -87,21 +90,24 @@ export const connectorConfig = {
 `;
 }
 
-function updateSharedIndex(kebabName: string, pascalName: string): boolean {
-  const indexPath = path.join("shared", "index.ts");
+function updateSharedIndex(kebabName: string, pascalName: string, session: FileOperationSession): boolean {
+  const indexPath = path.join(process.cwd(), "shared", "index.ts");
 
-  if (!fs.existsSync(indexPath)) {
+  if (!session.fileExists(indexPath)) {
     return false;
   }
 
-  const content = fs.readFileSync(indexPath, "utf-8");
+  const content = session.readFile(indexPath);
   const exportLine = `export { ${pascalName} } from './models/${kebabName}';`;
 
   if (content.includes(exportLine)) {
     return false;
   }
 
-  fs.appendFileSync(indexPath, `${exportLine}\n`);
+  session.writeFile(indexPath, `${content}${exportLine}\n`, {
+    ownership: "extension-point",
+    generator: CREATE_MODEL_GENERATOR,
+  });
   return true;
 }
 
@@ -123,9 +129,8 @@ export async function createModelOperation(options: CreateModelOperationOptions)
   }
 
   const modelsDir = options.modelsDir || "shared/models";
-  if (!fs.existsSync(modelsDir)) {
-    fs.mkdirSync(modelsDir, { recursive: true });
-  }
+
+  const session = getActiveFileSession() ?? new FileOperationSession("commit");
 
   const createdFiles: string[] = [];
   const skippedFiles: string[] = [];
@@ -136,7 +141,7 @@ export async function createModelOperation(options: CreateModelOperationOptions)
     const filePath = path.join(modelsDir, `${kebabName}.ts`);
     const pascalName = toPascalCase(name);
 
-    if (fs.existsSync(filePath)) {
+    if (session.fileExists(path.resolve(filePath))) {
       const overwriteMode = options.overwriteMode || "prompt";
       const shouldOverwrite = overwriteMode === "always"
         ? true
@@ -155,15 +160,22 @@ export async function createModelOperation(options: CreateModelOperationOptions)
     const content = options.connector && connectorType
       ? generateConnectorModelTemplate(name, options.connector, connectorType)
       : generateModelTemplate(name);
-    fs.writeFileSync(filePath, content, "utf-8");
+    session.writeFile(path.resolve(filePath), content, {
+      ownership: "user-owned",
+      generator: CREATE_MODEL_GENERATOR,
+      sourceModel: pascalName,
+    });
     createdFiles.push(filePath.replace(/\\/g, "/"));
 
-    if (updateSharedIndex(kebabName, pascalName)) {
+    if (updateSharedIndex(kebabName, pascalName, session)) {
       updatedIndex = true;
     }
   }
 
-  await syncProjectManifest();
+  if (session.mode === "commit") {
+    recordSessionOperations(session.operations, {});
+    await syncProjectManifest();
+  }
 
   return {
     createdFiles,

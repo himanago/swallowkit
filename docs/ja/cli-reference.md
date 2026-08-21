@@ -16,6 +16,8 @@ SwallowKit CLI の全コマンドとオプションです。
 - [swallowkit add-auth](#swallowkit-add-auth)
 - [swallowkit dev](#swallowkit-dev)
 - [swallowkit scaffold](#swallowkit-scaffold)
+- [swallowkit status](#swallowkit-status)
+- [swallowkit verify](#swallowkit-verify)
 - [swallowkit create-dev-seeds](#swallowkit-create-dev-seeds)
 - [swallowkit provision](#swallowkit-provision)
 
@@ -36,9 +38,21 @@ npx swallowkit machine <command> <subcommand> [options]
 | `inspect project` | framework-owned project metadata を返す |
 | `inspect entities` | entity / schema metadata を返す |
 | `inspect routes` | BFF / Functions route metadata を返す |
+| `inspect artifacts` | 生成物台帳（ownership 付き）を返す |
+| `inspect boundaries` | AI 自由生成と決定論的生成の責任分界契約を返す |
+| `inspect drift` | 生成物と現在状態の乖離を検出する |
+| `inspect infra` | Bicep 資産（params / modules / outputs / container 配線）を Azure 呼び出しなしで解析する |
 | `validate project` | 構造化された validation violation を返す |
 | `generate model` | `create-model` を非対話 JSON モードで実行する |
 | `generate scaffold` | `scaffold` を非対話 JSON モードで実行する |
+| `plan scaffold` | 書き込まずに scaffold の変更計画（planId 付き）を返す |
+| `apply scaffold` | plan の鮮度・承認を検証して scaffold を適用する |
+| `plan auth` | 書き込まずに add-auth の変更計画を返す |
+| `apply auth` | plan の鮮度・承認を検証して認証コードを適用する |
+| `plan provision` | プロビジョニングのローカルプリフライト（`--what-if` で az what-if） |
+| `apply provision` | 承認済み plan を適用する（常に `--approve` 必須） |
+| `verify project` | structure / drift / typecheck（+ build / lint / test / カスタム）チェックを実行する |
+| `explain failure` | 直近の verify 失敗の証拠と修復アクションを返す |
 
 ### 例
 
@@ -47,14 +61,26 @@ npx swallowkit machine inspect project
 npx swallowkit machine validate project
 npx swallowkit machine generate model todo --overwrite never
 npx swallowkit machine generate scaffold todo --api-only
+npx swallowkit machine plan scaffold todo
+npx swallowkit machine apply scaffold --plan <planId>
+npx swallowkit machine apply scaffold todo --approve
+npx swallowkit machine plan auth --provider custom-jwt
+npx swallowkit machine apply auth --plan <planId>
+npx swallowkit machine inspect boundaries
+npx swallowkit machine inspect infra
+npx swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia
+npx swallowkit machine apply provision --plan <planId> --approve
+npx swallowkit machine verify project --checks structure,drift
+npx swallowkit machine explain failure --check typecheck
 ```
 
 ### 出力契約
 
 - stdout は常に 1 つの JSON
 - 非対話
-- 成功 / 失敗ともに構造化出力
+- 成功 / 失敗ともに構造化出力（`status` フィールドで `complete` / `in-progress` / `blocked` / `requires-human` / `failed` を返す）
 - `generate model` は overwrite policy（`always` または `never`）を明示する
+- 生成物は `.swallowkit/artifacts.json`（Git 管理対象）に台帳として記録される
 
 アーキテクチャやレスポンス例の詳細は [AI / MCP ガイド](./ai-mcp-guide.md) を参照してください。
 
@@ -73,9 +99,21 @@ npx swallowkit-mcp
 - `swallowkit_inspect_project`
 - `swallowkit_inspect_entities`
 - `swallowkit_inspect_routes`
+- `swallowkit_inspect_artifacts`
+- `swallowkit_inspect_boundaries`
+- `swallowkit_inspect_drift`
+- `swallowkit_inspect_infra`
 - `swallowkit_validate_project`
 - `swallowkit_generate_model`
 - `swallowkit_scaffold_model`
+- `swallowkit_plan_scaffold`
+- `swallowkit_apply_scaffold`
+- `swallowkit_plan_auth`
+- `swallowkit_apply_auth`
+- `swallowkit_plan_provision`
+- `swallowkit_apply_provision`
+- `swallowkit_verify_project`
+- `swallowkit_explain_failure`
 
 MCP server は `swallowkit machine ...` の thin adapter であり、独自の framework ロジックは持ちません。
 
@@ -124,6 +162,11 @@ npx swallowkit init my-app --cicd skip
 ```
 
 VS Code 拡張機能やスクリプトなど、stdin が TTY でない環境から CLI を呼び出す場合に特に便利です。
+
+非対話環境（CI、コーディングエージェント、パイプ経由の実行など）を検出すると、`init` はプロンプトでハングする代わりに以下のように振る舞います：
+
+- 設定フラグが不足している場合は、不足フラグの一覧をエラーとして即座に返します（ハングしません）。
+- pnpm の build scripts 承認（esbuild など）は、`pnpm-workspace.yaml` の `allowBuilds` への登録と `pnpm rebuild` により自動で承認・実行されます。
 
 不正な値を指定するとエラーになります：
 
@@ -204,13 +247,15 @@ my-app/
 
 | ファイル | 対象エージェント | 説明 |
 |---------|----------------|------|
-| `AGENTS.md` | OpenAI Codex / 汎用エージェント | アーキテクチャ全体仕様、規約、命名規則、CLI スキル |
+| `AGENTS.md` | OpenAI Codex / 汎用エージェント | アーキテクチャ全体仕様、規約、命名規則、CLI コマンド、自律ループ手順 |
 | `CLAUDE.md` | Claude Code | クイックリファレンス + CLI コマンド（詳細は `AGENTS.md` を参照） |
 | `.mcp.json` | Claude Code / project MCP runtime | 起動ごとに `swallowkit-mcp` を解決し、`SWALLOWKIT_MCP_VERSION` で固定できる launcher |
 | `.github/copilot-instructions.md` | GitHub Copilot | 主要ルールのサマリー（Copilot が自動読み込み） |
 | `.github/instructions/shared-models.instructions.md` | GitHub Copilot | `shared/models/**` 向けレイヤー別ルール |
 | `.github/instructions/bff-routes.instructions.md` | GitHub Copilot | `app/api/**` 向けレイヤー別ルール |
 | `.github/instructions/azure-functions.instructions.md` | GitHub Copilot | `functions/**` 向けレイヤー別ルール |
+| `.github/skills/*/SKILL.md` | Skills 対応エージェント（Copilot VS Code / CLI / cloud agent 等） | [Agent Skills](https://agentskills.io/) 標準のワークフロースキル（`swallowkit-add-model` / `swallowkit-modify-model` / `swallowkit-verify-repair` / `swallowkit-provision`）。関連タスク時に自動ロード |
+| `.swallowkit/workflows/*.md` | 全エージェント（Skills 非対応含む） | エージェント非依存の自律ループランブック（Skills と同一内容） |
 
 生成される `AGENTS.md` の全文を以下に示します（日本語訳併記）：
 
@@ -442,15 +487,15 @@ app.http('{model}-get-all', {
 | Bicep コンテナファイル | `infra/containers/{kebab-case}-container.bicep` | `infra/containers/todo-container.bicep` |
 -->
 
-## Adding New Models (SwallowKit CLI Skills)
-<!-- 新しいモデルの追加（SwallowKit CLI スキル） -->
+## Adding New Models (SwallowKit CLI)
+<!-- 新しいモデルの追加（SwallowKit CLI） -->
 
 Use the SwallowKit CLI — do **not** manually create model files or CRUD boilerplate.
 
 <!-- SwallowKit CLI を使用してください。モデルファイルや CRUD ボイラープレートを手動で作成してはいけません。 -->
 
-### Skill: Create a new data model
-<!-- スキル: 新しいデータモデルを作成 -->
+### Create a new data model
+<!-- 新しいデータモデルを作成 -->
 
 ```bash
 npx swallowkit create-model <name>
@@ -464,8 +509,8 @@ Edit the generated file to add your domain-specific fields, then run scaffold.
 
 <!-- `id`、`createdAt`、`updatedAt` を含む Zod スキーマテンプレート付きの `shared/models/<name>.ts` を作成します。生成されたファイルを編集してドメイン固有のフィールドを追加し、scaffold を実行します。 -->
 
-### Skill: Generate full CRUD from a model
-<!-- スキル: モデルから完全な CRUD を生成 -->
+### Generate full CRUD from a model
+<!-- モデルから完全な CRUD を生成 -->
 
 ```bash
 npx swallowkit scaffold shared/models/<name>.ts
@@ -485,8 +530,8 @@ Generates:
 - Cosmos DB Bicep コンテナ設定（`infra/containers/<name>-container.bicep`）
 -->
 
-### Skill: Start development servers
-<!-- スキル: 開発サーバーを起動 -->
+### Start development servers
+<!-- 開発サーバーを起動 -->
 
 ```bash
 npx swallowkit dev
@@ -497,8 +542,8 @@ Checks for Cosmos DB Emulator availability.
 
 <!-- Next.js (http://localhost:3000) と Azure Functions (http://localhost:7071) を同時に起動します。Cosmos DB Emulator の可用性を確認します。 -->
 
-### Skill: Provision Azure resources
-<!-- スキル: Azure リソースをプロビジョニング -->
+### Provision Azure resources
+<!-- Azure リソースをプロビジョニング -->
 
 ```bash
 npx swallowkit provision --resource-group <name>
@@ -1037,6 +1082,7 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 | `--functions-dir <dir>` | Azure Functions ディレクトリ | `functions` |
 | `--api-dir <dir>` | Next.js API routes ディレクトリ | `app/api` |
 | `--api-only` | UI コンポーネントのみをスキップします。Functions、BFF ルート、OpenAPI、ネイティブスキーマ資産は更新されます。 | `false` |
+| `--dry-run` | 書き込まずに変更予定のファイル一覧と競合を表示します | `false` |
 
 ### Connector モデルの動作
 
@@ -1159,6 +1205,53 @@ await api.delete('/api/todos/123');
 ### 詳細
 
 詳しくは [Scaffold ガイド](./scaffold-guide) を参照してください。
+
+## swallowkit status
+
+生成物台帳（`.swallowkit/artifacts.json`）と現在のプロジェクト状態の乖離（drift）を表示します。
+
+### 使用法
+
+```bash
+npx swallowkit status [options]
+```
+
+### オプション
+
+| オプション | 説明 | デフォルト |
+| --- | --- | --- |
+| `--artifacts` | 追跡中の全生成物を ownership 付きで一覧表示します | `false` |
+
+### 出力内容
+
+- 追跡中の生成物数、生成後に変更されたファイル数、欠損ファイル数
+- drift findings（schema-drift / artifact-modified / artifact-missing / generator-drift / manifest-drift）と修復アクション
+
+## swallowkit verify
+
+検証チェック（structure / drift / typecheck）を実行します。失敗があると exit code 1 を返します。
+
+### 使用法
+
+```bash
+npx swallowkit verify [options]
+```
+
+### オプション
+
+| オプション | 説明 | デフォルト |
+| --- | --- | --- |
+| `--checks <ids>` | 実行するチェックをカンマ区切りで指定（`structure,drift,typecheck`） | 全チェック |
+
+### チェック内容
+
+| チェック | 内容 |
+| --- | --- |
+| `structure` | プロジェクト構造規約（`validate project` と同等） |
+| `drift` | 生成物と現在状態の乖離検出 |
+| `typecheck` | TypeScript 型検査（`typecheck` script があればそれを、なければ `npx tsc --noEmit` を実行） |
+
+結果は `.swallowkit/state/last-verify.json` に保存され、`swallowkit machine explain failure` で失敗の詳細を取得できます。
 
 ## swallowkit create-dev-seeds
 

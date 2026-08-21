@@ -162,4 +162,21 @@ export interface SwallowKitConfig {
   };
   connectors?: Record<string, ConnectorDefinition>;
   auth?: AuthConfig;
+  verify?: VerifySettings;
+}
+
+// verify コマンドのプロジェクト固有設定
+export interface CustomVerifyCheck {
+  /** チェック ID (built-in と重複不可)。 */
+  id: string;
+  title?: string;
+  /** プロジェクトルートで実行するシェルコマンド。exit 0 = pass。 */
+  command: string;
+  /** タイムアウト (ms)。既定 5 分。 */
+  timeoutMs?: number;
+}
+
+export interface VerifySettings {
+  /** プロジェクト固有の追加チェック。デフォルト実行セットに含まれる。 */
+  checks?: CustomVerifyCheck[];
 }
