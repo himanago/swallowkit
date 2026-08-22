@@ -167,7 +167,7 @@ describe("native schema generators", () => {
   });
 
   it("builds NSwag arguments for model-only C# generation", () => {
-    const outputPath = path.join("C:\\temp\\generated\\csharp-models", ".native-temp", "Contracts.cs");
+    const outputPath = path.join(os.tmpdir(), "swallowkit-csharp-codegen-example", "Contracts.cs");
     const args = getCSharpNativeGeneratorArgs("C:\\temp\\todo.openapi.json", outputPath);
 
     expect(args.slice(0, 4)).toEqual(["tool", "run", "nswag", "openapi2csclient"]);
@@ -178,7 +178,7 @@ describe("native schema generators", () => {
   });
 
   it("builds datamodel-code-generator arguments for python assets", () => {
-    const outputPath = path.join("C:\\temp\\generated\\python-models", ".native-temp", "models.py");
+    const outputPath = path.join(os.tmpdir(), "swallowkit-python-codegen-example", "models.py");
     const args = getPythonNativeGeneratorArgs("C:\\temp\\todo.openapi.json", outputPath);
 
     expect(args).toEqual(

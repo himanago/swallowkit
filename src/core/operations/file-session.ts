@@ -75,6 +75,7 @@ export class FileOperationSession {
   readonly warnings: string[] = [];
 
   private readonly operationsByPath = new Map<string, RecordedFileOperation>();
+  private readonly inputFingerprintsByPath = new Map<string, string | null>();
   /** overlay: absolute normalized path -> content (null = deleted in session) */
   private readonly overlay = new Map<string, string | null>();
 
@@ -87,10 +88,21 @@ export class FileOperationSession {
     return Array.from(this.operationsByPath.values()).sort((a, b) => a.path.localeCompare(b.path));
   }
 
+  get inputFingerprints(): Record<string, string | null> {
+    return Object.fromEntries(
+      Array.from(this.inputFingerprintsByPath.entries()).sort(([left], [right]) => left.localeCompare(right))
+    );
+  }
+
   addWarning(message: string): void {
     if (!this.warnings.includes(message)) {
       this.warnings.push(message);
     }
+  }
+
+  registerInput(absolutePath: string): void {
+    const relativePath = toProjectRelativePath(this.rootDirectory, absolutePath);
+    this.inputFingerprintsByPath.set(relativePath, hashFileIfExists(absolutePath));
   }
 
   private overlayKey(absolutePath: string): string {

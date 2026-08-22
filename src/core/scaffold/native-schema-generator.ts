@@ -1,7 +1,9 @@
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { spawn, spawnSync } from "child_process";
 import { BackendLanguage } from "../../types";
+import { FileOperationSession } from "../operations/file-session";
 import { ModelInfo, toKebabCase } from "./model-parser";
 import { generateOpenApiDocument } from "./openapi-generator";
 import {
@@ -621,23 +623,47 @@ function mergePythonInitSource(existingSource: string | undefined, generatedSour
   return `${normalizedExisting}${missingLines.join("\n")}\n`;
 }
 
-function writeMergedPythonInitFile(filePath: string, generatedSource: string): void {
-  const existingSource = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : undefined;
-  fs.writeFileSync(filePath, mergePythonInitSource(existingSource, generatedSource), "utf-8");
+function writeMergedPythonInitFile(
+  filePath: string,
+  generatedSource: string,
+  session: FileOperationSession,
+  sourceModel: string
+): void {
+  const existingSource = session.fileExists(filePath) ? session.readFile(filePath) : undefined;
+  session.writeFile(filePath, mergePythonInitSource(existingSource, generatedSource), {
+    ownership: "extension-point",
+    generator: "native-schema",
+    sourceModel,
+  });
 }
 
-function ensureCSharpCodegenProjectFiles(functionsRoot: string): void {
+function ensureCSharpCodegenProjectFiles(
+  functionsRoot: string,
+  session: FileOperationSession,
+  sourceModel: string
+): void {
   const toolManifestPath = path.join(functionsRoot, ".config", "dotnet-tools.json");
-  fs.mkdirSync(path.dirname(toolManifestPath), { recursive: true });
-  if (!fs.existsSync(toolManifestPath)) {
-    fs.writeFileSync(toolManifestPath, buildCSharpCodegenToolManifestSource(), "utf-8");
+  if (!session.fileExists(toolManifestPath)) {
+    session.writeFile(toolManifestPath, buildCSharpCodegenToolManifestSource(), {
+      ownership: "generated-once",
+      generator: "native-schema",
+      sourceModel,
+    });
   }
 }
 
-function ensurePythonCodegenProjectFiles(functionsRoot: string): string {
+function ensurePythonCodegenProjectFiles(
+  functionsRoot: string,
+  session: FileOperationSession,
+  sourceModel: string
+): string {
   const requirementsPath = path.join(functionsRoot, "requirements.codegen.txt");
-  if (!fs.existsSync(requirementsPath)) {
-    fs.writeFileSync(requirementsPath, buildPythonCodegenRequirementsSource(), "utf-8");
+  if (!session.fileExists(requirementsPath)) {
+    session.writeFile(requirementsPath, buildPythonCodegenRequirementsSource(), {
+      ownership: "generated-once",
+      generator: "native-schema",
+      sourceModel,
+    });
   }
   return requirementsPath;
 }
@@ -676,8 +702,7 @@ async function ensureProjectLocalUvCommand(projectRoot: string): Promise<{ comma
   return { command: localUvExecutable, env: uvEnv };
 }
 
-async function ensurePythonCodegenEnvironment(functionsRoot: string): Promise<string> {
-  const requirementsPath = ensurePythonCodegenProjectFiles(functionsRoot);
+async function ensurePythonCodegenEnvironment(functionsRoot: string, requirementsPath: string): Promise<string> {
   const projectRoot = getPythonProjectRoot(functionsRoot);
   const { command: uvCommand, env: uvEnv } = await ensureProjectLocalUvCommand(projectRoot);
   const venvDir = path.join(functionsRoot, ".codegen-venv");
@@ -711,79 +736,125 @@ async function ensurePythonCodegenEnvironment(functionsRoot: string): Promise<st
   return venvPython;
 }
 
-async function generateCSharpSchemaArtifacts(
+/**
+ * 外部 codegen toolchain の事前検証。プロジェクトには一切書き込まず、
+ * OS 一時ディレクトリ上で NSwag / datamodel-code-generator を実行して失敗を早期検出する。
+ */
+export async function validateNativeSchemaToolchain(
   models: ModelInfo[],
-  specPath: string,
-  outputDir: string,
+  rootModel: ModelInfo,
+  backendLanguage: Exclude<BackendLanguage, "typescript">,
   functionsRoot: string
 ): Promise<void> {
-  ensureCSharpCodegenProjectFiles(functionsRoot);
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-native-codegen-"));
+  try {
+    const specPath = path.join(tempDir, `${toKebabCase(rootModel.name)}.openapi.json`);
+    fs.writeFileSync(specPath, generateOpenApiDocument(models, rootModel), "utf-8");
 
-  if (!canRun("dotnet", ["--version"], functionsRoot)) {
-    throw new Error(
-      "The .NET SDK is required to generate C# backend schema assets.\n" +
-        "Install the .NET 8 SDK and retry."
-    );
+    if (backendLanguage === "csharp") {
+      if (!canRun("dotnet", ["--version"], tempDir)) {
+        throw new Error(
+          "The .NET SDK is required to generate C# backend schema assets.\n" +
+            "Install the .NET 8 SDK and retry."
+        );
+      }
+
+      // プロジェクトの tool manifest（バージョン固定）があればそれを尊重し、なければ一時 manifest で検証する
+      const projectManifestPath = path.join(functionsRoot, ".config", "dotnet-tools.json");
+      let toolCwd = functionsRoot;
+      if (!fs.existsSync(projectManifestPath)) {
+        fs.mkdirSync(path.join(tempDir, ".config"), { recursive: true });
+        fs.writeFileSync(path.join(tempDir, ".config", "dotnet-tools.json"), buildCSharpCodegenToolManifestSource(), "utf-8");
+        toolCwd = tempDir;
+      }
+
+      await runCommand("dotnet", ["tool", "restore"], toolCwd, "Failed to restore the NSwag dotnet tool.");
+      await runCommand(
+        "dotnet",
+        getCSharpNativeGeneratorArgs(specPath, path.join(tempDir, "Contracts.cs")),
+        toolCwd,
+        "NSwag failed to generate C# backend schema assets."
+      );
+    } else {
+      const projectRequirementsPath = path.join(functionsRoot, "requirements.codegen.txt");
+      let requirementsPath = projectRequirementsPath;
+      if (!fs.existsSync(projectRequirementsPath)) {
+        requirementsPath = path.join(tempDir, "requirements.codegen.txt");
+        fs.writeFileSync(requirementsPath, buildPythonCodegenRequirementsSource(), "utf-8");
+      }
+
+      // .codegen-venv は environment cache であり managed artifact ではない(既存挙動どおり functionsRoot 配下)
+      fs.mkdirSync(functionsRoot, { recursive: true });
+      const pythonExecutable = await ensurePythonCodegenEnvironment(functionsRoot, requirementsPath);
+      await runCommand(
+        pythonExecutable,
+        getPythonNativeGeneratorArgs(specPath, path.join(tempDir, "models.py")),
+        functionsRoot,
+        "datamodel-code-generator failed to generate Python backend schema assets."
+      );
+    }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
+}
 
-  const tempContractsPath = path.join(outputDir, ".native-temp", "Contracts.cs");
-  fs.mkdirSync(path.dirname(tempContractsPath), { recursive: true });
-
-  await runCommand(
-    "dotnet",
-    ["tool", "restore"],
-    functionsRoot,
-    "Failed to restore the NSwag dotnet tool."
-  );
-  await runCommand(
-    "dotnet",
-    getCSharpNativeGeneratorArgs(specPath, tempContractsPath),
-    functionsRoot,
-    "NSwag failed to generate C# backend schema assets."
-  );
-
-  fs.rmSync(path.dirname(tempContractsPath), { recursive: true, force: true });
+async function generateCSharpSchemaArtifacts(
+  models: ModelInfo[],
+  outputDir: string,
+  functionsRoot: string,
+  session: FileOperationSession,
+  sourceModel: string
+): Promise<void> {
+  ensureCSharpCodegenProjectFiles(functionsRoot, session, sourceModel);
 
   const optionPath = getCSharpSchemaOptionPath(outputDir);
-  fs.mkdirSync(path.dirname(optionPath), { recursive: true });
-  fs.writeFileSync(optionPath, generateLegacyCompatibleOptionSource(), "utf-8");
+  session.writeFile(optionPath, generateLegacyCompatibleOptionSource(), {
+    ownership: "managed",
+    generator: "native-schema",
+    sourceModel,
+  });
 
   for (const model of models) {
     const modelPath = getCSharpSchemaModelPath(outputDir, model.name);
-    fs.mkdirSync(path.dirname(modelPath), { recursive: true });
-    fs.writeFileSync(modelPath, generateLegacyCompatibleCSharpModelSource(model), "utf-8");
+    session.writeFile(modelPath, generateLegacyCompatibleCSharpModelSource(model), {
+      ownership: "managed",
+      generator: "native-schema",
+      sourceModel,
+    });
   }
 }
 
 async function generatePythonSchemaArtifacts(
   models: ModelInfo[],
-  specPath: string,
   outputDir: string,
-  functionsRoot: string
+  functionsRoot: string,
+  session: FileOperationSession,
+  sourceModel: string
 ): Promise<void> {
-  const pythonExecutable = await ensurePythonCodegenEnvironment(functionsRoot);
-  const tempModelsPath = path.join(outputDir, ".native-temp", "models.py");
-  fs.mkdirSync(path.dirname(tempModelsPath), { recursive: true });
-
-  await runCommand(
-    pythonExecutable,
-    getPythonNativeGeneratorArgs(specPath, tempModelsPath),
-    functionsRoot,
-    "datamodel-code-generator failed to generate Python backend schema assets."
-  );
-
-  fs.rmSync(path.dirname(tempModelsPath), { recursive: true, force: true });
+  ensurePythonCodegenProjectFiles(functionsRoot, session, sourceModel);
 
   const packageRoot = path.join(outputDir, "backend_models");
   const modelsRoot = path.join(packageRoot, "models");
-  fs.mkdirSync(modelsRoot, { recursive: true });
-  writeMergedPythonInitFile(path.join(packageRoot, "__init__.py"), buildGeneratedPythonPackageInitSource(models));
-  writeMergedPythonInitFile(path.join(modelsRoot, "__init__.py"), buildGeneratedPythonModelsInitSource(models));
+  writeMergedPythonInitFile(
+    path.join(packageRoot, "__init__.py"),
+    buildGeneratedPythonPackageInitSource(models),
+    session,
+    sourceModel
+  );
+  writeMergedPythonInitFile(
+    path.join(modelsRoot, "__init__.py"),
+    buildGeneratedPythonModelsInitSource(models),
+    session,
+    sourceModel
+  );
 
   for (const model of models) {
     const modelPath = getPythonSchemaModelPath(outputDir, model.name);
-    fs.mkdirSync(path.dirname(modelPath), { recursive: true });
-    fs.writeFileSync(modelPath, generateLegacyCompatiblePythonModelSource(model), "utf-8");
+    session.writeFile(modelPath, generateLegacyCompatiblePythonModelSource(model), {
+      ownership: "managed",
+      generator: "native-schema",
+      sourceModel,
+    });
   }
 }
 
@@ -791,18 +862,27 @@ export async function generateLanguageSchemaArtifacts(
   models: ModelInfo[],
   rootModel: ModelInfo,
   functionsDir: string,
-  backendLanguage: Exclude<BackendLanguage, "typescript">
+  backendLanguage: Exclude<BackendLanguage, "typescript">,
+  session: FileOperationSession = new FileOperationSession("commit")
 ): Promise<void> {
-  console.log("\n🧬 Generating OpenAPI export and native schema assets...");
+  const planning = session.mode === "collect";
+  console.log(
+    planning
+      ? "\n\ud83e\uddec Planning OpenAPI export and native schema assets..."
+      : "\n\ud83e\uddec Generating OpenAPI export and native schema assets..."
+  );
 
   const projectRoot = process.cwd();
   const functionsRoot = path.join(projectRoot, functionsDir);
   const openApiDir = path.join(functionsRoot, "openapi");
-  fs.mkdirSync(openApiDir, { recursive: true });
 
   const specPath = path.join(openApiDir, `${toKebabCase(rootModel.name)}.openapi.json`);
-  fs.writeFileSync(specPath, generateOpenApiDocument(models, rootModel), "utf-8");
-  console.log(`✅ Created: ${specPath}`);
+  session.writeFile(specPath, generateOpenApiDocument(models, rootModel), {
+    ownership: "managed",
+    generator: "native-schema",
+    sourceModel: rootModel.name,
+  });
+  console.log(planning ? `\ud83d\udccb Will create: ${specPath}` : `\u2705 Created: ${specPath}`);
 
   const outputDir = path.join(
     functionsRoot,
@@ -810,13 +890,15 @@ export async function generateLanguageSchemaArtifacts(
     backendLanguage === "csharp" ? "csharp-models" : "python-models"
   );
 
-  fs.mkdirSync(outputDir, { recursive: true });
-
   if (backendLanguage === "csharp") {
-    await generateCSharpSchemaArtifacts(models, specPath, outputDir, functionsRoot);
+    await generateCSharpSchemaArtifacts(models, outputDir, functionsRoot, session, rootModel.name);
   } else {
-    await generatePythonSchemaArtifacts(models, specPath, outputDir, functionsRoot);
+    await generatePythonSchemaArtifacts(models, outputDir, functionsRoot, session, rootModel.name);
   }
 
-  console.log(`✅ Generated ${backendLanguage} schema assets: ${outputDir}`);
+  console.log(
+    planning
+      ? `\ud83d\udccb Will generate ${backendLanguage} schema assets: ${outputDir}`
+      : `\u2705 Generated ${backendLanguage} schema assets: ${outputDir}`
+  );
 }

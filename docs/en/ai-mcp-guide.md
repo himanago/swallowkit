@@ -93,7 +93,7 @@ pnpm swallowkit machine apply scaffold todo --approve
 - `plan scaffold` writes nothing to disk; it returns the files that would be created / updated / overwritten, plus any conflicts. Plans are stored in `.swallowkit/state/plans/` and referenced by `planId`.
 - `apply scaffold --plan <planId>` rejects the plan with `stale-plan` (`status: "blocked"`) if any planned file changed after planning.
 - Overwriting a managed file that was hand-edited after generation returns `approval-required` (`status: "requires-human"`) and requires an explicit `--approve`.
-- External codegen for C# / Python (OpenAPI / native schema assets) is not included in plans; it is reported as a warning and executed on apply.
+- C# / Python OpenAPI and native schema artifacts are included in plans and participate in stale-plan detection, conflict checks, approval, and the artifact ledger. Planning does not invoke external tools or the network; validation and environment bootstrap with NSwag or datamodel-code-generator run only during apply, as a pre-flight step before any file is written. If validation fails (for example, the .NET SDK is missing), apply fails without modifying the project.
 - `plan auth --provider <p>` / `apply auth` follow the same two-phase flow (`custom-jwt` / `swa` / `external-token` / `none`; use `--scheme` to add a named scheme).
 
 ### Provision (Plan / Apply, approval always required)

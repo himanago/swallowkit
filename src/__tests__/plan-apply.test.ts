@@ -1,6 +1,8 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import * as childProcess from "child_process";
+import { EventEmitter } from "events";
 import { runMachineCli } from "../machine";
 
 jest.mock("child_process", () => {
@@ -61,6 +63,49 @@ function createProjectFixture(rootDir: string): void {
     path.join(rootDir, "node_modules", "zod"),
     "junction"
   );
+}
+
+function createNativeBackendFixture(rootDir: string, backendLanguage: "csharp" | "python"): void {
+  createProjectFixture(rootDir);
+  writeFile(
+    path.join(rootDir, "swallowkit.config.js"),
+    `module.exports = {
+  database: {
+    connectionString: 'AccountEndpoint=https://example.local;',
+  },
+  backend: {
+    language: '${backendLanguage}',
+  },
+  api: {
+    endpoint: '/api/_swallowkit',
+  },
+};
+`
+  );
+
+  if (backendLanguage === "csharp") {
+    writeFile(path.join(rootDir, "functions", "SwallowKit.Functions.csproj"), "<Project />\n");
+  } else {
+    writeFile(
+      path.join(rootDir, "functions", "function_app.py"),
+      "from azure.functions import FunctionApp\n\napp = FunctionApp()\n\n# SwallowKit scaffold registrations\n"
+    );
+  }
+}
+
+function mockSuccessfulNativeCodegen(): () => void {
+  const spawnSyncMock = childProcess.spawnSync as unknown as any;
+  const spawnMock = childProcess.spawn as unknown as any;
+  spawnSyncMock.mockReturnValue({ status: 0 });
+  spawnMock.mockImplementation(() => {
+    const child = new EventEmitter() as childProcess.ChildProcess;
+    process.nextTick(() => child.emit("close", 0));
+    return child;
+  });
+  return () => {
+    spawnMock.mockReset();
+    spawnSyncMock.mockReset();
+  };
 }
 
 async function runMachine(argv: string[]): Promise<{ response: any; exitCode: number }> {
@@ -163,6 +208,93 @@ describe("plan / apply / drift / verify machine commands", () => {
     expect(fs.existsSync(path.join(tempDir, ".swallowkit", "state", "plans", `${planId}.json`))).toBe(false);
   });
 
+  it.each([
+    {
+      backendLanguage: "csharp" as const,
+      modelPath: "functions/generated/csharp-models/src/SwallowKitBackendModels/Model/Todo.cs",
+    },
+    {
+      backendLanguage: "python" as const,
+      modelPath: "functions/generated/python-models/backend_models/models/todo.py",
+    },
+  ])(
+    "includes $backendLanguage native schema artifacts in plan, ledger, and approval checks",
+    async ({ backendLanguage, modelPath }) => {
+      createNativeBackendFixture(tempDir, backendLanguage);
+      const restoreCodegenMocks = mockSuccessfulNativeCodegen();
+
+      try {
+        const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only"));
+
+        expect(plan.response).toEqual(expect.objectContaining({ ok: true, status: "complete" }));
+        expect(plan.exitCode).toBe(0);
+        expect(plan.response.data.warnings).not.toEqual(
+          expect.arrayContaining([expect.stringContaining("external-codegen")])
+        );
+        expect(plan.response.data.operations).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path: "functions/openapi/todo.openapi.json", action: "create" }),
+            expect.objectContaining({ path: modelPath, action: "create", ownership: "managed" }),
+          ])
+        );
+        expect(fs.existsSync(path.join(tempDir, "functions", "openapi"))).toBe(false);
+        expect(fs.existsSync(path.join(tempDir, modelPath))).toBe(false);
+        expect(childProcess.spawn).not.toHaveBeenCalled();
+
+        const applied = await runMachine(
+          machineArgs("apply", "scaffold", "--plan", plan.response.data.planId)
+        );
+        expect(applied.exitCode).toBe(0);
+        expect(fs.existsSync(path.join(tempDir, modelPath))).toBe(true);
+
+        const ledger = JSON.parse(
+          fs.readFileSync(path.join(tempDir, ".swallowkit", "artifacts.json"), "utf-8")
+        );
+        expect(ledger.artifacts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path: modelPath, ownership: "managed", generator: "native-schema" }),
+          ])
+        );
+
+        fs.appendFileSync(path.join(tempDir, modelPath), "\n// customized\n");
+        const denied = await runMachine(machineArgs("apply", "scaffold", "todo", "--api-only"));
+        expect(denied.exitCode).toBe(1);
+        expect(denied.response.error.code).toBe("approval-required");
+        expect(denied.response.error.details.conflicts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path: modelPath, conflictReason: "modified-after-generation" }),
+          ])
+        );
+      } finally {
+        restoreCodegenMocks();
+      }
+    }
+  );
+
+  it("leaves the project untouched when the native toolchain validation fails on apply", async () => {
+    createNativeBackendFixture(tempDir, "csharp");
+    const spawnSyncMock = childProcess.spawnSync as unknown as any;
+    // dotnet --version が失敗 → .NET SDK 不在としてプリフライトで拒否される
+    spawnSyncMock.mockReturnValue({ status: 1 });
+
+    try {
+      const { response, exitCode } = await runMachine(machineArgs("apply", "scaffold", "todo", "--api-only"));
+
+      expect(exitCode).toBe(1);
+      expect(response.ok).toBe(false);
+      expect(response.error.message).toContain(".NET SDK is required");
+
+      expect(fs.existsSync(path.join(tempDir, "app"))).toBe(false);
+      expect(fs.existsSync(path.join(tempDir, "lib"))).toBe(false);
+      expect(fs.existsSync(path.join(tempDir, "functions", "openapi"))).toBe(false);
+      expect(fs.existsSync(path.join(tempDir, "functions", "generated"))).toBe(false);
+      expect(fs.existsSync(path.join(tempDir, "functions", "Crud"))).toBe(false);
+      expect(fs.existsSync(path.join(tempDir, ".swallowkit", "artifacts.json"))).toBe(false);
+    } finally {
+      spawnSyncMock.mockReset();
+    }
+  });
+
   it("rejects a stale plan when files change after planning", async () => {
     createProjectFixture(tempDir);
 
@@ -184,6 +316,41 @@ describe("plan / apply / drift / verify machine commands", () => {
     expect(response.error.details.changedFiles).toContain("shared/models/todo.ts");
     // Nothing was applied
     expect(fs.existsSync(path.join(tempDir, "app"))).toBe(false);
+  });
+
+  it("rejects a native backend plan when a nested model changes after planning", async () => {
+    createNativeBackendFixture(tempDir, "csharp");
+    writeFile(path.join(tempDir, "shared", "models", "member.ts"), createModelSource("Member"));
+    writeFile(
+      path.join(tempDir, "shared", "models", "todo.ts"),
+      `import { z } from 'zod/v4';
+import { Member } from './member';
+
+export const Todo = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  member: Member,
+});
+
+export type Todo = z.infer<typeof Todo>;
+`
+    );
+
+    const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only"));
+    expect(plan.response).toEqual(expect.objectContaining({ ok: true, status: "complete" }));
+    expect(plan.response.data.fingerprints["shared/models/member.ts"]).toMatch(/^[0-9a-f]{64}$/);
+
+    writeFile(
+      path.join(tempDir, "shared", "models", "member.ts"),
+      createModelSource("Member", "\n  role: z.string().optional(),")
+    );
+
+    const applied = await runMachine(
+      machineArgs("apply", "scaffold", "--plan", plan.response.data.planId)
+    );
+    expect(applied.exitCode).toBe(1);
+    expect(applied.response.error.code).toBe("stale-plan");
+    expect(applied.response.error.details.changedFiles).toContain("shared/models/member.ts");
   });
 
   it("requires approval to overwrite files modified after generation, then applies with --approve", async () => {

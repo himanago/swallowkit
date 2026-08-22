@@ -5,7 +5,7 @@
 
 import * as crypto from "crypto";
 import * as path from "path";
-import { resolveModelPath, scaffoldCommand } from "../../cli/commands/scaffold";
+import { scaffoldCommand } from "../../cli/commands/scaffold";
 import { getSwallowKitVersion } from "../../version";
 import { findArtifactRecord, loadArtifactLedger } from "../project/artifacts";
 import { savePlanState } from "../project/state";
@@ -14,7 +14,6 @@ import {
   FileOperationSession,
   hashFileIfExists,
   runWithFileSession,
-  toProjectRelativePath,
 } from "./file-session";
 import {
   captureConsoleMessagesWithError,
@@ -111,7 +110,7 @@ export async function planScaffoldOperation(options: PlanScaffoldOptions): Promi
   const ledger = loadArtifactLedger(projectRoot);
 
   const operations: ScaffoldPlanOperation[] = [];
-  const fingerprints: Record<string, string | null> = {};
+  const fingerprints: Record<string, string | null> = { ...session.inputFingerprints };
   const warnings = [...session.warnings];
 
   for (const op of session.operations) {
@@ -162,14 +161,6 @@ export async function planScaffoldOperation(options: PlanScaffoldOptions): Promi
       conflict,
       ...(conflictReason ? { conflictReason } : {}),
     });
-  }
-
-  // モデルファイル自体も fingerprint に含め、Plan 後のスキーマ変更を stale として検出する
-  try {
-    const modelPath = resolveModelPath(options.model);
-    fingerprints[toProjectRelativePath(projectRoot, modelPath)] = hashFileIfExists(modelPath);
-  } catch {
-    // resolveModelPath が失敗する場合は collectScaffoldOperations 側で既に失敗している
   }
 
   const conflicts = operations.filter((op) => op.conflict);
