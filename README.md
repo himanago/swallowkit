@@ -81,6 +81,7 @@ Visit the **[SwallowKit Documentation](https://himanago.github.io/swallowkit/)**
 - **[Local Development](https://himanago.github.io/swallowkit/en/dev-guide)** - Dev server, seeds, mock connectors
 - **[Deployment Guide](https://himanago.github.io/swallowkit/en/deployment-guide)** - Deploy to Azure
 - **[AI / MCP Guide](https://himanago.github.io/swallowkit/en/ai-mcp-guide)** - AI-agent integration
+- **[Coding Agent Guide](https://himanago.github.io/swallowkit/en/coding-agent-guide)** - Lifecycle integration, ownership, and external process composition
 - **[Authentication](https://himanago.github.io/swallowkit/en/auth-guide)** - Auth and authorization
 - **[Connectors](https://himanago.github.io/swallowkit/en/connector-guide)** - External data sources
 

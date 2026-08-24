@@ -2,6 +2,10 @@
 
 SwallowKit は machine-readable CLI（`swallowkit machine`）と同梱の MCP stdio サーバー（`swallowkit-mcp`）を提供します。コーディングエージェントがファイルシステムを推測して直接編集するのではなく、正式な generator / inspector / validator を経由して操作できるようにするためです。
 
+discovery、specification、planning、implementation、verification、review の全体で
+SwallowKit を利用する指針は、[コーディングエージェントガイド](./coding-agent-guide.md)を
+参照してください。
+
 ## アーキテクチャ
 
 統合面は次のように分離されています。

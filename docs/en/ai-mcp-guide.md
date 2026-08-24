@@ -2,6 +2,10 @@
 
 SwallowKit provides a machine-readable CLI (`swallowkit machine`) and a bundled MCP stdio server (`swallowkit-mcp`) so coding agents can operate through official generators, inspectors, and validators instead of guessing raw filesystem edits.
 
+For guidance on using SwallowKit throughout discovery, specification, planning,
+implementation, verification, and review, see the
+[Coding agent guide](./coding-agent-guide.md).
+
 ## Architecture
 
 The integration surface is intentionally layered:

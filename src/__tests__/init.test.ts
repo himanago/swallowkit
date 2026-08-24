@@ -40,6 +40,7 @@ export default nextConfig;
     const updated = injectSwallowKitNextConfig(original, "sample-app");
 
     expect(updated).toContain("output: 'standalone'");
+    expect(updated).toContain("agentRules: false");
     expect(updated).toContain("transpilePackages: ['@sample-app/shared']");
     expect(updated).toContain("serverExternalPackages: ['applicationinsights', 'diagnostic-channel-publishers']");
     expect(updated).not.toContain("turbopackUseSystemTlsCerts");
@@ -57,6 +58,7 @@ module.exports = nextConfig;
     const updated = injectSwallowKitNextConfig(original, "sample-app");
 
     expect(updated).toContain("transpilePackages: ['@sample-app/shared']");
+    expect(updated).toContain("agentRules: false");
     expect(updated).toContain("module.exports = nextConfig;");
   });
 

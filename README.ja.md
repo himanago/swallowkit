@@ -81,6 +81,7 @@ BFF レイヤーを置くことで、フロントエンドをシンプルに保�
 - **[ローカル開発](https://himanago.github.io/swallowkit/ja/dev-guide)** - Dev サーバー、seeds、モックコネクタ
 - **[デプロイガイド](https://himanago.github.io/swallowkit/ja/deployment-guide)** - Azure へのデプロイ
 - **[AI / MCP ガイド](https://himanago.github.io/swallowkit/ja/ai-mcp-guide)** - AI エージェント統合
+- **[コーディングエージェントガイド](https://himanago.github.io/swallowkit/ja/coding-agent-guide)** - 開発ライフサイクル、責務境界、外部プロセスとの合成
 - **[認証](https://himanago.github.io/swallowkit/ja/auth-guide)** - 認証と認可
 - **[コネクタ](https://himanago.github.io/swallowkit/ja/connector-guide)** - 外部データソース統合
 
