@@ -178,6 +178,44 @@ describe("plan / apply / drift / verify machine commands", () => {
     ).toBe(true);
   });
 
+  it("plans and applies multiple models in one command (scaffold batch)", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "shared", "models", "note.ts"), createModelSource("Note"));
+
+    const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "note", "--api-only"));
+
+    expect(plan.exitCode).toBe(0);
+    expect(plan.response.ok).toBe(true);
+    expect(plan.response.command).toBe("plan-scaffold");
+    expect(plan.response.status).toBe("complete");
+    expect(plan.response.data.planType).toBe("scaffold-batch");
+    expect(plan.response.data.plans).toHaveLength(2);
+    expect(plan.response.nextActions).toHaveLength(2);
+    expect(plan.response.nextActions[0].description).toContain("todo");
+    expect(plan.response.nextActions[1].description).toContain("note");
+    // 何も書き込まれていない
+    expect(fs.existsSync(path.join(tempDir, "app"))).toBe(false);
+
+    const apply = await runMachine(machineArgs("apply", "scaffold", "todo", "note", "--api-only"));
+
+    expect(apply.exitCode).toBe(0);
+    expect(apply.response.ok).toBe(true);
+    expect(apply.response.data.applyType).toBe("scaffold-batch");
+    expect(apply.response.data.results).toHaveLength(2);
+    expect(fs.existsSync(path.join(tempDir, "app", "api", "todo", "route.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(tempDir, "app", "api", "note", "route.ts"))).toBe(true);
+  });
+
+  it("rejects --plan combined with multiple models", async () => {
+    createProjectFixture(tempDir);
+
+    const { response, exitCode } = await runMachine(machineArgs("apply", "scaffold", "a", "b", "--plan", "abc"));
+
+    expect(exitCode).toBe(1);
+    expect(response.ok).toBe(false);
+    expect(response.error.code).toBe("invalid-arguments");
+  });
+
   it("applies a previously computed plan and records the artifact ledger", async () => {
     createProjectFixture(tempDir);
 

@@ -10,11 +10,12 @@ import { runMachineScaffoldOperation } from "../core/operations/scaffold-machine
 import { planScaffoldOperation } from "../core/operations/scaffold-plan";
 import { inspectArtifacts } from "../core/project/artifacts";
 import { inspectBoundaries } from "../core/project/boundaries";
+import { inspectCapabilities } from "../core/project/capabilities";
 import { detectDrift } from "../core/project/drift";
 import { loadProjectManifest } from "../core/project/manifest";
 import { loadLastVerifyState } from "../core/project/state";
 import { validateProject } from "../core/project/validation";
-import { explainVerifyFailure, runVerify, VerifyResult } from "../core/verify";
+import { explainVerifyFailure, compactVerifyResult, runVerify, VerifyResult } from "../core/verify";
 import {
   MachineErrorResponse,
   MachineNextAction,
@@ -24,8 +25,16 @@ import {
 } from "./contracts";
 import { MachineCommandError, resolveMachineErrorStatus, toMachineError } from "./errors";
 
+/** 最終 JSON envelope 専用の stdout writer。runMachineCli 実行中はこれ以外の stdout 書き込みを stderr へ逃がす。 */
+let machineEnvelopeWrite: ((chunk: string) => void) | null = null;
+
 function writeMachineResponse<TData>(response: MachineResponse<TData>): void {
-  process.stdout.write(`${JSON.stringify(response, null, 2)}\n`);
+  const payload = `${JSON.stringify(response, null, 2)}\n`;
+  if (machineEnvelopeWrite) {
+    machineEnvelopeWrite(payload);
+  } else {
+    process.stdout.write(payload);
+  }
 }
 
 interface MachineResponseMeta {
@@ -188,6 +197,13 @@ function createMachineProgram(): Command {
     });
 
   inspect
+    .command("capabilities")
+    .description("Return SwallowKit's machine-readable capability contract: model declarations, auth workflow, generated-CRUD scope, seeding, and available commands")
+    .action(async () => {
+      await handleMachineAction("inspect-capabilities", async () => inspectCapabilities());
+    });
+
+  inspect
     .command("infra")
     .description("Inspect Bicep infrastructure assets (params, modules, outputs, container wiring) without calling Azure")
     .action(async () => {
@@ -273,34 +289,41 @@ function createMachineProgram(): Command {
   const plan = new Command("plan");
   plan
     .command("scaffold")
-    .description("Compute the scaffold change plan without writing any files")
-    .argument("<model>", "Model file or model name")
+    .description("Compute the scaffold change plan without writing any files (accepts multiple models)")
+    .argument("<models...>", "Model files or model names")
     .option("--functions-dir <dir>", "Functions directory", "functions")
     .option("--api-dir <dir>", "API routes directory", "app/api")
     .option("--api-only", "Skip UI components in the plan", false)
-    .action(async (model: string, options: { functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
+    .action(async (models: string[], options: { functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
       await handleMachineAction(
         "plan-scaffold",
         async () => {
           ensureProjectForMachine();
-          return planScaffoldOperation({
-            model,
-            functionsDir: options.functionsDir,
-            apiDir: options.apiDir,
-            apiOnly: options.apiOnly,
-          });
+          const plans = [];
+          for (const model of models) {
+            plans.push(
+              await planScaffoldOperation({
+                model,
+                functionsDir: options.functionsDir,
+                apiDir: options.apiDir,
+                apiOnly: options.apiOnly,
+              })
+            );
+          }
+          return plans.length === 1 ? plans[0] : { planType: "scaffold-batch" as const, plans };
         },
-        (planData) => ({
-          status: planData.requiresApproval ? "requires-human" : "complete",
-          nextActions: [
-            {
+        (data) => {
+          const plans = "plans" in data ? data.plans : [data];
+          return {
+            status: plans.some((planData) => planData.requiresApproval) ? "requires-human" : "complete",
+            nextActions: plans.map((planData) => ({
               command: `swallowkit machine apply scaffold --plan ${planData.planId}${planData.requiresApproval ? " --approve" : ""}`,
               description: planData.requiresApproval
-                ? "Apply the plan after reviewing the listed conflicts (requires --approve)."
-                : "Apply the plan.",
-            },
-          ],
-        })
+                ? `Apply the plan for ${planData.model} after reviewing the listed conflicts (requires --approve).`
+                : `Apply the plan for ${planData.model}.`,
+            })),
+          };
+        }
       );
     });
 
@@ -309,12 +332,17 @@ function createMachineProgram(): Command {
     .description("Compute the add-auth change plan without writing any files")
     .requiredOption("--provider <provider>", "Auth provider: custom-jwt | swa | external-token | none")
     .option("--scheme <name>", "Add as a named authentication scheme")
-    .action(async (options: { provider: string; scheme?: string }) => {
+    .option("--allowed-providers <list>", "Comma-separated SWA identity providers to allow (e.g. github,aad); defaults to aad")
+    .action(async (options: { provider: string; scheme?: string; allowedProviders?: string }) => {
       await handleMachineAction(
         "plan-auth",
         async () => {
           ensureProjectForMachine();
-          return planAuthOperation({ provider: options.provider, scheme: options.scheme });
+          return planAuthOperation({
+            provider: options.provider,
+            scheme: options.scheme,
+            allowedProviders: options.allowedProviders ? options.allowedProviders.split(",") : undefined,
+          });
         },
         (planData) => ({
           status: planData.requiresApproval ? "requires-human" : "complete",
@@ -367,8 +395,8 @@ function createMachineProgram(): Command {
   const apply = new Command("apply");
   apply
     .command("scaffold")
-    .description("Apply scaffold changes, verifying plan freshness and overwrite approval")
-    .argument("[model]", "Model file or model name (optional when --plan is given)")
+    .description("Apply scaffold changes, verifying plan freshness and overwrite approval (accepts multiple models)")
+    .argument("[models...]", "Model files or model names (optional when --plan is given)")
     .option("--plan <planId>", "Apply a previously computed plan")
     .option("--approve", "Approve overwriting files that were modified after generation", false)
     .option("--functions-dir <dir>", "Functions directory")
@@ -376,21 +404,44 @@ function createMachineProgram(): Command {
     .option("--api-only", "Skip UI components; still update Functions, BFF routes, OpenAPI, and native schema assets")
     .action(
       async (
-        model: string | undefined,
+        models: string[],
         options: { plan?: string; approve?: boolean; functionsDir?: string; apiDir?: string; apiOnly?: boolean }
       ) => {
         await handleMachineAction(
           "apply-scaffold",
           async () => {
             ensureProjectForMachine();
-            return applyScaffoldOperation({
-              model,
-              planId: options.plan,
-              approve: options.approve,
-              functionsDir: options.functionsDir,
-              apiDir: options.apiDir,
-              apiOnly: options.apiOnly,
-            });
+            if (models.length > 1 && options.plan) {
+              throw new MachineCommandError(
+                "invalid-arguments",
+                "--plan applies to a single model. Pass multiple models without --plan (each apply re-plans internally), or apply each plan separately.",
+                undefined,
+                "failed"
+              );
+            }
+            if (models.length <= 1) {
+              return applyScaffoldOperation({
+                model: models[0],
+                planId: options.plan,
+                approve: options.approve,
+                functionsDir: options.functionsDir,
+                apiDir: options.apiDir,
+                apiOnly: options.apiOnly,
+              });
+            }
+            const results = [];
+            for (const model of models) {
+              results.push(
+                await applyScaffoldOperation({
+                  model,
+                  approve: options.approve,
+                  functionsDir: options.functionsDir,
+                  apiDir: options.apiDir,
+                  apiOnly: options.apiOnly,
+                })
+              );
+            }
+            return { applyType: "scaffold-batch" as const, results };
           },
           () => ({
             status: "complete",
@@ -411,8 +462,9 @@ function createMachineProgram(): Command {
     .option("--plan <planId>", "Apply a previously computed plan")
     .option("--provider <provider>", "Auth provider (optional when --plan is given)")
     .option("--scheme <name>", "Add as a named authentication scheme")
+    .option("--allowed-providers <list>", "Comma-separated SWA identity providers to allow (e.g. github,aad); defaults to aad")
     .option("--approve", "Approve overwriting files that were modified after generation", false)
-    .action(async (options: { plan?: string; provider?: string; scheme?: string; approve?: boolean }) => {
+    .action(async (options: { plan?: string; provider?: string; scheme?: string; allowedProviders?: string; approve?: boolean }) => {
       await handleMachineAction(
         "apply-auth",
         async () => {
@@ -420,19 +472,41 @@ function createMachineProgram(): Command {
           return applyAuthOperation({
             provider: options.provider,
             scheme: options.scheme,
+            allowedProviders: options.allowedProviders ? options.allowedProviders.split(",") : undefined,
             planId: options.plan,
             approve: options.approve,
           });
         },
-        () => ({
-          status: "complete",
-          nextActions: [
-            {
-              command: "swallowkit machine verify project",
-              description: "Verify the project after applying auth changes.",
-            },
-          ],
-        })
+        (result) => {
+          const configTarget = result.scheme
+            ? `auth.authorization.policies (reference scheme "${result.scheme}")`
+            : "auth.authorization.policies";
+          const nextActions: MachineNextAction[] = [];
+          if (result.provider !== "none") {
+            nextActions.push({
+              command: "edit swallowkit.config.js",
+              description: `Define ${configTarget}. The config is an extension point: hand-editing policies is the expected workflow. Do NOT hand-write auth.schemes entries; only plan/apply auth may add schemes.`,
+            });
+          }
+          if (result.provider === "swa") {
+            nextActions.push({
+              command: "edit swallowkit.config.js",
+              description: `Confirm swa.allowedProviders${result.scheme ? ` for scheme "${result.scheme}"` : ""} lists the identity providers you use (e.g. ['github']). Generated login URLs and provider checks use this list; it can also be set at plan time with --allowed-providers.`,
+            });
+          }
+          if (result.provider === "external-token") {
+            nextActions.push({
+              command: "edit the generated external token verifier",
+              description:
+                "Implement the verifier stub (it fails closed until implemented). typecheck and verify pass with the stub in place, so a passing verify does NOT mean external-token auth works.",
+            });
+          }
+          nextActions.push({
+            command: "swallowkit machine verify project",
+            description: "Verify the project after applying auth changes.",
+          });
+          return { status: "complete", nextActions };
+        }
       );
     });
 
@@ -468,10 +542,14 @@ function createMachineProgram(): Command {
       "--checks <ids>",
       "Comma-separated check ids to run (structure,drift,typecheck,build,lint,test, plus custom ids from swallowkit.config verify.checks)"
     )
-    .action(async (options: { checks?: string }) => {
+    .option("--compact", "Suppress info-severity findings/violations from evidence to keep agent-facing output small", false)
+    .action(async (options: { checks?: string; compact?: boolean }) => {
       await handleMachineAction(
         "verify-project",
-        async () => runVerify(options.checks ? options.checks.split(",") : undefined),
+        async () => {
+          const result = await runVerify(options.checks ? options.checks.split(",") : undefined);
+          return options.compact ? compactVerifyResult(result) : result;
+        },
         (result) => ({
           status: result.summary.done ? "complete" : "in-progress",
           nextActions: result.summary.done
@@ -560,9 +638,17 @@ export async function runMachineCli(argv: string[] = process.argv): Promise<void
 
   // Keep stdout reserved for the single JSON envelope: any console output
   // produced by underlying operations (e.g. config-load logs) goes to stderr.
+  // A hard guard on process.stdout.write catches direct writes that bypass console.
   const originalLog = console.log;
   const originalInfo = console.info;
   const originalWarn = console.warn;
+  const previousStdoutWrite = process.stdout.write;
+  const boundStdoutWrite = previousStdoutWrite.bind(process.stdout);
+  machineEnvelopeWrite = (chunk) => {
+    boundStdoutWrite(chunk);
+  };
+  process.stdout.write = ((chunk: string | Uint8Array, ...rest: unknown[]) =>
+    (process.stderr.write as (...args: unknown[]) => boolean)(chunk, ...rest)) as typeof process.stdout.write;
   const toStderr = (...args: unknown[]) => {
     process.stderr.write(`${args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" ")}\n`);
   };
@@ -598,5 +684,7 @@ export async function runMachineCli(argv: string[] = process.argv): Promise<void
     console.log = originalLog;
     console.info = originalInfo;
     console.warn = originalWarn;
+    process.stdout.write = previousStdoutWrite;
+    machineEnvelopeWrite = null;
   }
 }

@@ -16,6 +16,8 @@ specification、planning、ticket decomposition、implementation、verification�
 - それ以外では `{{runCmd}} swallowkit machine ...` を使用する。
 - framework-related file を編集する前に responsibility boundary を検査する。
 - deterministic SwallowKit-managed artifact を決して手編集しない。
+- auth scheme の追加は plan/apply auth 経由のみ。swallowkit.config の `auth.schemes` を
+  手書きしない (policies と `swa.allowedProviders` は apply 後に手で追記する)。
 - deterministic generation には plan/apply を使用する。
 - `requires-human` state とその他の human approval gate を尊重する。
 - 完了前に SwallowKit verification を実行する。

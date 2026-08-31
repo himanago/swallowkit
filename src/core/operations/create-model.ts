@@ -131,6 +131,11 @@ export async function createModelOperation(options: CreateModelOperationOptions)
   const modelsDir = options.modelsDir || "shared/models";
 
   const session = getActiveFileSession() ?? new FileOperationSession("commit");
+  // jest 等の環境で path.resolve の内部 cwd キャッシュが process.chdir と食い違うことが
+  // あるため、cwd を明示的に固定して絶対パスを組み立てる。
+  const projectRoot = process.cwd();
+  const resolveFromRoot = (relativePath: string) =>
+    path.isAbsolute(relativePath) ? relativePath : path.join(projectRoot, relativePath);
 
   const createdFiles: string[] = [];
   const skippedFiles: string[] = [];
@@ -141,7 +146,7 @@ export async function createModelOperation(options: CreateModelOperationOptions)
     const filePath = path.join(modelsDir, `${kebabName}.ts`);
     const pascalName = toPascalCase(name);
 
-    if (session.fileExists(path.resolve(filePath))) {
+    if (session.fileExists(resolveFromRoot(filePath))) {
       const overwriteMode = options.overwriteMode || "prompt";
       const shouldOverwrite = overwriteMode === "always"
         ? true
@@ -160,7 +165,7 @@ export async function createModelOperation(options: CreateModelOperationOptions)
     const content = options.connector && connectorType
       ? generateConnectorModelTemplate(name, options.connector, connectorType)
       : generateModelTemplate(name);
-    session.writeFile(path.resolve(filePath), content, {
+    session.writeFile(resolveFromRoot(filePath), content, {
       ownership: "user-owned",
       generator: CREATE_MODEL_GENERATOR,
       sourceModel: pascalName,

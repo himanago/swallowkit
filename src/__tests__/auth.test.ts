@@ -380,6 +380,15 @@ describe("SWA built-in auth generators", () => {
     expect(code).toContain("satisfies AuthUser");
   });
 
+  it("derives the login URL from allowedProviders instead of hardcoding aad", () => {
+    expect(generateSwaAuthContext()).toContain("/.auth/login/aad?");
+    const github = generateSwaAuthContext(["github"]);
+    expect(github).toContain("/.auth/login/github?");
+    expect(github).not.toContain("/.auth/login/aad");
+    // 先頭のプロバイダが既定のログイン先になる
+    expect(generateSwaAuthContext(["google", "aad"])).toContain("/.auth/login/google?");
+  });
+
   it("forwards a normalized platform principal with /.auth/me fallback", () => {
     const code = generateBFFCallFunctionWithSwaAuth();
     expect(code).toContain("x-ms-client-principal");

@@ -534,6 +534,10 @@ auth: {
 
 Models may use `authPolicy = { read: 'adminOnly', write: 'adminOnly' }` or `{ policy: 'adminOnly' }`. Custom Functions use `await requireAuth(request, 'lineUserOnly')`. A policy accepts only its listed schemes. Multiple schemes are allowed only when their credential sources are distinguishable; ambiguous Bearer schemes are rejected during validation.
 
+::: warning Config ownership
+Do **not** hand-write `auth.schemes` entries: `add-auth --scheme` (or `machine plan/apply auth`) owns them and aborts with `already exists` when a scheme was pre-written. `auth.authorization.policies` and `swa.allowedProviders` are the parts you hand-edit after apply. For SWA schemes you can also pass `--allowed-providers github,aad` so generated login URLs and provider checks use the right identity providers from the start.
+:::
+
 The canonical principal is `{ subject, scheme, issuer, roles, claims }`. Use `scheme + ':' + subject` for a global identity key. Compatibility `userId` and `userDetails` fields are deprecated. Never trust identity, roles, or profiles supplied by an unverified client.
 
 The BFF remains a proxy: it forwards Bearer or SWA credentials and adds `x-functions-key`, but Functions perform final authentication and authorization. Credentials must not be logged. External-token verifiers are generated fail-closed and must validate signature, issuer, audience, and expiry while distinguishing invalid credentials (401) from IdP outages (503).
@@ -545,7 +549,7 @@ Legacy `auth.provider` is normalized to a `default` scheme. Legacy role arrays r
 Use `adminOnly` for Campaign/Coupon management models and `lineUserOnly` for survey or coupon-claim models. Keep health models anonymous by omitting `authPolicy` while `defaultPolicy` is `anonymous`. Run:
 
 ```bash
-swallowkit add-auth --scheme admin --provider swa
+swallowkit add-auth --scheme admin --provider swa --allowed-providers github
 swallowkit add-auth --scheme lineUser --provider external-token
 ```
 

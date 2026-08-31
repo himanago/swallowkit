@@ -51,6 +51,29 @@ import { buildSharedTsConfig } from "./init";
 interface AddAuthOptions {
   provider?: string;
   scheme?: string;
+  /** SWA の許可する identity provider (例: ['github'])。未指定時は ['aad']。 */
+  allowedProviders?: string[];
+}
+
+const SWA_PROVIDER_LABELS: Record<string, string> = {
+  aad: "Microsoft",
+  github: "GitHub",
+  google: "Google",
+  twitter: "X",
+  apple: "Apple",
+  facebook: "Facebook",
+};
+
+function swaProviderLabel(provider: string): string {
+  return SWA_PROVIDER_LABELS[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+function normalizeSwaProviders(allowedProviders?: string[]): string[] {
+  const providers = (allowedProviders ?? []).map((p) => p.trim().toLowerCase()).filter(Boolean);
+  for (const provider of providers) {
+    if (!/^[a-z0-9-]+$/.test(provider)) throw new Error(`Invalid SWA identity provider name: ${provider}`);
+  }
+  return providers.length > 0 ? providers : ["aad"];
 }
 
 const AUTH_GENERATOR = "add-auth";
@@ -75,7 +98,8 @@ function defaultCustomJwtConfig(): CustomJwtConfig {
   };
 }
 
-function setupSwaAuth(cwd: string, backendLanguage: BackendLanguage, session: FileOperationSession): void {
+function setupSwaAuth(cwd: string, backendLanguage: BackendLanguage, session: FileOperationSession, allowedProviders?: string[]): void {
+  const providers = normalizeSwaProviders(allowedProviders);
   const helperPath = backendLanguage === "typescript"
     ? path.join(cwd, "functions", "src", "auth", "jwt-helper.ts")
     : backendLanguage === "csharp"
@@ -92,11 +116,11 @@ function setupSwaAuth(cwd: string, backendLanguage: BackendLanguage, session: Fi
   session.writeFile(callFnPath, generateBFFCallFunctionWithSwaAuth(), managedMeta);
 
   const authDir = path.join(cwd, "lib", "auth");
-  session.writeFile(path.join(authDir, "auth-context.tsx"), generateSwaAuthContext(), managedMeta);
+  session.writeFile(path.join(authDir, "auth-context.tsx"), generateSwaAuthContext(providers), managedMeta);
   updateRootLayoutWithAuthProvider(cwd, session);
   const loginDir = path.join(cwd, "app", "login");
-  session.writeFile(path.join(loginDir, "page.tsx"), generateSwaLoginPage(), managedMeta);
-  updateSwaRouteConfig(cwd, session);
+  session.writeFile(path.join(loginDir, "page.tsx"), generateSwaLoginPage(providers), managedMeta);
+  updateSwaRouteConfig(cwd, session, providers);
 }
 
 function setupExternalTokenAuth(cwd: string, backendLanguage: BackendLanguage, session: FileOperationSession): void {
@@ -143,15 +167,21 @@ function updatePythonAuthMeRegistration(cwd: string, session: FileOperationSessi
   session.writeFile(appPath, content, extensionMeta);
 }
 
-function generateSwaLoginPage(): string {
+function generateSwaLoginPage(allowedProviders?: string[]): string {
+  const providers = normalizeSwaProviders(allowedProviders);
+  const links = providers
+    .map((provider) => `<a href="/.auth/login/${provider}?post_login_redirect_uri=/">Sign in with ${swaProviderLabel(provider)}</a>`)
+    .join("");
   return `'use client';
 export default function LoginPage() {
-  return <main><h1>Sign in</h1><a href="/.auth/login/aad?post_login_redirect_uri=/">Sign in with Microsoft</a></main>;
+  return <main><h1>Sign in</h1>${links}</main>;
 }
 `;
 }
 
-export function generateSwaAuthContext(): string {
+export function generateSwaAuthContext(allowedProviders?: string[]): string {
+  const providers = normalizeSwaProviders(allowedProviders);
+  const primaryProvider = providers[0];
   return `'use client';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
@@ -184,7 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
-  const login = () => { window.location.href = '/.auth/login/aad?post_login_redirect_uri=/'; };
+  const login = () => { window.location.href = '/.auth/login/${primaryProvider}?post_login_redirect_uri=/'; };
   const logout = () => { window.location.href = '/.auth/logout?post_logout_redirect_uri=/'; };
   const hasRole = (role: string) => user?.roles.includes(role) ?? false;
   return <AuthContext.Provider value={{ user, loading, login, logout, hasRole, hasAnyRole: roles => roles.some(hasRole) }}>{children}</AuthContext.Provider>;
@@ -219,14 +249,15 @@ function updateRootLayoutWithAuthProvider(cwd: string, session: FileOperationSes
   if (updated !== layout) session.writeFile(layoutPath, updated, extensionMeta);
 }
 
-function updateSwaRouteConfig(cwd: string, session: FileOperationSession): void {
+function updateSwaRouteConfig(cwd: string, session: FileOperationSession, allowedProviders?: string[]): void {
+  const primaryProvider = normalizeSwaProviders(allowedProviders)[0];
   const configPath = path.join(cwd, "staticwebapp.config.json");
   const config = session.fileExists(configPath) ? JSON.parse(session.readFile(configPath)) : {};
   config.routes = Array.isArray(config.routes)
     ? config.routes.filter((route: { route?: string }) => route.route !== "/api/*")
     : [];
   config.routes.unshift({ route: "/api/*", allowedRoles: ["authenticated"] });
-  config.responseOverrides = { ...(config.responseOverrides || {}), "401": { statusCode: 302, redirect: "/.auth/login/aad?post_login_redirect_uri=.referrer" } };
+  config.responseOverrides = { ...(config.responseOverrides || {}), "401": { statusCode: 302, redirect: `/.auth/login/${primaryProvider}?post_login_redirect_uri=.referrer` } };
   session.writeFile(configPath, JSON.stringify(config, null, 2), extensionMeta);
 }
 
@@ -257,7 +288,7 @@ export async function addAuthCommand(options: AddAuthOptions) {
   if (options.scheme) {
     if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(options.scheme)) throw new Error("--scheme must start with a letter and contain only letters, digits, '_' or '-'");
     if (provider === "none" || provider === "swa-custom") throw new Error(`Provider '${provider}' cannot be added as a named scheme`);
-    addNamedScheme(cwd, options.scheme, provider, backendLanguage, session);
+    addNamedScheme(cwd, options.scheme, provider, backendLanguage, session, options.allowedProviders);
     await finalize();
     console.log(`\n Named authentication scheme '${options.scheme}' added.`);
     return;
@@ -273,8 +304,8 @@ export async function addAuthCommand(options: AddAuthOptions) {
     return;
   }
   if (provider === "swa") {
-    setupSwaAuth(cwd, backendLanguage, session);
-    updateConfigWithAuth(cwd, provider, config.auth?.customJwt || defaultCustomJwtConfig(), session);
+    setupSwaAuth(cwd, backendLanguage, session, options.allowedProviders);
+    updateConfigWithAuth(cwd, provider, config.auth?.customJwt || defaultCustomJwtConfig(), session, options.allowedProviders);
     await finalize();
     console.log("\n SWA built-in authentication setup complete!");
     return;
@@ -392,17 +423,22 @@ function findObjectEnd(content: string, open: number): number {
   return -1;
 }
 
-function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: AuthProvider, session: FileOperationSession): void {
+function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: AuthProvider, session: FileOperationSession, allowedProviders?: string[]): void {
   const jsPath = path.join(cwd, "swallowkit.config.js");
   const jsonPath = path.join(cwd, "swallowkit.config.json");
   const configPath = session.fileExists(jsPath) ? jsPath : jsonPath;
   if (!session.fileExists(configPath)) throw new Error("swallowkit.config.js or swallowkit.config.json is required");
+  const swaProviders = provider === "swa" ? normalizeSwaProviders(allowedProviders) : undefined;
   if (configPath.endsWith(".json")) {
     const value = JSON.parse(session.readFile(configPath));
     value.auth ??= {};
     value.auth.schemes ??= {};
     if (value.auth.schemes[scheme]) throw new Error(`auth.schemes.${scheme} already exists; no files were changed`);
-    value.auth.schemes[scheme] = provider === "custom-jwt" ? { provider, customJwt: defaultCustomJwtConfig() } : { provider };
+    value.auth.schemes[scheme] = provider === "custom-jwt"
+      ? { provider, customJwt: defaultCustomJwtConfig() }
+      : swaProviders
+        ? { provider, swa: { allowedProviders: swaProviders } }
+        : { provider };
     value.auth.authorization ??= { defaultPolicy: "anonymous", policies: {} };
     session.writeFile(configPath, JSON.stringify(value, null, 2) + "\n", extensionMeta);
     return;
@@ -412,7 +448,9 @@ function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: Auth
   const customJwt = defaultCustomJwtConfig();
   const entry = provider === "custom-jwt"
     ? `\n      ${scheme}: { provider: 'custom-jwt', customJwt: ${JSON.stringify(customJwt)} },`
-    : `\n      ${scheme}: { provider: '${provider}' },`;
+    : swaProviders
+      ? `\n      ${scheme}: { provider: '${provider}', swa: { allowedProviders: [${swaProviders.map((p) => `'${p}'`).join(", ")}] } },`
+      : `\n      ${scheme}: { provider: '${provider}' },`;
   if (!authMatch) {
     const rootEnd = content.lastIndexOf("}");
     const beforeRootEnd = content.slice(0, rootEnd).trimEnd();
@@ -436,9 +474,9 @@ function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: Auth
   session.writeFile(configPath, content, extensionMeta);
 }
 
-function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, language: BackendLanguage, session: FileOperationSession): void {
+function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, language: BackendLanguage, session: FileOperationSession, allowedProviders?: string[]): void {
   // Validate/update config before creating files, so duplicate names stop safely.
-  updateConfigWithNamedScheme(cwd, scheme, provider, session);
+  updateConfigWithNamedScheme(cwd, scheme, provider, session, allowedProviders);
   const slug = scheme.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
   if (language === "typescript") {
     const dir = path.join(cwd, "functions", "src", "auth", "schemes", slug);
@@ -462,7 +500,7 @@ function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, lan
     writeIfMissing(session, path.join(clientDir, "authenticated-fetch.ts"), generateAuthenticatedFetch().replace("'./external-token-adapter'", "'./token-adapter'"));
     writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), generateExternalTokenAuthContext().replace(/external-token-adapter/g, "token-adapter"));
   } else if (provider === "swa") {
-    writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), generateSwaAuthContext());
+    writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), generateSwaAuthContext(allowedProviders));
   } else if (provider === "custom-jwt") {
     writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), generateAuthContext());
   }
@@ -659,7 +697,7 @@ function generateBFFAuth(cwd: string, projectName: string, sharedPackageName: st
   console.log(` Created: app/api/auth/me/route.ts`);
 }
 
-function updateConfigWithAuth(cwd: string, provider: AuthProvider, config: CustomJwtConfig, session: FileOperationSession): void {
+function updateConfigWithAuth(cwd: string, provider: AuthProvider, config: CustomJwtConfig, session: FileOperationSession, allowedProviders?: string[]): void {
   const configPath = path.join(cwd, "swallowkit.config.js");
   if (!session.fileExists(configPath)) {
     console.warn("  swallowkit.config.js not found. Please add auth config manually.");
@@ -694,7 +732,7 @@ function updateConfigWithAuth(cwd: string, provider: AuthProvider, config: Custo
       tokenExpiry: '${config.tokenExpiry || "24h"}',
     },` : provider === "swa" ? `
     swa: {
-      allowedProviders: ['aad'],
+      allowedProviders: [${normalizeSwaProviders(allowedProviders).map((p) => `'${p}'`).join(", ")}],
       roleSource: 'swa-roles',
     },` : "";
 

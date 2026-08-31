@@ -61,6 +61,11 @@ function safeIdentifier(name: string): string {
   return name.replace(/[^A-Za-z0-9_]/g, "_");
 }
 
+/** C# の string[] リテラル。空のときは型推論不能な `new[] { }` (CS0826) を避けて Array.Empty<string>() を出力する。 */
+function csharpStringArray(items: string[]): string {
+  return items.length > 0 ? `new[] { ${items.map((item) => `"${item}"`).join(", ")} }` : "Array.Empty<string>()";
+}
+
 function schemeSlug(name: string): string {
   return name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
 }
@@ -123,10 +128,10 @@ public static class AuthRouter
 {
     private static readonly Dictionary<string, (string[] Schemes, string[] Roles)> Policies = new()
     {
-${Object.entries(config.authorization.policies).map(([n,p]) => `        ["${n}"] = (new[] { ${p.schemes.map(s=>`"${s}"`).join(", ")} }, new[] { ${(p.roles??[]).map(r=>`"${r}"`).join(", ")} }),`).join("\n")}
+${Object.entries(config.authorization.policies).map(([n,p]) => `        ["${n}"] = (${csharpStringArray(p.schemes)}, ${csharpStringArray(p.roles??[])}),`).join("\n")}
     };
     private static readonly Dictionary<string,string> Providers = new() { ${Object.entries(config.schemes).map(([n,s])=>`["${n}"]="${s.provider}"`).join(", ")} };
-    private static readonly Dictionary<string,string[]> AllowedProviders = new() { ${Object.entries(config.schemes).map(([n,s])=>`["${n}"]=new[] { ${(s.swa?.allowedProviders??[]).map(p=>`"${p}"`).join(", ")} }`).join(", ")} };
+    private static readonly Dictionary<string,string[]> AllowedProviders = new() { ${Object.entries(config.schemes).map(([n,s])=>`["${n}"]=${csharpStringArray(s.swa?.allowedProviders??[])}`).join(", ")} };
     public static async Task<(AuthPrincipal? Principal, HttpResponseData? ErrorResponse)> Authorize(HttpRequestData request, string policyName)
     {
         if (!Policies.TryGetValue(policyName, out var policy)) return (null, await Error(request, HttpStatusCode.Unauthorized, "Undefined authorization policy"));

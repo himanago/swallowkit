@@ -29,6 +29,8 @@ export interface VerifyCheckEvidence {
   violations?: ProjectViolation[];
   findings?: DriftFinding[];
   logTail?: string[];
+  /** --compact で抑制された info-severity findings の件数。 */
+  suppressedInfoFindings?: number;
 }
 
 export interface VerifyCheckResult {
@@ -213,6 +215,23 @@ function runTypecheckCheck(projectRoot: string): VerifyCheckResult {
     };
   }
 
+  // typecheck は shared のビルド済み dist/ を参照する。古い dist による
+  // 「no exported member」誤検知を防ぐため、先に shared をビルドする。
+  const sharedBuild = runSharedBuildIfPresent(projectRoot);
+  if (sharedBuild.ran && !sharedBuild.ok) {
+    return {
+      id: "typecheck",
+      title: "TypeScript type check",
+      status: "fail",
+      durationMs: Date.now() - startedAt,
+      fixable: true,
+      evidence: { command: sharedBuild.command, logTail: sharedBuild.logTail },
+      suggestedActions: [
+        "Fix the shared package build errors first; typecheck resolves the shared package from its built dist/.",
+      ],
+    };
+  }
+
   const scripts = readPackageScripts(projectRoot);
   let command: string;
   let args: string[];
@@ -239,6 +258,42 @@ const SCRIPT_CHECK_TITLES: Record<string, string> = {
   lint: "Lint",
   test: "Test suite",
 };
+
+interface SharedBuildOutcome {
+  ran: boolean;
+  ok: boolean;
+  command?: string;
+  logTail?: string[];
+}
+
+/** shared/package.json に build script があれば実行する (なければ no-op)。 */
+function runSharedBuildIfPresent(projectRoot: string): SharedBuildOutcome {
+  const sharedPackageJsonPath = path.join(projectRoot, "shared", "package.json");
+  if (!fs.existsSync(sharedPackageJsonPath)) return { ran: false, ok: true };
+  try {
+    const pkg = JSON.parse(fs.readFileSync(sharedPackageJsonPath, "utf-8")) as { scripts?: Record<string, string> };
+    if (typeof pkg.scripts?.build !== "string") return { ran: false, ok: true };
+  } catch {
+    return { ran: false, ok: true };
+  }
+
+  const pm = detectFromProject(projectRoot);
+  const command = getCommands(pm).name;
+  const result = spawnSync(command, ["run", "build"], {
+    cwd: path.join(projectRoot, "shared"),
+    shell: true,
+    encoding: "utf-8",
+    timeout: 5 * 60 * 1000,
+  });
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const ok = result.status === 0 && !result.error;
+  return {
+    ran: true,
+    ok,
+    command: `${command} run build (in shared/)`,
+    logTail: ok ? undefined : tailLines(result.error ? `${output}\n${result.error.message}` : output, 50),
+  };
+}
 
 function runScriptCheck(projectRoot: string, scriptName: "build" | "lint" | "test"): VerifyCheckResult {
   const startedAt = Date.now();
@@ -356,6 +411,27 @@ export async function runVerify(
 
   saveLastVerifyState(result, projectRoot);
   return result;
+}
+
+/**
+ * Agent 消費向けに info-severity の drift findings (「user-owned が編集されたが想定内」等)
+ * を除去したコンパクトな結果を返す。判定 (summary) は変わらない。
+ */
+export function compactVerifyResult(result: VerifyResult): VerifyResult {
+  return {
+    ...result,
+    checks: result.checks.map((check) => {
+      const findings = check.evidence.findings;
+      if (!findings || findings.length === 0) return check;
+      const kept = findings.filter((finding) => finding.severity !== "info");
+      const suppressed = findings.length - kept.length;
+      if (suppressed === 0) return check;
+      return {
+        ...check,
+        evidence: { ...check.evidence, findings: kept, suppressedInfoFindings: suppressed },
+      };
+    }),
+  };
 }
 
 export interface FailureExplanation {

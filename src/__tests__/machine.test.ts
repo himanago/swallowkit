@@ -216,6 +216,21 @@ describe("machine CLI", () => {
     );
   });
 
+  it("returns the framework capability contract via inspect capabilities", async () => {
+    const { response, exitCode } = await runMachine(["node", "swallowkit", "machine", "inspect", "capabilities"]);
+
+    expect(exitCode).toBe(0);
+    expect(response.ok).toBe(true);
+    expect(response.command).toBe("inspect-capabilities");
+    const declarationNames = response.data.modelDeclarations.map((declaration: { name: string }) => declaration.name);
+    expect(declarationNames).toEqual(expect.arrayContaining(["schema", "displayName", "partitionKey", "authPolicy", "connectorConfig"]));
+    const partitionKey = response.data.modelDeclarations.find((declaration: { name: string }) => declaration.name === "partitionKey");
+    expect(partitionKey.format).toContain("export const partitionKey = '/");
+    expect(response.data.authentication.rules.join(" ")).toContain("NEVER hand-write auth.schemes");
+    expect(response.data.generatedCrud.notGuaranteed.join(" ")).toContain("Owner scoping");
+    expect(response.data.seeding.applySeeds).toContain("dev --seed-env");
+  });
+
   it("validates forbidden BFF dependencies", async () => {
     createProjectFixture(tempDir, {
       includeGeneratedArtifacts: true,

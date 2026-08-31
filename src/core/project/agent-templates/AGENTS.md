@@ -67,7 +67,13 @@ Use only the inspections relevant to the task. Typical inspections include:
 {{runCmd}} swallowkit machine inspect boundaries
 {{runCmd}} swallowkit machine inspect drift
 {{runCmd}} swallowkit machine inspect infra
+{{runCmd}} swallowkit machine inspect capabilities
 ```
+
+`inspect capabilities` answers "what can SwallowKit do" (supported model
+declarations with exact formats, the correct auth-introduction workflow, what
+generated CRUD does and does not guarantee, how seeds are applied). Use it
+instead of guessing or grepping SwallowKit internals.
 
 Use the equivalent `swallowkit_*` MCP tools when available.
 
@@ -236,6 +242,16 @@ Otherwise read and follow the equivalent runbook under
 
 Never repair schema drift by directly patching SwallowKit-managed artifacts.
 
+Additional model-change facts:
+
+- The shared package is consumed through its built `dist/`. `verify project`
+  rebuilds it automatically before typecheck; when typechecking manually,
+  build the shared package first (stale `dist/` shows up as
+  "no exported member" errors).
+- Seed JSON under `dev-seeds/` is only applied by
+  `{{runCmd}} swallowkit dev --seed-env <environment>`; editing the files
+  alone does nothing.
+
 ## New Models / CRUD Features
 
 Use the `swallowkit-add-model` Agent Skill when available.
@@ -246,6 +262,43 @@ The agent may author domain-specific schema fields and custom behavior, but
 SwallowKit should generate framework-owned CRUD artifacts.
 
 Do not manually recreate boilerplate that SwallowKit owns.
+
+## Authentication
+
+Authentication is a **plan/apply operation**, not a free-form config edit.
+Ownership of `swallowkit.config` is split:
+
+- `auth.schemes` — owned by SwallowKit. **Always start with
+  `{{runCmd}} swallowkit machine plan auth --provider <p> [--scheme <name>]`.
+  Never hand-write `auth.schemes` entries**; apply auth appends them, and a
+  hand-written scheme makes the plan fail with "already exists".
+- `auth.authorization.policies` and `swa.allowedProviders` — hand-edited
+  **after** apply (the config is an extension point; this edit is expected).
+  `swa.allowedProviders` can also be set at plan time with
+  `--allowed-providers github,aad`.
+
+After `apply auth`, follow the returned `nextActions`:
+
+1. Define `auth.authorization.policies` referencing the new scheme.
+2. For `swa`: confirm `swa.allowedProviders`; generated login URLs use it.
+3. For `external-token`: implement the generated verifier stub. It fails
+   closed, and **verify passes with the stub in place** — a green verify does
+   not mean external-token auth works end-to-end (`verify project` surfaces a
+   `auth-verifier-stub` warning while the stub is unmodified).
+4. Re-run plan/apply scaffold for models that need auth guards, then verify.
+
+Use the `swallowkit-add-auth` Agent Skill or the
+`.swallowkit/workflows/add-auth.md` runbook when available.
+
+### Generated CRUD scope
+
+Generated CRUD endpoints enforce the model's `authPolicy`
+(authentication + roles) — **they do NOT scope data to the authenticated
+user**. Any caller passing the policy can read or write any document. For
+multi-user data where users may only touch their own records, add ai-authored
+custom endpoints that derive the scoping key (e.g. `learnerId`) from the
+verified principal — never from the request body — and restrict the generated
+write endpoints to admin roles.
 
 ## Verification Is a Completion Gate
 
@@ -318,6 +371,7 @@ Current workflows include:
 
 - `swallowkit-add-model`
 - `swallowkit-modify-model`
+- `swallowkit-add-auth`
 - `swallowkit-verify-repair`
 - `swallowkit-provision`
 
@@ -400,9 +454,15 @@ same generated structure.
 - The Zod schema constant and inferred TypeScript type use the same PascalCase
   name: `export const Todo = z.object(...); export type Todo = z.infer<typeof Todo>`.
 - Re-export models from `shared/index.ts`.
-- Mark backend-managed fields as optional in source-of-truth schemas.
+- `id` is a required `z.string()`; only `createdAt` / `updatedAt` are optional
+  backend-managed fields.
+- Models may declare `partitionKey`, `authPolicy`, `displayName`, and
+  `connectorConfig` as exported constants. Exact formats:
+  `{{runCmd}} swallowkit machine inspect capabilities` (modelDeclarations).
 - Cosmos DB containers use PascalCase plural names and default to `/id` as the
-  partition key unless the model declares another key.
+  partition key unless the model declares another key, e.g.
+  `export const partitionKey = '/learnerId';` (the field must exist in the
+  schema).
 
 ## Everyday Commands
 

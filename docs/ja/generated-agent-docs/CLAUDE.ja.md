@@ -15,6 +15,8 @@ always-on rule:
 - MCP が利用できない場合は `{{runCmd}} swallowkit machine ...` にフォールバックする。
 - framework-related file を編集する前に responsibility boundary を検査する。
 - deterministic SwallowKit-managed artifact を決して手編集しない。
+- auth scheme の追加は plan/apply auth 経由のみ。swallowkit.config の `auth.schemes` を
+  手書きしない (policies と `swa.allowedProviders` は apply 後に手で追記する)。
 - deterministic generation には plan/apply を使用する。
 - すべての `requires-human` state と provisioning approval gate を尊重する。
 - implementation を完了とみなす前に SwallowKit verification を実行する。

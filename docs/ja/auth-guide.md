@@ -534,6 +534,10 @@ auth: {
 
 モデルは `authPolicy = { read: 'adminOnly', write: 'adminOnly' }` または `{ policy: 'adminOnly' }`、カスタム Functions は `await requireAuth(request, 'lineUserOnly')` を使用します。ポリシーに列挙したスキームだけを受理し、Bearer スキーム同士など credential source を区別できない構成は検証エラーです。
 
+::: warning config の所有権
+`auth.schemes` を手書きしてはいけません。`add-auth --scheme`（または `machine plan/apply auth`）が所有しており、先に手書きされたスキームは `already exists` で安全に停止します。apply 後に手で追記するのは `auth.authorization.policies` と `swa.allowedProviders` です。SWA スキームでは `--allowed-providers github,aad` を渡せば、生成されるログイン URL と provider チェックが最初から正しい identity provider を使用します。
+:::
+
 標準 principal は `{ subject, scheme, issuer, roles, claims }` です。グローバルな identity key には `scheme + ':' + subject` を使用します。互換用 `userId` / `userDetails` は非推奨です。未検証のクライアント由来 ID、roles、profile は信用しません。
 
 BFF は Bearer/SWA credential を転送して `x-functions-key` を付与するだけで、最終判定は Functions が行います。credential はログへ出しません。External Token verifier は fail closed で生成され、署名・issuer・audience・期限を利用者実装で検証し、無効 token (401) と IdP 障害 (503) を区別します。
@@ -545,7 +549,7 @@ BFF は Bearer/SWA credential を転送して `x-functions-key` を付与する�
 Campaign/Coupon 管理モデルには `adminOnly`、アンケート・クーポン受取モデルには `lineUserOnly` を指定します。`defaultPolicy: 'anonymous'` で `authPolicy` を省略したヘルスチェックは匿名になります。
 
 ```bash
-swallowkit add-auth --scheme admin --provider swa
+swallowkit add-auth --scheme admin --provider swa --allowed-providers github
 swallowkit add-auth --scheme lineUser --provider external-token
 ```
 

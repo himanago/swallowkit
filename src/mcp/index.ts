@@ -188,15 +188,18 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_plan_scaffold",
-      description: "Compute the scaffold change plan (files to create/update/overwrite, conflicts, warnings) without writing any files. Returns a planId usable with swallowkit_apply_scaffold.",
+      description: "Compute the scaffold change plan (files to create/update/overwrite, conflicts, warnings) without writing any files. Accepts one or more models; returns a planId per model usable with swallowkit_apply_scaffold.",
       inputSchema: z.object({
-        model: z.string(),
+        model: z.string().optional(),
+        models: z.array(z.string()).optional(),
         functionsDir: z.string().optional(),
         apiDir: z.string().optional(),
         apiOnly: z.boolean().optional(),
       }),
-      handler: async ({ model, functionsDir, apiDir, apiOnly }: { model: string; functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
-        const args = ["plan", "scaffold", model];
+      handler: async ({ model, models, functionsDir, apiDir, apiOnly }: { model?: string; models?: string[]; functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
+        const targets = models && models.length > 0 ? models : model ? [model] : [];
+        if (targets.length === 0) throw new Error("Provide model or models.");
+        const args = ["plan", "scaffold", ...targets];
         if (functionsDir) args.push("--functions-dir", functionsDir);
         if (apiDir) args.push("--api-dir", apiDir);
         if (apiOnly) args.push("--api-only");
@@ -249,15 +252,17 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_verify_project",
-      description: "Run verification checks (structure, drift, typecheck by default; build, lint, test and custom checks from swallowkit.config verify.checks are also available) and return machine-readable evidence. summary.done=true means the project passed all checks.",
+      description: "Run verification checks (structure, drift, typecheck by default; build, lint, test and custom checks from swallowkit.config verify.checks are also available) and return machine-readable evidence. summary.done=true means the project passed all checks. Set compact=true to suppress info-severity findings and keep the output small.",
       inputSchema: z.object({
         checks: z.array(z.string()).optional(),
+        compact: z.boolean().optional(),
       }),
-      handler: async ({ checks }: { checks?: string[] }) => {
+      handler: async ({ checks, compact }: { checks?: string[]; compact?: boolean }) => {
         const args = ["verify", "project"];
         if (checks && checks.length > 0) {
           args.push("--checks", checks.join(","));
         }
+        if (compact) args.push("--compact");
 
         const response = await executeMachineCommand(args, runMachineCli);
         return jsonTextContent(withOperationStatus(response));
@@ -289,15 +294,26 @@ export function buildSwallowKitToolDefinitions(
       },
     },
     {
+      name: "swallowkit_inspect_capabilities",
+      description: "Return SwallowKit's capability contract: which declarations models support (partitionKey, authPolicy, displayName, connectorConfig, with format examples), the correct auth-introduction workflow, what generated CRUD does and does NOT guarantee (no owner scoping), how dev seeds are applied, and every machine command. Consult this before assuming SwallowKit can or cannot do something.",
+      inputSchema: z.object({}),
+      handler: async () => {
+        const response = await executeMachineCommand(["inspect", "capabilities"], runMachineCli);
+        return jsonTextContent(withSwallowKitMetadata(response.data));
+      },
+    },
+    {
       name: "swallowkit_plan_auth",
-      description: "Compute the add-auth change plan (files to create/update/overwrite, conflicts, warnings) without writing any files. Returns a planId usable with swallowkit_apply_auth.",
+      description: "Compute the add-auth change plan (files to create/update/overwrite, conflicts, warnings) without writing any files. Returns a planId usable with swallowkit_apply_auth. Never hand-write auth.schemes in swallowkit.config; this operation owns them.",
       inputSchema: z.object({
         provider: z.enum(["custom-jwt", "swa", "external-token", "none"]),
         scheme: z.string().optional(),
+        allowedProviders: z.array(z.string()).optional(),
       }),
-      handler: async ({ provider, scheme }: { provider: string; scheme?: string }) => {
+      handler: async ({ provider, scheme, allowedProviders }: { provider: string; scheme?: string; allowedProviders?: string[] }) => {
         const args = ["plan", "auth", "--provider", provider];
         if (scheme) args.push("--scheme", scheme);
+        if (allowedProviders && allowedProviders.length > 0) args.push("--allowed-providers", allowedProviders.join(","));
 
         const response = await executeMachineCommand(args, runMachineCli);
         return jsonTextContent(withOperationStatus(response));
@@ -305,18 +321,20 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_apply_auth",
-      description: "Apply add-auth changes. Rejects stale plans and requires approve=true when user-modified files would be overwritten.",
+      description: "Apply add-auth changes. Rejects stale plans and requires approve=true when user-modified files would be overwritten. Follow the returned nextActions: policies and swa.allowedProviders are hand-edited afterwards, and external-token verifier stubs must be implemented.",
       inputSchema: z.object({
         provider: z.enum(["custom-jwt", "swa", "external-token", "none"]).optional(),
         scheme: z.string().optional(),
+        allowedProviders: z.array(z.string()).optional(),
         planId: z.string().optional(),
         approve: z.boolean().optional(),
       }),
-      handler: async ({ provider, scheme, planId, approve }: { provider?: string; scheme?: string; planId?: string; approve?: boolean }) => {
+      handler: async ({ provider, scheme, allowedProviders, planId, approve }: { provider?: string; scheme?: string; allowedProviders?: string[]; planId?: string; approve?: boolean }) => {
         const args = ["apply", "auth"];
         if (planId) args.push("--plan", planId);
         if (provider) args.push("--provider", provider);
         if (scheme) args.push("--scheme", scheme);
+        if (allowedProviders && allowedProviders.length > 0) args.push("--allowed-providers", allowedProviders.join(","));
         if (approve) args.push("--approve");
 
         const response = await executeMachineCommand(args, runMachineCli);

@@ -42,16 +42,17 @@ npx swallowkit machine <command> <subcommand> [options]
 | `inspect boundaries` | AI 自由生成と決定論的生成の責任分界契約を返す |
 | `inspect drift` | 生成物と現在状態の乖離を検出する |
 | `inspect infra` | Bicep 資産（params / modules / outputs / container 配線）を Azure 呼び出しなしで解析する |
+| `inspect capabilities` | framework の能力契約（model 宣言子と書式例・認証導入 workflow・生成 CRUD の守備範囲・seed 適用方法・コマンド一覧）を返す |
 | `validate project` | 構造化された validation violation を返す |
 | `generate model` | `create-model` を非対話 JSON モードで実行する |
 | `generate scaffold` | `scaffold` を非対話 JSON モードで実行する |
-| `plan scaffold` | 書き込まずに scaffold の変更計画（planId 付き）を返す |
-| `apply scaffold` | plan の鮮度・承認を検証して scaffold を適用する |
-| `plan auth` | 書き込まずに add-auth の変更計画を返す |
+| `plan scaffold` | 書き込まずに scaffold の変更計画（planId 付き）を返す（複数 model 対応） |
+| `apply scaffold` | plan の鮮度・承認を検証して scaffold を適用する（複数 model 対応） |
+| `plan auth` | 書き込まずに add-auth の変更計画を返す（`--allowed-providers` で SWA identity provider を指定） |
 | `apply auth` | plan の鮮度・承認を検証して認証コードを適用する |
 | `plan provision` | プロビジョニングのローカルプリフライト（`--what-if` で az what-if） |
 | `apply provision` | 承認済み plan を適用する（常に `--approve` 必須） |
-| `verify project` | structure / drift / typecheck（+ build / lint / test / カスタム）チェックを実行する |
+| `verify project` | structure / drift / typecheck（+ build / lint / test / カスタム）チェックを実行する（`--compact` で info-severity findings を抑制） |
 | `explain failure` | 直近の verify 失敗の証拠と修復アクションを返す |
 
 ### 例
@@ -62,15 +63,20 @@ npx swallowkit machine validate project
 npx swallowkit machine generate model todo --overwrite never
 npx swallowkit machine generate scaffold todo --api-only
 npx swallowkit machine plan scaffold todo
+npx swallowkit machine plan scaffold todo note learner
 npx swallowkit machine apply scaffold --plan <planId>
+npx swallowkit machine apply scaffold todo note learner
 npx swallowkit machine apply scaffold todo --approve
 npx swallowkit machine plan auth --provider custom-jwt
+npx swallowkit machine plan auth --provider swa --scheme admin --allowed-providers github
 npx swallowkit machine apply auth --plan <planId>
 npx swallowkit machine inspect boundaries
+npx swallowkit machine inspect capabilities
 npx swallowkit machine inspect infra
 npx swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia
 npx swallowkit machine apply provision --plan <planId> --approve
 npx swallowkit machine verify project --checks structure,drift
+npx swallowkit machine verify project --compact
 npx swallowkit machine explain failure --check typecheck
 ```
 

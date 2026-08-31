@@ -12,7 +12,7 @@ import * as path from "path";
 import * as childProcess from "child_process";
 import { runMachineCli } from "../machine";
 import { inspectInfra } from "../core/project/infra";
-import { loadCustomVerifyChecks } from "../core/verify";
+import { loadCustomVerifyChecks, compactVerifyResult, VerifyResult } from "../core/verify";
 import { buildAgentSkills, buildWorkflowDocs, writeAgentSkills, writeWorkflowDocs } from "../core/project/workflows";
 
 jest.mock("child_process", () => {
@@ -229,6 +229,37 @@ describe("agent loop phase 3/4", () => {
     expect(fs.readFileSync(path.join(tempDir, "lib", "auth", "auth-context.tsx"), "utf-8")).not.toContain("// hand edit");
   });
 
+  it("threads --allowed-providers into the config and generated SWA artifacts for a named scheme", async () => {
+    createProjectFixture(tempDir);
+
+    const plan = await runMachine([
+      "node", "swallowkit", "machine", "plan", "auth",
+      "--provider", "swa", "--scheme", "admin", "--allowed-providers", "github",
+    ]);
+    expect(plan.response.ok).toBe(true);
+    expect(plan.response.data.allowedProviders).toEqual(["github"]);
+
+    const apply = await runMachine([
+      "node", "swallowkit", "machine", "apply", "auth", "--plan", plan.response.data.planId,
+    ]);
+    expect(apply.response.ok).toBe(true);
+
+    const config = fs.readFileSync(path.join(tempDir, "swallowkit.config.js"), "utf-8");
+    expect(config).toContain("swa: { allowedProviders: ['github'] }");
+
+    const authContext = fs.readFileSync(
+      path.join(tempDir, "lib", "auth", "schemes", "admin", "auth-context.tsx"),
+      "utf-8"
+    );
+    expect(authContext).toContain("/.auth/login/github?");
+    expect(authContext).not.toContain("/.auth/login/aad");
+
+    // apply auth は「policies を定義せよ」等の後続手順を nextActions で返す
+    const descriptions = apply.response.nextActions.map((a: any) => a.description).join(" ");
+    expect(descriptions).toContain("auth.authorization.policies");
+    expect(descriptions).toContain("allowedProviders");
+  });
+
   it("plans provision locally and always requires human approval to apply", async () => {
     createProjectFixture(tempDir);
     writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
@@ -309,12 +340,43 @@ describe("agent loop phase 3/4", () => {
     expect(checks[0]).toMatchObject({ id: "smoke-api", command: "node scripts/smoke.js" });
   });
 
+  it("compactVerifyResult suppresses info findings without changing the summary", () => {
+    const result: VerifyResult = {
+      verifiedAt: new Date().toISOString(),
+      summary: { passed: 1, failed: 0, skipped: 0, errors: 0, done: true },
+      checks: [
+        {
+          id: "drift",
+          title: "Generated artifact drift",
+          status: "pass",
+          durationMs: 1,
+          fixable: true,
+          evidence: {
+            findings: [
+              { kind: "artifact-modified", severity: "info", path: "shared/models/todo.ts", message: "expected edit", repairAction: "none" },
+              { kind: "schema-drift", severity: "warning", path: "functions/src/todo.ts", message: "stale", repairAction: "re-plan" },
+            ] as never,
+          },
+          suggestedActions: [],
+        },
+      ],
+    };
+
+    const compact = compactVerifyResult(result);
+    expect(compact.summary).toEqual(result.summary);
+    expect(compact.checks[0].evidence.findings).toHaveLength(1);
+    expect(compact.checks[0].evidence.findings![0].severity).toBe("warning");
+    expect(compact.checks[0].evidence.suppressedInfoFindings).toBe(1);
+    // 元の結果は変更しない
+    expect(result.checks[0].evidence.findings).toHaveLength(2);
+  });
+
   describe("workflow docs & agent skills", () => {
     it("builds workflow docs including provision and an index referencing skills", () => {
       const docs = buildWorkflowDocs("pnpm exec");
       const fileNames = docs.map((d) => d.fileName);
       expect(fileNames).toEqual(
-        expect.arrayContaining(["README.md", "add-model.md", "modify-model.md", "verify-and-repair.md", "provision.md"])
+        expect.arrayContaining(["README.md", "add-model.md", "modify-model.md", "add-auth.md", "verify-and-repair.md", "provision.md"])
       );
       const index = docs.find((d) => d.fileName === "README.md")!;
       expect(index.content).toContain(".github/skills/");
@@ -326,6 +388,7 @@ describe("agent loop phase 3/4", () => {
       expect(skills.map((s) => s.skillName)).toEqual([
         "swallowkit-add-model",
         "swallowkit-modify-model",
+        "swallowkit-add-auth",
         "swallowkit-verify-repair",
         "swallowkit-provision",
       ]);
@@ -351,6 +414,7 @@ describe("agent loop phase 3/4", () => {
       expect(skillPaths).toEqual([
         ".github/skills/swallowkit-add-model/SKILL.md",
         ".github/skills/swallowkit-modify-model/SKILL.md",
+        ".github/skills/swallowkit-add-auth/SKILL.md",
         ".github/skills/swallowkit-verify-repair/SKILL.md",
         ".github/skills/swallowkit-provision/SKILL.md",
       ]);

@@ -27,6 +27,8 @@ import {
 export interface PlanAuthOptions {
   provider: string;
   scheme?: string;
+  /** SWA の許可 identity provider。未指定時は add-auth 側の既定 (['aad'])。 */
+  allowedProviders?: string[];
 }
 
 export type AuthPlanAction = "create" | "update" | "overwrite" | "append" | "delete" | "skip";
@@ -44,6 +46,7 @@ export interface AuthPlanData {
   planType: "auth";
   provider: string;
   scheme?: string;
+  allowedProviders?: string[];
   createdAt: string;
   swallowkitVersion: string;
   operations: AuthPlanOperation[];
@@ -70,7 +73,7 @@ async function collectAuthOperations(options: PlanAuthOptions): Promise<FileOper
     const captured = await captureConsoleMessagesWithError(async () => {
       await interceptProcessExit(async () => {
         await runWithFileSession(session, async () => {
-          await addAuthCommand({ provider: options.provider, scheme: options.scheme });
+          await addAuthCommand({ provider: options.provider, scheme: options.scheme, allowedProviders: options.allowedProviders });
         });
       });
     });
@@ -166,6 +169,7 @@ export async function planAuthOperation(options: PlanAuthOptions): Promise<AuthP
       JSON.stringify({
         provider: options.provider,
         scheme: options.scheme,
+        allowedProviders: options.allowedProviders,
         operations: operations.map((op) => ({ path: op.path, action: op.action })),
         fingerprints,
       })
@@ -178,6 +182,7 @@ export async function planAuthOperation(options: PlanAuthOptions): Promise<AuthP
     planType: "auth",
     provider: options.provider,
     ...(options.scheme ? { scheme: options.scheme } : {}),
+    ...(options.allowedProviders && options.allowedProviders.length > 0 ? { allowedProviders: options.allowedProviders } : {}),
     createdAt: new Date().toISOString(),
     swallowkitVersion: getSwallowKitVersion(),
     operations,
@@ -208,6 +213,7 @@ export function verifyAuthPlanFingerprints(
 export interface ApplyAuthOptions {
   provider?: string;
   scheme?: string;
+  allowedProviders?: string[];
   planId?: string;
   approve?: boolean;
 }
@@ -241,7 +247,7 @@ async function runCommitAuthOperation(options: PlanAuthOptions): Promise<{
     const tracked = await trackFileMutations(async () => {
       const captured = await captureConsoleMessagesWithError(async () => {
         await interceptProcessExit(async () => {
-          await addAuthCommand({ provider: options.provider, scheme: options.scheme });
+          await addAuthCommand({ provider: options.provider, scheme: options.scheme, allowedProviders: options.allowedProviders });
         });
       });
 
@@ -318,6 +324,7 @@ export async function applyAuthOperation(options: ApplyAuthOptions): Promise<App
   const effectiveOptions: PlanAuthOptions = {
     provider,
     scheme: options.scheme ?? basePlan?.scheme,
+    allowedProviders: options.allowedProviders ?? basePlan?.allowedProviders,
   };
 
   // 常に最新状態で collect し、競合を再確認する

@@ -42,16 +42,17 @@ npx swallowkit machine <command> <subcommand> [options]
 | `inspect boundaries` | Return the responsibility boundary contract between AI free-form authoring and deterministic generation |
 | `inspect drift` | Detect drift between generated artifacts and the current state |
 | `inspect infra` | Inspect Bicep assets (params / modules / outputs / container wiring) without calling Azure |
+| `inspect capabilities` | Return the framework capability contract: model declarations (with exact formats), auth workflow, generated-CRUD scope, seeding, and available commands |
 | `validate project` | Return structured validation violations |
 | `generate model` | Run `create-model` in non-interactive JSON mode |
 | `generate scaffold` | Run `scaffold` in non-interactive JSON mode |
-| `plan scaffold` | Compute the scaffold change plan (with planId) without writing files |
-| `apply scaffold` | Apply scaffold changes with plan freshness and approval checks |
-| `plan auth` | Compute the add-auth change plan without writing files |
+| `plan scaffold` | Compute the scaffold change plan (with planId) without writing files; accepts multiple models |
+| `apply scaffold` | Apply scaffold changes with plan freshness and approval checks; accepts multiple models |
+| `plan auth` | Compute the add-auth change plan without writing files (`--allowed-providers` sets SWA identity providers) |
 | `apply auth` | Apply auth code with plan freshness and approval checks |
 | `plan provision` | Local provisioning preflight (`--what-if` runs az what-if) |
 | `apply provision` | Apply an approved provisioning plan (always requires `--approve`) |
-| `verify project` | Run structure / drift / typecheck (plus build / lint / test / custom) verification checks |
+| `verify project` | Run structure / drift / typecheck (plus build / lint / test / custom) verification checks; `--compact` suppresses info-severity findings |
 | `explain failure` | Return evidence and repair actions for the last verify failures |
 
 ### Examples
@@ -62,15 +63,20 @@ npx swallowkit machine validate project
 npx swallowkit machine generate model todo --overwrite never
 npx swallowkit machine generate scaffold todo --api-only
 npx swallowkit machine plan scaffold todo
+npx swallowkit machine plan scaffold todo note learner
 npx swallowkit machine apply scaffold --plan <planId>
+npx swallowkit machine apply scaffold todo note learner
 npx swallowkit machine apply scaffold todo --approve
 npx swallowkit machine plan auth --provider custom-jwt
+npx swallowkit machine plan auth --provider swa --scheme admin --allowed-providers github
 npx swallowkit machine apply auth --plan <planId>
 npx swallowkit machine inspect boundaries
+npx swallowkit machine inspect capabilities
 npx swallowkit machine inspect infra
 npx swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia
 npx swallowkit machine apply provision --plan <planId> --approve
 npx swallowkit machine verify project --checks structure,drift
+npx swallowkit machine verify project --compact
 npx swallowkit machine explain failure --check typecheck
 ```
 

@@ -16,6 +16,9 @@ Key rules:
 - Otherwise use `{{runCmd}} swallowkit machine ...`.
 - Inspect responsibility boundaries before editing framework-related files.
 - Never hand-edit deterministic SwallowKit-managed artifacts.
+- Add auth schemes only via plan/apply auth; never hand-write `auth.schemes`
+  in swallowkit.config (policies and `swa.allowedProviders` are hand-edited
+  after apply).
 - Use plan/apply for deterministic generation.
 - Respect `requires-human` states and other human approval gates.
 - Run SwallowKit verification before completion.

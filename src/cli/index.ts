@@ -189,10 +189,12 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
     .description("Add authentication and authorization to the project")
     .option("--provider <provider>", "Auth provider: custom-jwt | swa | external-token | swa-custom | none", "custom-jwt")
     .option("--scheme <name>", "Add a named authentication scheme")
+    .option("--allowed-providers <list>", "Comma-separated SWA identity providers to allow (e.g. github,aad); defaults to aad")
     .action((options) => {
       addAuthCommand({
         provider: options.provider,
         scheme: options.scheme,
+        allowedProviders: options.allowedProviders ? String(options.allowedProviders).split(",") : undefined,
       });
     });
 

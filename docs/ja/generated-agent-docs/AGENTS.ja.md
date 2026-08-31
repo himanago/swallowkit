@@ -68,7 +68,13 @@ machine interface は Agent-facing fallback であり、自律 workflow に適�
 {{runCmd}} swallowkit machine inspect boundaries
 {{runCmd}} swallowkit machine inspect drift
 {{runCmd}} swallowkit machine inspect infra
+{{runCmd}} swallowkit machine inspect capabilities
 ```
+
+`inspect capabilities` は「SwallowKit に何ができるか」(サポートされる model 宣言と
+正確な書式、認証導入の正しい workflow、generated CRUD が保証すること・しないこと、
+seed の適用方法) に答えます。推測したり SwallowKit 内部を grep したりする代わりに
+これを使用してください。
 
 利用可能な場合は同等の `swallowkit_*` MCP tools を使用してください。
 
@@ -230,6 +236,15 @@ verify
 
 SwallowKit-managed artifact を直接 patch して schema drift を修復してはなりません。
 
+model 変更に関する追加事項:
+
+- shared package はビルド済み `dist/` 経由で参照されます。`verify project` は typecheck の前に
+  自動で rebuild しますが、手動で typecheck する場合は先に shared package をビルドしてください
+  (古い `dist/` は "no exported member" エラーとして現れます)。
+- `dev-seeds/` の seed JSON は
+  `{{runCmd}} swallowkit dev --seed-env <environment>` の実行時のみ適用されます。
+  ファイルを編集するだけでは何も起きません。
+
 <!-- source-section: New Models / CRUD Features -->
 ## 新しい model / CRUD feature
 
@@ -241,6 +256,42 @@ Agent は domain-specific schema field と custom behavior を記述できます
 CRUD artifact は SwallowKit が生成すべきです。
 
 SwallowKit が所有する boilerplate を手作業で再作成してはなりません。
+
+<!-- source-section: Authentication -->
+## Authentication
+
+認証の導入は **plan/apply operation** であり、自由な config 編集ではありません。
+`swallowkit.config` の所有権は分割されています。
+
+- `auth.schemes` — SwallowKit が所有します。**必ず
+  `{{runCmd}} swallowkit machine plan auth --provider <p> [--scheme <name>]` から始めてください。
+  `auth.schemes` を手書きしてはなりません**。apply auth が追記します。手書きされた scheme は
+  plan を "already exists" で失敗させます。
+- `auth.authorization.policies` と `swa.allowedProviders` — apply **後に**手で追記します
+  (config は extension point であり、この編集は想定内の workflow です)。
+  `swa.allowedProviders` は plan 時に `--allowed-providers github,aad` でも指定できます。
+
+`apply auth` の後は、返される `nextActions` に従ってください。
+
+1. 新しい scheme を参照する `auth.authorization.policies` を定義する。
+2. `swa` の場合: `swa.allowedProviders` を確認する。generated login URL はこれを使用します。
+3. `external-token` の場合: generated verifier stub を実装する。stub は fail closed であり、
+   **stub のままでも verify は成功します** — verify が green でも external-token 認証が
+   end-to-end で動くことを意味しません (`verify project` は stub が未修正の間
+   `auth-verifier-stub` warning を表示します)。
+4. auth guard が必要な model の plan/apply scaffold を再実行し、verify する。
+
+利用可能なら `swallowkit-add-auth` Agent Skill または
+`.swallowkit/workflows/add-auth.md` runbook を使用してください。
+
+### Generated CRUD の守備範囲
+
+Generated CRUD endpoint は model の `authPolicy` (認証 + role) を強制しますが、
+**認証済み user へのデータのスコープはしません**。policy を通過した caller は
+任意の document を読み書きできます。user が自分のレコードのみ操作できるべき
+multi-user データでは、検証済み principal から scoping key (例: `learnerId`) を導出する
+ai-authored custom endpoint を追加し (request body からは決して導出しない)、
+generated write endpoint は admin role に制限してください。
 
 <!-- source-section: Verification Is a Completion Gate -->
 ## Verification は completion gate
@@ -314,6 +365,7 @@ SwallowKit は task-specific Agent Skills を次の場所にインストール�
 
 - `swallowkit-add-model`
 - `swallowkit-modify-model`
+- `swallowkit-add-auth`
 - `swallowkit-verify-repair`
 - `swallowkit-provision`
 
@@ -399,9 +451,14 @@ backend が `id`、`createdAt`、`updatedAt` を所有します。client-sent va
 - Zod schema constant と inferred TypeScript type は同じ PascalCase name を使用します:
   `export const Todo = z.object(...); export type Todo = z.infer<typeof Todo>`。
 - model を `shared/index.ts` から re-export します。
-- source-of-truth schema で backend-managed field を optional にします。
+- `id` は必須の `z.string()` です。optional な backend-managed field は
+  `createdAt` / `updatedAt` のみです。
+- model は `partitionKey`、`authPolicy`、`displayName`、`connectorConfig` を exported constant
+  として宣言できます。正確な書式:
+  `{{runCmd}} swallowkit machine inspect capabilities` (modelDeclarations)。
 - Cosmos DB container は PascalCase plural name を使用し、model が別の key を宣言しない限り
-  partition key の default は `/id` です。
+  partition key の default は `/id` です。宣言例:
+  `export const partitionKey = '/learnerId';` (field は schema に存在する必要があります)。
 
 <!-- source-section: Everyday Commands -->
 ## 日常的な command

@@ -63,6 +63,18 @@ describe("named authentication routers", () => {
     expect(generateNamedAuthRouterCSharp(swaOnly)).toContain("AllowedProviders[scheme]");
   });
 
+  it("emits Array.Empty<string>() instead of untyped new[] { } for empty C# arrays (CS0826)", () => {
+    const emptyLists = normalizeAuthConfig({
+      schemes: { api: { provider: "external-token" } },
+      authorization: { defaultPolicy: "anonymous", policies: { apiOnly: { schemes: ["api"] } } },
+    })!;
+    const csharp = generateNamedAuthRouterCSharp(emptyLists);
+    expect(csharp).not.toMatch(/new\[\]\s*\{\s*\}/);
+    expect(csharp).toContain("Array.Empty<string>()");
+    // 非空のリストは従来通り new[] リテラル
+    expect(csharp).toContain('new[] { "api" }');
+  });
+
   it("scaffolds named read/write guards for all Functions languages", () => {
     const policy = { read: "adminOnly", write: "lineUserOnly" };
     const model = createBasicModelInfo();

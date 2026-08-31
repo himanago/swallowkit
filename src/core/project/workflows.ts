@@ -60,7 +60,9 @@ Goal: add a data model and derive CRUD/BFF/UI/infra deterministically.
 5. Verify:
    \`${runCmd} swallowkit machine verify project\`
    - \`summary.done: false\` → \`${runCmd} swallowkit machine explain failure\` and repair, then re-verify.
-6. If \`dev-seeds/\` exists, update seed JSON for the new model.
+6. If \`dev-seeds/\` exists, update seed JSON for the new model. Seeds are only
+   applied by \`${runCmd} swallowkit dev --seed-env <environment>\` — editing the
+   JSON alone does nothing.
 
 ## Terminal states
 
@@ -100,6 +102,49 @@ Goal: change a schema and re-align every generated artifact.
 
 Never hand-edit managed artifacts to implement schema changes — always change the model
 and regenerate. Hand-edits are detected as drift and block unattended overwrites.
+`,
+  };
+
+  const addAuth: WorkflowDoc = {
+    fileName: "add-auth.md",
+    title: "Add authentication (plan/apply with config ownership rules)",
+    skillName: "swallowkit-add-auth",
+    skillDescription:
+      "Add authentication (custom-jwt, Azure Static Web Apps built-in, or external-token) to a SwallowKit project via plan/apply auth, including the config ownership rules (never hand-write auth.schemes; hand-edit policies and allowedProviders after apply) and post-apply steps. Use when asked to add login, authentication, authorization, roles, or a named auth scheme.",
+    content: `# Workflow: Add authentication
+
+Goal: introduce an auth scheme deterministically and finish the manual follow-ups.
+
+## Config ownership (critical)
+
+- \`auth.schemes\` is **owned by plan/apply auth. Never hand-write scheme entries** —
+  a pre-written scheme makes planning fail with \`already exists\`.
+- \`auth.authorization.policies\` and \`swa.allowedProviders\` are **hand-edited after
+  apply** (the config is an extension point; this is the expected workflow).
+
+## Steps
+
+1. Check what already exists: \`${runCmd} swallowkit machine inspect capabilities\`
+   (authentication section) and the current \`auth\` block in swallowkit.config.
+2. Plan (writes nothing):
+   \`${runCmd} swallowkit machine plan auth --provider <custom-jwt|swa|external-token> [--scheme <name>] [--allowed-providers github,aad]\`
+3. Apply:
+   \`${runCmd} swallowkit machine apply auth --plan <planId>\`
+4. Follow the returned \`nextActions\`:
+   - Define \`auth.authorization.policies\` referencing the scheme (hand-edit).
+   - swa: confirm \`swa.allowedProviders\` — generated login URLs use the first entry.
+   - external-token: implement the generated verifier stub. It fails closed and
+     **verify passes with the stub**, so a green verify does not mean the auth
+     flow works (a \`auth-verifier-stub\` warning is surfaced while unmodified).
+5. Add \`authPolicy\` to models that need guards, then re-run plan/apply scaffold
+   for them.
+6. Verify: \`${runCmd} swallowkit machine verify project\`
+
+## Scope guardrail
+
+Generated CRUD enforces authentication and roles but does **not** scope rows to
+the caller. Owner-scoped behavior belongs in ai-authored endpoints that derive
+the scoping key from the verified principal, never from the request body.
 `,
   };
 
@@ -190,6 +235,7 @@ under \`.github/skills/\` so skills-aware agents load them automatically.
 |----------|------|-------|
 | Add a new model | [add-model.md](./add-model.md) | \`swallowkit-add-model\` |
 | Modify an existing model | [modify-model.md](./modify-model.md) | \`swallowkit-modify-model\` |
+| Add authentication | [add-auth.md](./add-auth.md) | \`swallowkit-add-auth\` |
 | Verify and repair | [verify-and-repair.md](./verify-and-repair.md) | \`swallowkit-verify-repair\` |
 | Provision Azure resources | [provision.md](./provision.md) | \`swallowkit-provision\` |
 
@@ -203,7 +249,7 @@ Full machine-readable contract: \`${runCmd} swallowkit machine inspect boundarie
 `,
   };
 
-  return [index, addModel, modifyModel, verifyRepair, provision];
+  return [index, addModel, modifyModel, addAuth, verifyRepair, provision];
 }
 
 export const WORKFLOWS_DIR = path.join(".swallowkit", "workflows");
