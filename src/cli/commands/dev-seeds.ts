@@ -4,6 +4,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { ensureSwallowKitProject } from "../../core/config";
 import { FieldInfo, ModelInfo, getAllModels, toKebabCase } from "../../core/scaffold/model-parser";
+import { resolveCosmosDatabaseNameForWorktree } from "./cosmos-worktree-isolation";
+import type { GitCommandRunner } from "./cosmos-worktree-isolation";
 
 export type SeedDocument = Record<string, unknown>;
 
@@ -34,6 +36,7 @@ export interface LocalCosmosConnectionInfo {
   endpoint: string;
   key: string;
   databaseName: string;
+  worktreeIsolationEnabled?: boolean;
   localSettingsPath: string;
 }
 
@@ -118,7 +121,11 @@ export function parseCosmosConnectionString(
 
 export function resolveLocalCosmosConnectionInfo(
   defaultDatabaseName: string,
-  functionsDir: string = path.join(process.cwd(), "functions")
+  functionsDir: string = path.join(process.cwd(), "functions"),
+  worktreeOptions: {
+    cwd?: string;
+    runGit?: GitCommandRunner;
+  } = {}
 ): ResolveLocalCosmosConnectionResult {
   const localSettingsPath = path.join(functionsDir, "local.settings.json");
   if (!fs.existsSync(localSettingsPath)) {
@@ -142,11 +149,19 @@ export function resolveLocalCosmosConnectionInfo(
     return { ok: false, reason: "invalid-connection-string", localSettingsPath };
   }
 
+  const baseDatabaseName = localSettings.Values?.COSMOS_DB_DATABASE_NAME || defaultDatabaseName;
+  const databaseNameResolution = resolveCosmosDatabaseNameForWorktree(
+    baseDatabaseName,
+    worktreeOptions.cwd,
+    worktreeOptions.runGit
+  );
+
   return {
     ok: true,
     value: {
       ...parsedConnection,
-      databaseName: localSettings.Values?.COSMOS_DB_DATABASE_NAME || defaultDatabaseName,
+      databaseName: databaseNameResolution.databaseName,
+      worktreeIsolationEnabled: databaseNameResolution.worktreeIsolationEnabled,
       localSettingsPath,
     },
   };

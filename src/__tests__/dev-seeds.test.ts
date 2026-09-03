@@ -1,8 +1,10 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { CosmosClient } from "@azure/cosmos";
 import { createBasicModelInfo } from "./fixtures";
 import {
+  applyDevSeedEnvironment,
   buildDefaultCosmosDatabaseName,
   buildSeedTemplateDocument,
   getContainerNameForModel,
@@ -112,9 +114,70 @@ describe("dev seed helpers", () => {
         endpoint: "https://localhost:8081/",
         key: "test-key==",
         databaseName: "CustomDatabase",
+        worktreeIsolationEnabled: false,
         localSettingsPath: path.join(functionsDir, "local.settings.json"),
       },
     });
+  });
+
+  it("uses an explicit database name as the isolated seed database in a linked worktree", async () => {
+    const functionsDir = path.join(tempDir, "functions");
+    const linkedRoot = path.join(tempDir, "linked");
+    const commonGitDir = path.join(tempDir, "main", ".git");
+    const worktreeGitDir = path.join(commonGitDir, "worktrees", "linked");
+    fs.mkdirSync(functionsDir, { recursive: true });
+    fs.mkdirSync(linkedRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(functionsDir, "local.settings.json"),
+      JSON.stringify({
+        Values: {
+          CosmosDBConnection: "AccountEndpoint=https://localhost:8081/;AccountKey=test-key==;",
+          COSMOS_DB_DATABASE_NAME: "ExplicitDatabase",
+        },
+      }),
+      "utf-8"
+    );
+
+    const connectionInfo = resolveLocalCosmosConnectionInfo("FallbackDatabase", functionsDir, {
+      cwd: linkedRoot,
+      runGit: () => [linkedRoot, worktreeGitDir, commonGitDir].join("\n"),
+    });
+
+    expect(connectionInfo.ok).toBe(true);
+    if (!connectionInfo.ok) {
+      throw new Error("Expected local Cosmos DB connection info");
+    }
+    expect(connectionInfo.value.databaseName).toMatch(/^ExplicitDatabase_[a-f0-9]{8}$/);
+    expect(connectionInfo.value.worktreeIsolationEnabled).toBe(true);
+
+    const seedsDir = path.join(tempDir, "dev-seeds", "local");
+    fs.mkdirSync(seedsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(seedsDir, "todo.json"),
+      JSON.stringify([{ id: "todo-001", title: "Isolated" }]),
+      "utf-8"
+    );
+
+    const createItem = jest.fn(async () => undefined);
+    const container = {
+      delete: jest.fn(async () => undefined),
+      items: { create: createItem },
+    };
+    const database = {
+      container: jest.fn(() => container),
+      containers: { createIfNotExists: jest.fn(async () => undefined) },
+    };
+    const client = { database: jest.fn(() => database) } as unknown as CosmosClient;
+
+    await applyDevSeedEnvironment({
+      client,
+      databaseName: connectionInfo.value.databaseName,
+      environment: "local",
+      models: [createBasicModelInfo()],
+    });
+
+    expect(client.database).toHaveBeenCalledWith(connectionInfo.value.databaseName);
+    expect(createItem).toHaveBeenCalledWith({ id: "todo-001", title: "Isolated" });
   });
 
   it("prepares exported seed documents by removing Cosmos metadata and sorting ids", () => {

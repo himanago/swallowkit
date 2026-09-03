@@ -19,6 +19,12 @@ pnpm swallowkit dev
 
 `auth.provider`が`swa`の場合は、SWA認証エミュレーターも http://localhost:4280 で起動します。認証付き画面には4280番ポートからアクセスしてください。SWA CLIが未導入の場合、`swallowkit dev`はプロジェクトに追加するコマンドを表示して、サーバー起動前に終了します。
 
+### Git worktree を使った並列開発
+
+Git linked worktree 内で `swallowkit dev` を実行すると、その worktree のローカル Cosmos DB データは自動的に分離されます。Cosmos DB Emulator のプロセス自体は全 worktree で共有しますが、linked worktree では正規化した worktree root path の hash（8文字）が database name に付与されます。たとえば `MyAppDatabase` は `MyAppDatabase_a31f92c4` になります。
+
+main worktree では suffix が付かず、従来の database name のままです。seed の置換と `create-dev-seeds --from-emulator` も解決済み database を使用するため、異なる linked worktree で並行動作する Coding Agent が互いの container やデータを削除・置換することはありません。起動ログには実際の database name と worktree isolation の有効状態が表示されます。
+
 ### オプション
 
 | フラグ | 説明 |

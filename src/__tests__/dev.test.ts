@@ -8,6 +8,7 @@ import {
   buildNextDevArgs,
   buildSwaStartArgs,
   buildDevCommand,
+  buildFunctionsCosmosEnvironment,
   buildPythonFunctionsEnv,
   compareVersionNumbers,
   DevOptions,
@@ -154,6 +155,14 @@ describe("dev command helpers", () => {
       getPythonVirtualEnvPaths(functionsDir).pythonExecutable
     );
     expect(env.PATH?.startsWith(`${expectedBinDir}${path.delimiter}`)).toBe(true);
+  });
+
+  it("passes the resolved Cosmos database name to Azure Functions", () => {
+    const baseEnv = { PATH: "test-path", COSMOS_DB_DATABASE_NAME: "BaseDatabase" };
+    const env = buildFunctionsCosmosEnvironment(baseEnv, "BaseDatabase_a31f92c4");
+
+    expect(env.COSMOS_DB_DATABASE_NAME).toBe("BaseDatabase_a31f92c4");
+    expect(baseEnv.COSMOS_DB_DATABASE_NAME).toBe("BaseDatabase");
   });
 });
 

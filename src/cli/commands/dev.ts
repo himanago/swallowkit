@@ -204,6 +204,16 @@ export function buildPythonFunctionsEnv(baseEnv: NodeJS.ProcessEnv, functionsDir
   };
 }
 
+export function buildFunctionsCosmosEnvironment(
+  baseEnv: NodeJS.ProcessEnv,
+  databaseName: string
+): NodeJS.ProcessEnv {
+  return {
+    ...baseEnv,
+    COSMOS_DB_DATABASE_NAME: databaseName,
+  };
+}
+
 function getPathEnvKey(env: NodeJS.ProcessEnv): string {
   return Object.keys(env).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
 }
@@ -569,7 +579,11 @@ async function initializeCosmosDB(databaseName: string): Promise<CosmosInitializ
     }
 
     console.log('🗄️  Initializing Cosmos DB...');
-    const { endpoint, key, databaseName: dbName } = connectionInfoResult.value;
+    const { endpoint, key, databaseName: dbName, worktreeIsolationEnabled } = connectionInfoResult.value;
+    console.log(`📦 Cosmos DB database: ${dbName}`);
+    if (worktreeIsolationEnabled) {
+      console.log('🌳 Worktree isolation: enabled');
+    }
 
     const client = new CosmosClient({
       endpoint: endpoint,
@@ -826,6 +840,10 @@ async function startDevEnvironment(options: DevOptions) {
           console.log('ℹ️  C# Azure Functions can take longer on cold start while the worker builds.');
         } else {
           functionsEnv = await preparePythonFunctionsEnvironment(functionsDir);
+        }
+
+        if (cosmosInitialization) {
+          functionsEnv = buildFunctionsCosmosEnvironment(functionsEnv, cosmosInitialization.databaseName);
         }
       }
     }

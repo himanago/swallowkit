@@ -19,6 +19,12 @@ This normally starts both servers:
 
 When `auth.provider` is `swa`, it also starts the SWA authentication emulator at http://localhost:4280. Use port 4280 for authenticated UI testing. If SWA CLI is not installed, `swallowkit dev` prints the project-local installation command and exits before starting any servers.
 
+### Parallel development with Git worktrees
+
+When `swallowkit dev` runs in a Git linked worktree, it automatically isolates that worktree's local Cosmos DB data. All worktrees share the same Cosmos DB Emulator process, but linked worktrees append an eight-character hash of the canonical worktree root path to the configured database name. For example, `MyAppDatabase` becomes `MyAppDatabase_a31f92c4`.
+
+The main worktree keeps the existing database name without a suffix. Seed replacement and `create-dev-seeds --from-emulator` use the resolved database, so parallel coding agents in different linked worktrees do not delete or replace each other's containers or data. The startup log shows the resolved database name and whether worktree isolation is enabled.
+
 ### Options
 
 | Flag | Description |
