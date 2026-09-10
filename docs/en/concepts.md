@@ -96,8 +96,8 @@ npx swallowkit dev
 ```
 ```bash [pnpm]
 pnpm dlx swallowkit init my-app
-pnpm swallowkit scaffold todo
-pnpm swallowkit dev
+pnpm exec swallowkit scaffold todo
+pnpm exec swallowkit dev
 ```
 :::
 
@@ -110,9 +110,9 @@ npx swallowkit machine validate project
 npx swallowkit machine generate scaffold todo --api-only
 ```
 ```bash [pnpm]
-pnpm swallowkit machine inspect project
-pnpm swallowkit machine validate project
-pnpm swallowkit machine generate scaffold todo --api-only
+pnpm exec swallowkit machine inspect project
+pnpm exec swallowkit machine validate project
+pnpm exec swallowkit machine generate scaffold todo --api-only
 ```
 :::
 

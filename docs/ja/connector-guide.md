@@ -51,10 +51,10 @@ npx swallowkit add-connector backlog --type api
 ```
 ```bash [pnpm]
 # RDB Connector の追加（MySQL）
-pnpm swallowkit add-connector mysql --type rdb --provider mysql
+pnpm exec swallowkit add-connector mysql --type rdb --provider mysql
 
 # API Connector の追加（Backlog）
-pnpm swallowkit add-connector backlog --type api
+pnpm exec swallowkit add-connector backlog --type api
 ```
 :::
 
@@ -74,10 +74,10 @@ npx swallowkit create-model backlog-issue --connector backlog
 ```
 ```bash [pnpm]
 # mysql Connector に紐づくモデルを作成
-pnpm swallowkit create-model user --connector mysql
+pnpm exec swallowkit create-model user --connector mysql
 
 # backlog Connector に紐づくモデルを作成
-pnpm swallowkit create-model backlog-issue --connector backlog
+pnpm exec swallowkit create-model backlog-issue --connector backlog
 ```
 :::
 
@@ -155,8 +155,8 @@ npx swallowkit scaffold shared/models/user.ts
 npx swallowkit scaffold shared/models/backlog-issue.ts
 ```
 ```bash [pnpm]
-pnpm swallowkit scaffold shared/models/user.ts
-pnpm swallowkit scaffold shared/models/backlog-issue.ts
+pnpm exec swallowkit scaffold shared/models/user.ts
+pnpm exec swallowkit scaffold shared/models/backlog-issue.ts
 ```
 :::
 
@@ -182,7 +182,7 @@ pnpm swallowkit scaffold shared/models/backlog-issue.ts
 npx swallowkit dev --mock-connectors
 ```
 ```bash [pnpm]
-pnpm swallowkit dev --mock-connectors
+pnpm exec swallowkit dev --mock-connectors
 ```
 :::
 
@@ -372,7 +372,7 @@ Connector モデルに初期データを提供するには、dev-seeds JSON フ�
 npx swallowkit create-dev-seeds shared/models/user.ts
 ```
 ```bash [pnpm]
-pnpm swallowkit create-dev-seeds shared/models/user.ts
+pnpm exec swallowkit create-dev-seeds shared/models/user.ts
 ```
 :::
 

@@ -94,6 +94,9 @@ npx swallowkit init my-app
 cd my-app
 ```
 
+For pnpm 11/12: bootstrap with `pnpm dlx swallowkit init my-app`, then use `pnpm exec swallowkit …` inside the project. `npx` selects npm; `--package-manager npm|pnpm` overrides detection. Node.js 22.14+ is required. MCP intentionally uses `latest` with the selected package manager. See [commands, workspace setup, and security troubleshooting](docs/en/package-managers.md).
+
+
 Create a model and customize the schema:
 
 ```bash

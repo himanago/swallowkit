@@ -109,6 +109,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
     .description("Initialize a new SwallowKit project")
     .option("--template <template>", "Template to use", "default")
     .option("--next-version <version>", "Next.js version to install (e.g., 16.0.7, latest)", "latest")
+    .option("--package-manager <manager>", "Package manager: npm | pnpm (defaults to invocation context)")
     .option("--cicd <provider>", "CI/CD provider: github | azure | skip")
     .option("--backend-language <language>", "Azure Functions backend language: typescript | csharp | python")
     .option("--cosmos-db-mode <mode>", "Cosmos DB mode: freetier | serverless")
@@ -119,6 +120,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
         name: projectName || "swallowkit-app",
         template: options.template,
         nextVersion: options.nextVersion,
+        packageManager: options.packageManager,
         cicd: options.cicd,
         backendLanguage: options.backendLanguage,
         cosmosDbMode: options.cosmosDbMode,

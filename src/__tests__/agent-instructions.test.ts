@@ -69,7 +69,7 @@ describe("coding-agent instruction contract", () => {
 
     expect(npmDocument).toContain("Prefer the `swallowkit_*` MCP tools when available");
     expect(npmDocument).toContain("npx swallowkit machine ...");
-    expect(pnpmDocument).toContain("pnpm swallowkit machine ...");
+    expect(pnpmDocument).toContain("pnpm exec swallowkit machine ...");
     expect(pnpmDocument).not.toContain("npx swallowkit machine ...");
   });
 

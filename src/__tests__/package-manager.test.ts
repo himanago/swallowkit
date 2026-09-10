@@ -13,6 +13,20 @@ import {
 } from "../utils/package-manager";
 
 describe("detectFromUserAgent", () => {
+  const originalAgent = process.env.npm_config_user_agent;
+  beforeEach(() => { delete process.env.npm_config_user_agent; });
+  afterEach(() => {
+    if (originalAgent === undefined) delete process.env.npm_config_user_agent;
+    else process.env.npm_config_user_agent = originalAgent;
+  });
+  it("honors npm invocation even with pnpm installed", () => {
+    process.env.npm_config_user_agent = "npm/11.0.0 node/v22.14.0";
+    expect(detectFromUserAgent(() => true)).toBe("npm");
+  });
+  it("honors pnpm invocation", () => {
+    process.env.npm_config_user_agent = "pnpm/11.26.0 npm/? node/v22.14.0";
+    expect(detectFromUserAgent(() => false)).toBe("pnpm");
+  });
   it("falls back to npm when pnpm is not installed", () => {
     expect(detectFromUserAgent(() => false)).toBe("npm");
   });
@@ -55,7 +69,7 @@ describe("getCommands", () => {
     });
 
     it("returns correct runFilter for workspace", () => {
-      expect(cmds.runFilter("shared")).toBe("pnpm run --filter shared");
+      expect(cmds.runFilter("shared")).toBe("pnpm --filter shared run");
     });
 
     it("returns --use-pnpm flag for create-next-app", () => {
@@ -98,8 +112,8 @@ describe("getCommands", () => {
       expect(cmds.runFilter("shared")).toBe("npm run --workspace=shared");
     });
 
-    it("returns null for create-next-app flag", () => {
-      expect(cmds.createNextAppFlag).toBeNull();
+    it("explicitly selects npm for create-next-app", () => {
+      expect(cmds.createNextAppFlag).toBe("--use-npm");
     });
   });
 });
@@ -113,6 +127,9 @@ describe("getWorkspaceConfig", () => {
       expect(config.content).toContain("packages:");
       expect(config.content).toContain("  - packages/*");
       expect(config.content).toContain("  - apps/*");
+      expect(config.content).toContain("protobufjs: false");
+      expect(config.content).toContain("unrs-resolver: false");
+      expect(config.content).not.toContain(": true");
     }
   });
 
@@ -130,7 +147,7 @@ describe("getCiSetupStep", () => {
   it("returns pnpm setup step for pnpm", () => {
     const step = getCiSetupStep("pnpm");
     expect(step).toContain("pnpm/action-setup");
-    expect(step).toContain("version: latest");
+    expect(step).toContain("version: 11");
   });
 
   it("returns empty string for npm", () => {
@@ -176,7 +193,7 @@ describe("getAzurePipelinesSetup", () => {
 
 describe("getBuildScript", () => {
   it("uses pnpm run --filter for pnpm", () => {
-    expect(getBuildScript("pnpm")).toContain("pnpm run --filter shared build");
+    expect(getBuildScript("pnpm")).toContain("pnpm --filter shared run build");
     expect(getBuildScript("pnpm")).toContain("fs.cpSync");
   });
 

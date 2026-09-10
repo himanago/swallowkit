@@ -1,6 +1,6 @@
 {
   "name": "swallowkit",
-  "version": "1.0.0-beta.60",
+  "version": "1.0.0-beta.61",
   "description": "Type-safe schema-driven development toolkit for Next.js applications on Azure",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,7 +22,8 @@
     "format": "prettier --write src/**/*.ts",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "test:consumer": "npm run build && node scripts/consumer-smoke.mjs"
   },
   "keywords": [
     "azure",
@@ -38,17 +39,13 @@
     "@azure/cosmos": "^4.9.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "commander": "^11.0.0",
-    "cors": "^2.8.5",
     "execa": "^8.0.1",
-    "express": "^4.18.0",
     "jsonwebtoken": "^9.0.0",
     "prompts": "^2.4.2",
-    "tsx": "^4.7.0",
+    "typescript": "^5.9.2",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.0",
-    "@types/express": "^4.17.0",
     "@types/jest": "^29.0.0",
     "@types/jsonwebtoken": "^9.0.0",
     "@types/node": "^20.0.0",
@@ -62,13 +59,11 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "ts-jest": "^29.0.0",
-    "typescript": "^5.9.2",
-    "vitepress": "^1.6.4"
+    "vitepress": "^1.6.4",
+    "next": "^16.2.6"
   },
-  "peerDependencies": {
-    "next": ">=14.0.0",
-    "react": ">=18.0.0",
-    "react-dom": ">=18.0.0"
+  "engines": {
+    "node": ">=22.14.0"
   },
   "directories": {
     "doc": "docs"

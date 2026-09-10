@@ -77,7 +77,7 @@ SwallowKit プロジェクトにユーザー認証とロールベース認可を
 npx swallowkit add-connector userdb --type rdb --provider postgres
 ```
 ```bash [pnpm]
-pnpm swallowkit add-connector userdb --type rdb --provider postgres
+pnpm exec swallowkit add-connector userdb --type rdb --provider postgres
 ```
 :::
 
@@ -128,7 +128,7 @@ module.exports = {
 npx swallowkit add-auth
 ```
 ```bash [pnpm]
-pnpm swallowkit add-auth
+pnpm exec swallowkit add-auth
 ```
 :::
 
@@ -150,7 +150,7 @@ export const authPolicy = { roles: ['admin', 'estimator'] };
 npx swallowkit scaffold shared/models/estimate.ts
 ```
 ```bash [pnpm]
-pnpm swallowkit scaffold shared/models/estimate.ts
+pnpm exec swallowkit scaffold shared/models/estimate.ts
 ```
 :::
 
@@ -163,7 +163,7 @@ Scaffold は `authPolicy` エクスポートを検出し、生成される Funct
 npx swallowkit dev --mock-connectors --seed-env local
 ```
 ```bash [pnpm]
-pnpm swallowkit dev --mock-connectors --seed-env local
+pnpm exec swallowkit dev --mock-connectors --seed-env local
 ```
 :::
 

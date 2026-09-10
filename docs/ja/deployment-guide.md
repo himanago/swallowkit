@@ -1,5 +1,7 @@
 # Azure へのデプロイ
 
+pnpm 11/12 と npm の使い分けは[コマンドとトラブルシューティング](./package-managers.md)を参照してください。
+
 SwallowKit プロジェクトの Azure リソースをプロビジョニングし、CI/CD を設定します。このガイドを完了すると、Azure Static Web Apps 上で Azure Functions バックエンドと Cosmos DB を使ったアプリケーションが動作する状態になります。
 
 ## 目次

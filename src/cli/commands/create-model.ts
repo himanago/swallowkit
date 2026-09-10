@@ -57,6 +57,6 @@ export async function createModelCommand(options: CreateModelOptions) {
   if (result.createdFiles.length > 0) {
     console.log("\n📝 Next steps:");
     console.log("  1. Customize the generated model fields in shared/models/");
-    console.log(`  2. Run '${getCommands(detectFromProject()).dlx} swallowkit scaffold <model>' to generate CRUD code`);
+    console.log(`  2. Run '${getCommands(detectFromProject()).exec} swallowkit scaffold <model>' to generate CRUD code`);
   }
 }

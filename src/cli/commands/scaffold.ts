@@ -221,7 +221,7 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     console.log(
       `  ${options.apiOnly ? (backendLanguage === "typescript" ? "3" : "4") : (backendLanguage === "typescript" ? "5" : "6")}. Configure CosmosDBConnection in functions/local.settings.json`
     );
-    console.log(`  ${options.apiOnly ? (backendLanguage === "typescript" ? "4" : "5") : (backendLanguage === "typescript" ? "6" : "7")}. Run '${getCommands(detectFromProject()).dlx} swallowkit dev' to test the generated code`);
+    console.log(`  ${options.apiOnly ? (backendLanguage === "typescript" ? "4" : "5") : (backendLanguage === "typescript" ? "6" : "7")}. Run '${getCommands(detectFromProject()).exec} swallowkit dev' to test the generated code`);
   } catch (error: any) {
     console.error("\n❌ Scaffold failed:", error.message);
     process.exit(1);

@@ -1,5 +1,7 @@
 # Coding agent guide
 
+See [package manager commands and troubleshooting](./package-managers.md) for pnpm 11/12 and npm usage.
+
 SwallowKit does not replace a coding agent's development process. It supplies
 project inspection, deterministic change operations, ownership boundaries, and
 verification guardrails that compose with requirements, specification,

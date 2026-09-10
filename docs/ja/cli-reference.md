@@ -1,9 +1,11 @@
 # CLI リファレンス
 
+pnpm 11/12 と npm の使い分けは[コマンドとトラブルシューティング](./package-managers.md)を参照してください。
+
 SwallowKit CLI の全コマンドとオプションです。
 
 ::: tip パッケージマネージャー
-以下の例は `npx` を使用しています。pnpm の場合は `npx` を `pnpm` に置き換えてください（`swallowkit init` の場合は `pnpm dlx`）。
+以下の例は `npx` を使用しています。pnpm の場合は `npx swallowkit …` を `pnpm exec swallowkit …` に置き換えてください（`swallowkit init` の場合は `pnpm dlx`）。
 :::
 
 ## 目次
@@ -144,6 +146,7 @@ pnpm dlx swallowkit init [project-name] [options]
 | オプション | 説明 | 値 | デフォルト |
 |----------|------|-----|----------|
 | `--template <template>` | 使用テンプレート | `default` | `default` |
+| `--package-manager <manager>` | パッケージマネージャーを明示指定 | `npm`, `pnpm` | 起動元 |
 | `--next-version <version>` | Next.js バージョン | 例: `16.0.7`, `latest` | `latest` |
 | `--cicd <provider>` | CI/CD プロバイダー | `github`, `azure`, `skip` | *（プロンプト）* |
 | `--backend-language <language>` | Azure Functions のバックエンド言語 | `typescript`, `csharp`, `python` | *（プロンプト）* |
@@ -322,7 +325,7 @@ my-app/
   - `npx swallowkit machine validate project`
   - `npx swallowkit machine generate scaffold <name> --api-only`
 - Do not hand-edit framework-owned artifacts when the MCP or machine interface can generate or validate them for you.
-- The MCP bootstrap requires pnpm and network access when the selected version is not cached.
+- MCP uses the selected project package manager (pnpm or npm/npx) and needs network access when the selected version is not cached.
 
 ## Critical Design Principles
 <!-- 重要な設計原則 -->

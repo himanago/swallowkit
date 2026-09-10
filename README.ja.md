@@ -94,6 +94,9 @@ npx swallowkit init my-app
 cd my-app
 ```
 
+pnpm 11/12 は `pnpm dlx swallowkit init my-app` で作成し、以後 project 内で `pnpm exec swallowkit …` を使います。`npx` は npm を選択し、`--package-manager npm|pnpm` で明示指定できます。Node.js 22.14 以上が必要です。MCP は選択した manager で意図的に `latest` を参照します。[コマンド・workspace・security の詳細](docs/ja/package-managers.md)を参照してください。
+
+
 モデルを作成し、スキーマを編集します。
 
 ```bash

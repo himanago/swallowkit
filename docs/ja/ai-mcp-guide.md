@@ -1,5 +1,7 @@
 # AI / MCP 統合
 
+pnpm 11/12 と npm の使い分けは[コマンドとトラブルシューティング](./package-managers.md)を参照してください。
+
 SwallowKit は machine-readable CLI（`swallowkit machine`）と同梱の MCP stdio サーバー（`swallowkit-mcp`）を提供します。コーディングエージェントがファイルシステムを推測して直接編集するのではなく、正式な generator / inspector / validator を経由して操作できるようにするためです。
 
 discovery、specification、planning、implementation、verification、review の全体で
@@ -30,9 +32,9 @@ npx swallowkit machine inspect entities
 npx swallowkit machine inspect routes
 ```
 ```bash [pnpm]
-pnpm swallowkit machine inspect project
-pnpm swallowkit machine inspect entities
-pnpm swallowkit machine inspect routes
+pnpm exec swallowkit machine inspect project
+pnpm exec swallowkit machine inspect entities
+pnpm exec swallowkit machine inspect routes
 ```
 :::
 
@@ -50,7 +52,7 @@ pnpm swallowkit machine inspect routes
 npx swallowkit machine validate project
 ```
 ```bash [pnpm]
-pnpm swallowkit machine validate project
+pnpm exec swallowkit machine validate project
 ```
 :::
 
@@ -70,8 +72,8 @@ npx swallowkit machine generate model todo --overwrite never
 npx swallowkit machine generate scaffold todo --api-only
 ```
 ```bash [pnpm]
-pnpm swallowkit machine generate model todo --overwrite never
-pnpm swallowkit machine generate scaffold todo --api-only
+pnpm exec swallowkit machine generate model todo --overwrite never
+pnpm exec swallowkit machine generate scaffold todo --api-only
 ```
 :::
 
@@ -88,9 +90,9 @@ npx swallowkit machine apply scaffold --plan <planId>
 npx swallowkit machine apply scaffold todo --approve
 ```
 ```bash [pnpm]
-pnpm swallowkit machine plan scaffold todo --api-only
-pnpm swallowkit machine apply scaffold --plan <planId>
-pnpm swallowkit machine apply scaffold todo --approve
+pnpm exec swallowkit machine plan scaffold todo --api-only
+pnpm exec swallowkit machine apply scaffold --plan <planId>
+pnpm exec swallowkit machine apply scaffold todo --approve
 ```
 :::
 
@@ -108,8 +110,8 @@ npx swallowkit machine plan provision -g my-rg --location japaneast --swa-locati
 npx swallowkit machine apply provision --plan <planId> --approve
 ```
 ```bash [pnpm]
-pnpm swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia
-pnpm swallowkit machine apply provision --plan <planId> --approve
+pnpm exec swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia
+pnpm exec swallowkit machine apply provision --plan <planId> --approve
 ```
 :::
 
@@ -125,8 +127,8 @@ npx swallowkit machine inspect boundaries
 npx swallowkit machine inspect infra
 ```
 ```bash [pnpm]
-pnpm swallowkit machine inspect boundaries
-pnpm swallowkit machine inspect infra
+pnpm exec swallowkit machine inspect boundaries
+pnpm exec swallowkit machine inspect infra
 ```
 :::
 
@@ -141,8 +143,8 @@ npx swallowkit machine inspect artifacts
 npx swallowkit machine inspect drift
 ```
 ```bash [pnpm]
-pnpm swallowkit machine inspect artifacts
-pnpm swallowkit machine inspect drift
+pnpm exec swallowkit machine inspect artifacts
+pnpm exec swallowkit machine inspect drift
 ```
 :::
 
@@ -159,10 +161,10 @@ npx swallowkit machine explain failure
 npx swallowkit machine explain failure --check typecheck
 ```
 ```bash [pnpm]
-pnpm swallowkit machine verify project
-pnpm swallowkit machine verify project --checks structure,drift
-pnpm swallowkit machine explain failure
-pnpm swallowkit machine explain failure --check typecheck
+pnpm exec swallowkit machine verify project
+pnpm exec swallowkit machine verify project --checks structure,drift
+pnpm exec swallowkit machine explain failure
+pnpm exec swallowkit machine explain failure --check typecheck
 ```
 :::
 
@@ -247,7 +249,7 @@ MCP 対応の agent platform では、同梱の stdio server を使います。
 npx swallowkit-mcp
 ```
 ```bash [pnpm]
-pnpm swallowkit-mcp
+pnpm exec swallowkit-mcp
 ```
 :::
 
@@ -284,8 +286,9 @@ MCP 層は framework ロジックを持たず、各 Tool 呼び出しを machine
 {
   "mcpServers": {
     "swallowkit": {
-      "command": "node",
-      "args": ["./node_modules/swallowkit/dist/mcp/index.js"],
+      "command": "pnpm",
+      "args": ["--package", "swallowkit@${SWALLOWKIT_MCP_VERSION}", "dlx", "swallowkit-mcp"],
+      "env": { "SWALLOWKIT_MCP_VERSION": "latest" },
       "cwd": "."
     }
   }
@@ -298,7 +301,7 @@ MCP 層は framework ロジックを持たず、各 Tool 呼び出しを machine
 - **GitHub Copilot CLI** も workspace の `.mcp.json` server を検出できます
 - **その他の agent / Codex 系 runtime** も、project-level config をサポートしていれば同じ launcher を再利用でき、未対応なら machine CLI fallback を使います
 
-生成される instruction files（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）は、MCP Tool が使えるときはそれを優先し、使えないときは `swallowkit machine ...` にフォールバックするよう案内します。MCP bootstrap には pnpm が必要で、選択したバージョンが cache にない場合は network access も必要です。
+生成される instruction files（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）は、MCP Tool が使えるときはそれを優先し、使えないときは `swallowkit machine ...` にフォールバックするよう案内します。MCP は選択した package manager を使い、npm project に pnpm は不要です。npm 用 launcher は `npx --yes --package swallowkit@${SWALLOWKIT_MCP_VERSION} swallowkit-mcp` です。未キャッシュのバージョンにはネットワークが必要です。
 
 ### Agent Skills（agentskills.io 標準）
 

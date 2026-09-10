@@ -500,3 +500,5 @@ Do:
 - keep specifications focused on intent and observable behavior
 - prefer vertical, independently verifiable slices
 - verify before final semantic review
+
+Use `{{pm}}`, the package manager selected for this project. Do not introduce another package manager or lockfile. Use `{{runCmd}} swallowkit` for the project-local CLI. The MCP launcher intentionally resolves `latest` independently.

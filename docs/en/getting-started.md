@@ -1,14 +1,16 @@
 # Getting started
 
+See [package manager commands and troubleshooting](./package-managers.md) for pnpm 11/12 and npm usage.
+
 This page walks you through creating a SwallowKit project and generating your first CRUD flow.
 
 By the end, you will have a running Next.js application with typed BFF routes, Azure Functions backend handlers, and React UI components — all generated from a single Zod schema.
 
 ## Prerequisites
 
-- Node.js 20 or later
+- Node.js 22.14 or later
 - **pnpm** (recommended) — run `corepack enable` or install with `npm install -g pnpm`
-  - npm also works. SwallowKit auto-detects the package manager (pnpm is preferred when available).
+  - npm also works. SwallowKit uses the invoking package manager; `--package-manager npm|pnpm` overrides detection.
 - Azure Functions Core Tools 4.x — required for local Functions development
 - Azure Cosmos DB Emulator — required for local data storage
   - Windows: [Download](https://aka.ms/cosmosdb-emulator)
@@ -56,7 +58,7 @@ pnpm dlx swallowkit init my-app --cicd github --backend-language typescript --co
 npx swallowkit create-model todo
 ```
 ```bash [pnpm]
-pnpm swallowkit create-model todo
+pnpm exec swallowkit create-model todo
 ```
 :::
 
@@ -86,7 +88,7 @@ The `id`, `createdAt`, and `updatedAt` fields are managed by the backend. Define
 npx swallowkit scaffold todo
 ```
 ```bash [pnpm]
-pnpm swallowkit scaffold todo
+pnpm exec swallowkit scaffold todo
 ```
 :::
 
@@ -109,7 +111,7 @@ For C# backends, the Functions file is `functions/Crud/TodoCrudFunctions.cs`. Fo
 npx swallowkit dev
 ```
 ```bash [pnpm]
-pnpm swallowkit dev
+pnpm exec swallowkit dev
 ```
 :::
 

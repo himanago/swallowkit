@@ -1,5 +1,7 @@
 # ローカル開発
 
+pnpm 11/12 と npm の使い分けは[コマンドとトラブルシューティング](./package-managers.md)を参照してください。
+
 このページでは `swallowkit dev` コマンド、ローカルシードデータ管理、バックエンド別のセットアップを説明します。
 
 ## 開発サーバーの起動
@@ -9,7 +11,7 @@
 npx swallowkit dev
 ```
 ```bash [pnpm]
-pnpm swallowkit dev
+pnpm exec swallowkit dev
 ```
 :::
 
@@ -73,7 +75,7 @@ Dev seeds を使うと、サーバー起動前にローカルの Cosmos DB Emula
 npx swallowkit create-dev-seeds local
 ```
 ```bash [pnpm]
-pnpm swallowkit create-dev-seeds local
+pnpm exec swallowkit create-dev-seeds local
 ```
 :::
 
@@ -109,7 +111,7 @@ dev-seeds/
 npx swallowkit create-dev-seeds local --from-emulator --force
 ```
 ```bash [pnpm]
-pnpm swallowkit create-dev-seeds local --from-emulator --force
+pnpm exec swallowkit create-dev-seeds local --from-emulator --force
 ```
 :::
 
@@ -122,7 +124,7 @@ pnpm swallowkit create-dev-seeds local --from-emulator --force
 npx swallowkit dev --seed-env local
 ```
 ```bash [pnpm]
-pnpm swallowkit dev --seed-env local
+pnpm exec swallowkit dev --seed-env local
 ```
 :::
 
@@ -146,7 +148,7 @@ pnpm swallowkit dev --seed-env local
 npx swallowkit dev --mock-connectors
 ```
 ```bash [pnpm]
-pnpm swallowkit dev --mock-connectors
+pnpm exec swallowkit dev --mock-connectors
 ```
 :::
 

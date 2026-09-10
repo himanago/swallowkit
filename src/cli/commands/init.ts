@@ -34,6 +34,7 @@ interface InitOptions {
   cosmosDbMode?: CosmosDbMode;
   vnet?: VNetOption;
   swaPlan?: StaticWebAppPlan;
+  packageManager?: PackageManager;
 }
 
 type CiCdProvider = 'github' | 'azure' | 'skip';
@@ -255,6 +256,9 @@ const VALID_VNET: VNetOption[] = ['none', 'outbound'];
 const VALID_SWA_PLAN: StaticWebAppPlan[] = ['free', 'standard'];
 
 function validateInitFlags(options: InitOptions): void {
+  if (options.packageManager && !['npm', 'pnpm'].includes(options.packageManager)) {
+    throw new Error('Invalid --package-manager: expected npm or pnpm');
+  }
   if (options.cicd && !VALID_CICD.includes(options.cicd)) {
     console.error(`❌ Invalid --cicd value: "${options.cicd}". Must be: ${VALID_CICD.join(', ')}`);
     process.exit(1);
@@ -285,7 +289,7 @@ export async function initCommand(options: InitOptions) {
   console.log(`📋 Template: ${options.template}`);
 
   // Detect package manager from invocation context (npx → npm, pnpm dlx → pnpm)
-  const pm: PackageManager = detectFromUserAgent();
+  const pm: PackageManager = options.packageManager || detectFromUserAgent();
   const pmCmd = getCommands(pm);
   console.log(`📦 Package manager: ${pm}`);
 
@@ -388,11 +392,11 @@ export async function initCommand(options: InitOptions) {
     console.log(`\n✅ Project "${options.name}" created successfully!`);
     console.log("\n📝 Next steps:");
     console.log(`  cd ${options.name}`);
-    console.log(`  ${pmCmd.dlx} swallowkit create-model <name>  # Create your first model`);
-    console.log(`  ${pmCmd.dlx} swallowkit scaffold shared/models/<name>.ts  # Generate CRUD code`);
-    console.log(`  ${pmCmd.dlx} swallowkit dev  # Start development servers`);
+    console.log(`  ${pmCmd.exec} swallowkit create-model <name>  # Create your first model`);
+    console.log(`  ${pmCmd.exec} swallowkit scaffold shared/models/<name>.ts  # Generate CRUD code`);
+    console.log(`  ${pmCmd.exec} swallowkit dev  # Start development servers`);
     console.log("\n🚀 Deploy to Azure:");
-    console.log(`  ${pmCmd.dlx} swallowkit provision --resource-group <name>`);
+    console.log(`  ${pmCmd.exec} swallowkit provision --resource-group <name>`);
     if (cicdProvider !== 'skip') {
       console.log("  Configure CI/CD secrets and push to repository");
     }
@@ -416,7 +420,7 @@ async function createNextJsProject(projectName: string, pm: PackageManager): Pro
     //             for npm use "npx create-next-app@latest ..."
     const baseArgs = pm === 'pnpm'
       ? ['dlx', 'create-next-app@latest']
-      : ['create-next-app@latest'];
+      : ['--yes', '--package', 'create-next-app@latest', '--', 'create-next-app'];
     
     const args = [
       ...baseArgs,
@@ -426,6 +430,7 @@ async function createNextJsProject(projectName: string, pm: PackageManager): Pro
       '--app',
       '--no-src',
       '--disable-git',
+      '--skip-install',
       '--import-alias',
       '@/*',
       ...(pmCmd.createNextAppFlag ? [pmCmd.createNextAppFlag] : []),
@@ -462,8 +467,8 @@ async function upgradeNextJs(projectDir: string, version: string, pm: PackageMan
 
   // pnpm: pnpm add next@... ; npm: npm install next@...
   const args = pm === 'pnpm'
-    ? ['add', `next@${version}`, `react@latest`, `react-dom@latest`, '--save-exact']
-    : ['install', `next@${version}`, `react@latest`, `react-dom@latest`, '--save-exact'];
+    ? ['add', `next@${version}`, `react@latest`, `react-dom@latest`, '--save-exact', '--lockfile-only']
+    : ['install', `next@${version}`, `react@latest`, `react-dom@latest`, '--save-exact', '--package-lock-only'];
 
   await runPackageManagerCommand(pm, args, projectDir, `${pm} add next@${version}`);
 
@@ -472,19 +477,7 @@ async function upgradeNextJs(projectDir: string, version: string, pm: PackageMan
 
 async function installDependencies(projectDir: string, pm: PackageManager = 'pnpm'): Promise<void> {
   console.log('\n📦 Installing dependencies...\n');
-  await runPackageManagerCommand(pm, ['install'], projectDir, `${pm} install`);
-
-  if (pm === 'pnpm') {
-    console.log('\n📦 Generating npm lockfile for CI/CD...\n');
-    await withNpmLockfileSafeManifests(projectDir, async () => {
-      await runPackageManagerCommand(
-        'npm',
-        ['install', '--package-lock-only', '--ignore-scripts'],
-        projectDir,
-        'npm install --package-lock-only'
-      );
-    });
-  }
+  await runPackageManagerCommand(pm, pm === 'pnpm' ? ['install', '--no-frozen-lockfile'] : ['install'], projectDir, `${pm} install`);
 
   console.log('\n✅ Dependencies installed\n');
 }
@@ -579,62 +572,27 @@ export async function withNpmLockfileSafeManifests(projectDir: string, action: (
   }
 }
 
-/**
- * Run a package-manager command with stdio passed through to the user.
- *
- * For pnpm, additionally tee stdout/stderr to a buffer so that if the command
- * fails due to `ERR_PNPM_IGNORED_BUILDS`, we can:
- *   1. detect which packages were ignored,
- *   2. approve them (interactively or automatically),
- *   3. clean-reinstall and retry — repeating if pnpm reports further ignored
- *      packages (pnpm does not always list every unapproved package at once).
- */
+/** Run installs without changing the project security policy. */
 async function runPackageManagerCommand(
   pm: PackageManager,
   args: string[],
   projectDir: string,
   label: string,
 ): Promise<void> {
-  let { code, output } = await spawnAndCapture(pm, args, projectDir, pm === 'pnpm');
+  const { code, output } = await spawnAndCapture(pm, args, projectDir, pm === 'pnpm');
 
   if (code === 0) return;
 
   if (pm === 'pnpm') {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const ignoredBuilds = parseIgnoredBuilds(output);
-      if (ignoredBuilds.length === 0) break;
-      const approved = await maybeApproveBuilds(projectDir, ignoredBuilds);
-      if (!approved) break;
-      // 中断された install はパッケージ抽出が不完全なまま "Already up to date"
-      // と判定されることがあるため、node_modules を消して決定論的に入れ直す
-      removeWorkspaceNodeModules(projectDir);
-      const retry = await spawnAndCapture(pm, args, projectDir, true);
-      code = retry.code;
-      output = retry.output;
-      if (code === 0) return;
-    }
     if (parseIgnoredBuilds(output).length > 0) {
       throw new Error(
         `${label} exited with code ${code}: pnpm still reports unapproved build scripts. ` +
-          'Run "pnpm approve-builds" inside the project, then re-run the command.'
+          'Review the named dependencies and project security policy before allowing any scripts. SwallowKit does not auto-approve them.'
       );
     }
   }
 
   throw new Error(`${label} exited with code ${code}`);
-}
-
-/** workspace root と直下パッケージの node_modules を削除する(クリーン再インストール用)。 */
-function removeWorkspaceNodeModules(projectDir: string): void {
-  const targets = [projectDir, ...fs.readdirSync(projectDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.'))
-    .map((entry) => path.join(projectDir, entry.name))];
-  for (const dir of targets) {
-    const nodeModules = path.join(dir, 'node_modules');
-    if (fs.existsSync(nodeModules)) {
-      fs.rmSync(nodeModules, { recursive: true, force: true });
-    }
-  }
 }
 
 /**
@@ -689,102 +647,6 @@ export function parseIgnoredBuilds(output: string): string[] {
     .map((entry) => entry.replace(/@[^@]+$/, ''))
     .filter((name) => name.length > 0);
   return Array.from(new Set(list));
-}
-
-/**
- * Prompt the user and, if approved, run `pnpm approve-builds` followed by
- * `pnpm rebuild <packages>`. Returns true if the user approved (regardless of
- * which packages they actually selected inside approve-builds).
- *
- * In non-interactive environments (CI, coding agents, piped output) prompting
- * would hang forever, so build scripts are approved automatically via
- * package.json `pnpm.onlyBuiltDependencies` instead.
- */
-async function maybeApproveBuilds(projectDir: string, ignoredBuilds: string[]): Promise<boolean> {
-  console.log(
-    `\n⚠️  pnpm refused to run build scripts for: ${ignoredBuilds.join(', ')}\n` +
-      '   These packages (e.g. sharp) need their build scripts to run correctly.\n',
-  );
-
-  const interactive =
-    process.stdin.isTTY === true && process.stdout.isTTY === true && !process.env.CI;
-  if (!interactive) {
-    console.log(
-      'ℹ️  Non-interactive environment detected — approving build scripts automatically\n' +
-        '   via "allowBuilds" in pnpm-workspace.yaml.\n',
-    );
-    // rebuild は不要: 呼び出し側がクリーン再インストールで build script を実行する
-    approveBuildsViaWorkspaceYaml(projectDir, ignoredBuilds);
-    return true;
-  }
-
-  const response = await prompts({
-    type: 'confirm',
-    name: 'approve',
-    message: 'Run `pnpm approve-builds` now to approve these build scripts?',
-    initial: true,
-  });
-
-  if (!response.approve) {
-    console.log(
-      '\nℹ️  Skipped. You can run `pnpm approve-builds` later inside the project directory.\n',
-    );
-    return false;
-  }
-
-  await runSimple('pnpm', ['approve-builds'], projectDir);
-  await runSimple('pnpm', ['rebuild', ...ignoredBuilds], projectDir);
-
-  console.log('\n✅ Build scripts approved and packages rebuilt\n');
-  return true;
-}
-
-/**
- * pnpm-workspace.yaml の allowBuilds にパッケージを true で登録して build script を許可する。
- * (pnpm 11+ の正準設定。失敗時に pnpm が追記する placeholder 行も true に置き換える)
- */
-export function approveBuildsViaWorkspaceYaml(projectDir: string, packages: string[]): void {
-  const workspaceYamlPath = path.join(projectDir, 'pnpm-workspace.yaml');
-  const existing = fs.existsSync(workspaceYamlPath)
-    ? fs.readFileSync(workspaceYamlPath, 'utf-8')
-    : '';
-  const yamlKey = (pkg: string) => (/^[A-Za-z0-9_.-]+$/.test(pkg) ? pkg : `'${pkg}'`);
-
-  const lines = existing.length > 0 ? existing.split(/\r?\n/) : [];
-  const keyIndex = lines.findIndex((line) => /^allowBuilds\s*:/.test(line));
-
-  if (keyIndex === -1) {
-    const block = `allowBuilds:\n${packages.map((pkg) => `  ${yamlKey(pkg)}: true`).join('\n')}\n`;
-    const base = existing.length > 0 && !existing.endsWith('\n') ? `${existing}\n` : existing;
-    fs.writeFileSync(workspaceYamlPath, `${base}${block}`, 'utf-8');
-    return;
-  }
-
-  // 既存マップ内の対象パッケージ(placeholder 含む)を true に更新し、無いものは追記する
-  let endIndex = keyIndex + 1;
-  const updated = new Set<string>();
-  while (endIndex < lines.length && /^\s+\S/.test(lines[endIndex])) {
-    const entry = lines[endIndex].match(/^\s+['"]?([A-Za-z0-9@/_.-]+)['"]?\s*:/);
-    if (entry && packages.includes(entry[1])) {
-      lines[endIndex] = `  ${yamlKey(entry[1])}: true`;
-      updated.add(entry[1]);
-    }
-    endIndex++;
-  }
-  const additions = packages.filter((pkg) => !updated.has(pkg)).map((pkg) => `  ${yamlKey(pkg)}: true`);
-  lines.splice(endIndex, 0, ...additions);
-  fs.writeFileSync(workspaceYamlPath, lines.join('\n'), 'utf-8');
-}
-
-function runSimple(command: string, args: string[], cwd: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: 'inherit', shell: true });
-    child.on('close', (code) => {
-      if (code !== 0) reject(new Error(`${command} ${args.join(' ')} exited with code ${code}`));
-      else resolve();
-    });
-    child.on('error', reject);
-  });
 }
 
 export function injectSwallowKitNextConfig(nextConfigContent: string, projectName: string): string {
@@ -937,7 +799,7 @@ async function addSwallowKitFiles(
   const packageJsonPath = path.join(projectDir, 'package.json');
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
   
-  // zod is in the shared workspace package, not here
+  // Root BFF/auth code imports Zod directly; declare it as well as the shared package.
   packageJson.dependencies = {
     ...packageJson.dependencies,
     ...buildGeneratedProjectDependencies(projectName, pm),
@@ -955,8 +817,13 @@ async function addSwallowKitFiles(
   };
 
   packageJson.engines = {
-    node: '20.x',
+    node: '>=22.14.0',
+    ...(pm === 'pnpm' ? { pnpm: '>=11 <13' } : {}),
   };
+  packageJson.devEngines = {
+    packageManager: { name: pm, version: pm === 'pnpm' ? '>=11 <13' : '>=10', onFail: 'error' },
+  };
+  delete packageJson.packageManager;
 
   // Keep package.json workspaces for npm-based CI/CD even when local development uses pnpm.
   const workspacePackages = usesNodeFunctionsProject(backendLanguage) ? ['shared', 'functions'] : ['shared'];
@@ -1823,7 +1690,7 @@ export default function Home() {
                 Create your first model with Zod and generate CRUD operations automatically.
               </p>
               <code className="block bg-gray-100 dark:bg-gray-900 p-4 rounded text-left text-sm">
-                ${pmCmd.dlx} swallowkit scaffold shared/models/your-model.ts
+                ${pmCmd.exec} swallowkit scaffold shared/models/your-model.ts
               </code>
             </div>
           </section>
@@ -1924,7 +1791,7 @@ This project was initialized with the following settings:
 
 Before you begin, ensure you have the following installed:
 
-1. **Node.js 18+**: [Download](https://nodejs.org/)${pm === 'pnpm' ? `\n2. **pnpm**: \`corepack enable\` or \`npm install -g pnpm\`` : ''}
+1. **Node.js 22.14+**: [Download](https://nodejs.org/)${pm === 'pnpm' ? `\n2. **pnpm**: \`corepack enable\` or \`npm install -g pnpm\`` : ''}
 ${pm === 'pnpm' ? '3' : '2'}. **Azure CLI**: Required for provisioning Azure resources
    - Install: \`winget install Microsoft.AzureCLI\` (Windows)
    - Or: [Download](https://aka.ms/installazurecliwindows)
@@ -1932,7 +1799,7 @@ ${pm === 'pnpm' ? '4' : '3'}. **Azure Cosmos DB Emulator**: Required for local d
    - Windows: \`winget install Microsoft.Azure.CosmosEmulator\`
    - Or: [Download](https://aka.ms/cosmosdb-emulator)
    - Docker: \`docker pull mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator\`
-${pm === 'pnpm' ? '6' : '5'}. **Azure Functions Core Tools**: Automatically installed with project dependencies
+${pm === 'pnpm' ? '6' : '5'}. **Azure Functions Core Tools v4**: Install separately for local Azure Functions execution
 
 ## 📁 Project Structure
 
@@ -1958,7 +1825,7 @@ ${functionsTree}
 Define your data model with Zod schema:
 
 \`\`\`bash
-${pmCmd.dlx} swallowkit create-model <model-name>
+${pmCmd.exec} swallowkit create-model <model-name>
 \`\`\`
 
 This creates a model file in \`shared/models/<model-name>.ts\`. Edit it to define your schema.
@@ -1968,7 +1835,7 @@ This creates a model file in \`shared/models/<model-name>.ts\`. Edit it to defin
 Generate complete CRUD operations (Functions, API routes, UI):
 
 \`\`\`bash
-${pmCmd.dlx} swallowkit scaffold shared/models/<model-name>.ts
+${pmCmd.exec} swallowkit scaffold shared/models/<model-name>.ts
 \`\`\`
 
 This generates:
@@ -1980,7 +1847,7 @@ ${backendScaffoldNote}
 ### 3. Start Development Servers
 
 \`\`\`bash
-${pmCmd.dlx} swallowkit dev
+${pmCmd.exec} swallowkit dev
 \`\`\`
 
 This starts:
@@ -1998,7 +1865,7 @@ ${pythonLocalDevNote}
 Create all required Azure resources using Bicep:
 
 \`\`\`bash
-${pmCmd.dlx} swallowkit provision --resource-group <rg-name>
+${pmCmd.exec} swallowkit provision --resource-group <rg-name>
 \`\`\`
 
 This creates:
@@ -2054,10 +1921,10 @@ func azure functionapp publish func-${projectName}
 
 ## 🔧 Available Commands
 
-- \`${pmCmd.dlx} swallowkit create-model <name>\` - Create a new data model
-- \`${pmCmd.dlx} swallowkit scaffold <model-file>\` - Generate CRUD code
-- \`${pmCmd.dlx} swallowkit dev\` - Start development servers
-- \`${pmCmd.dlx} swallowkit provision -g <rg-name>\` - Provision Azure resources
+- \`${pmCmd.exec} swallowkit create-model <name>\` - Create a new data model
+- \`${pmCmd.exec} swallowkit scaffold <model-file>\` - Generate CRUD code
+- \`${pmCmd.exec} swallowkit dev\` - Start development servers
+- \`${pmCmd.exec} swallowkit provision -g <rg-name>\` - Provision Azure resources
 ${azureConfig.vnetOption !== 'none' ? `
 ## 🔒 Network Security (VNet Configuration)
 
@@ -2113,7 +1980,7 @@ function createAiAgentFiles(
   pm: PackageManager
 ) {
   console.log('🤖 Creating AI agent instruction files...\n');
-  const runCmd = pm === 'pnpm' ? 'pnpm' : 'npx';
+  const runCmd = getCommands(pm).exec;
 
   writeAgentInstructionFiles(projectDir, {
     projectName,
@@ -2902,11 +2769,13 @@ export function getGitHubFunctionsWorkflow(pm: PackageManager, backendLanguage: 
 
   const commonSetup = `      - uses: actions/checkout@v4
       
+${pnpmSetupStep ? `${pnpmSetupStep}\n` : ''}
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-${pnpmSetupStep ? `\n${pnpmSetupStep}\n` : ''}
+          cache: ${pm}
+          cache-dependency-path: ${pm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}
 ${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}` : ''}
       - name: Install dependencies
         run: |
@@ -3441,7 +3310,7 @@ async function createGitHubActionsWorkflows(
   const workflowsDir = path.join(projectDir, '.github', 'workflows');
   fs.mkdirSync(workflowsDir, { recursive: true });
 
-  const actionsPm: PackageManager = 'npm';
+  const actionsPm: PackageManager = pm;
 
   const swaWorkflow = buildGitHubSwaWorkflow(actionsPm, pm);
   fs.writeFileSync(path.join(workflowsDir, 'deploy-swa.yml'), swaWorkflow);
@@ -3469,6 +3338,7 @@ on:
       - 'shared/**'
       - 'public/**'
       - 'package.json'
+      - '${pm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}'
       - 'next.config.js'
       - 'next.config.ts'
   workflow_dispatch:
@@ -3482,6 +3352,7 @@ on:
       - 'shared/**'
       - 'public/**'
       - 'package.json'
+      - '${pm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}'
       - 'next.config.js'
       - 'next.config.ts'
 
@@ -3495,11 +3366,13 @@ jobs:
         with:
           submodules: true
 
+${getCiSetupStep(pm) ? `${getCiSetupStep(pm)}\n` : ''}
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-${getCiSetupStep(pm) ? `\n${getCiSetupStep(pm)}\n` : ''}
+          cache: ${pm}
+          cache-dependency-path: ${pm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}
 ${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}` : ''}
       - name: Install and build app
         run: |
@@ -3524,7 +3397,7 @@ ${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}` : ''}
 async function createAzurePipelines(projectDir: string, pm: PackageManager, backendLanguage: BackendLanguage) {
   console.log('📦 Creating Azure Pipelines...\n');
 
-  const pipelinesPm: PackageManager = 'npm';
+  const pipelinesPm: PackageManager = pm;
   const pipelinesDir = path.join(projectDir, 'pipelines');
   fs.mkdirSync(pipelinesDir, { recursive: true });
 

@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { BackendLanguage } from "../../types";
-import { PackageManager } from "../../utils/package-manager";
+import { PackageManager, getCommands } from "../../utils/package-manager";
 
 export interface AgentInstructionContext {
   projectName: string;
@@ -74,7 +74,7 @@ function getBackendRules(backendLanguage: BackendLanguage): string {
 }
 
 function interpolateTemplate(template: string, context: AgentInstructionContext): string {
-  const runCmd = context.packageManager === "pnpm" ? "pnpm" : "npx";
+  const runCmd = getCommands(context.packageManager).exec;
   const replacements: Record<string, string> = {
     projectName: context.projectName,
     backendLanguageLabel: BACKEND_LANGUAGE_LABELS[context.backendLanguage],

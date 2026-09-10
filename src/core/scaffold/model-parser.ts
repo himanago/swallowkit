@@ -5,6 +5,7 @@
 import * as fs from "fs";
 import { execFileSync } from "child_process";
 import * as path from "path";
+import * as ts from "typescript";
 
 import { ModelConnectorConfig, ModelAuthPolicy } from "../../types";
 
@@ -324,61 +325,36 @@ function mergeNestedSchemaInfo(fields: FieldInfo[], nestedRefs: NestedSchemaRef[
   }
 }
 
-/**
- * ローカル依存ファイルを再帰的にインライン化する（動的インポート用一時スクリプト生成用）。
- * seen によって循環依存を防ぐ。
- * importedNames が指定された場合はその名前の const だけを残し、他を除去する。
- */
-function inlineLocalDeps(
-  filePath: string,
-  importedNames: Set<string> | null,
-  seen: Set<string>
-): string {
-  const resolvedPath = path.resolve(filePath);
-  if (seen.has(resolvedPath)) return '';
-  seen.add(resolvedPath);
-
-  if (!fs.existsSync(resolvedPath)) return '';
-
-  let content = fs.readFileSync(resolvedPath, 'utf8');
-  const fileDir = path.dirname(resolvedPath);
-  const transitiveParts: string[] = [];
-
-  // ローカル（相対）インポートを再帰的にインライン化
-  content = content.replace(
-    /import\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]\s*;?/g,
-    (_match: string, _imports: string, importPath: string) => {
-      let depPath = path.resolve(fileDir, importPath);
-      if (!depPath.endsWith('.ts') && !depPath.endsWith('.js')) depPath += '.ts';
-      const inlined = inlineLocalDeps(depPath, null, seen);
-      if (inlined) transitiveParts.push(inlined);
-      return '';
-    }
-  );
-
-  // 外部パッケージのインポートを除去
-  content = content.replace(/import\s+.*?\s+from\s+['"](?!\.).*?['"];?\s*/g, '');
-  // export キーワードを除去
-  content = content.replace(/export\s+(const|type|interface|class|function)\s+/g, '$1 ');
-  // 型宣言を除去（ランタイムでは不要）
-  content = content.replace(/^type\s+\w+\s*=\s*[^;]+;/gm, '');
-  content = content.replace(/^interface\s+\w+\s*\{[\s\S]*?\}/gm, '');
-  // コメントを除去
-  content = content.replace(/\/\*[\s\S]*?\*\//g, '');
-  content = content.replace(/\/\/.*/g, '');
-
-  // 直接インポートされていない const 宣言を除去（displayName 等の重複を防ぐ）
-  if (importedNames) {
-    content = content.replace(/^const\s+(\w+)\s*=\s*[^;]+;/gm, (constMatch: string, varName: string) => {
-      return importedNames.has(varName) ? constMatch : '';
-    });
-  }
-
-  return [...transitiveParts, content.trim()].filter(Boolean).join('\n\n');
-}
-
-function resolveBundledTsxCliPath(): string {
-  return require.resolve("tsx/cli");
+function compileModelModule(modelPath: string, directory: string, modules = new Map<string, string>()): string {
+  const sourcePath = path.resolve(modelPath);
+  const existing = modules.get(sourcePath);
+  if (existing) return existing;
+  const outputPath = path.join(directory, `model-${modules.size}.mjs`);
+  modules.set(sourcePath, outputPath);
+  const output = ts.transpileModule(fs.readFileSync(sourcePath, "utf8"), {
+    fileName: sourcePath,
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+    transformers: {
+      after: [context => source => {
+        const visit: ts.Visitor = node => {
+          if (ts.isStringLiteral(node) &&
+              (ts.isImportDeclaration(node.parent) || ts.isExportDeclaration(node.parent)) &&
+              node.text.startsWith(".")) {
+            const base = path.resolve(path.dirname(sourcePath), node.text);
+            const candidates = [base.replace(/\.js$/, ".ts"), `${base}.ts`, path.join(base, "index.ts"), base];
+            const dependency = candidates.find(candidate => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+            if (!dependency) throw new Error(`Cannot resolve ${node.text} from ${sourcePath}`);
+            const compiled = compileModelModule(dependency, directory, modules);
+            return context.factory.createStringLiteral(`./${path.basename(compiled)}`);
+          }
+          return ts.visitEachChild(node, visit, context);
+        };
+        return ts.visitNode(source, visit) as ts.SourceFile;
+      }],
+    },
+  });
+  fs.writeFileSync(outputPath, output.outputText);
+  return outputPath;
 }
 
 /**
@@ -386,53 +362,9 @@ function resolveBundledTsxCliPath(): string {
  */
 async function extractFieldsFromSchema(modelPath: string, schemaName: string): Promise<FieldInfo[]> {
   const fields: FieldInfo[] = [];
+  let tempDirectory: string | undefined;
   
   try {
-    // モデルファイルの内容を読み込む
-    let modelContent = fs.readFileSync(modelPath, 'utf8');
-    const modelDir = path.dirname(path.resolve(modelPath));
-    
-    // ローカル相対インポートを再帰的にインライン化して保持
-    // パターン: import { categorySchema } from './category'
-    const seenPaths = new Set<string>([path.resolve(modelPath)]);
-    const localImports: string[] = [];
-    modelContent = modelContent.replace(
-      /import\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]\s*;?/g,
-      (_match: string, imports: string, importPath: string) => {
-        // インポートされた変数名を取得
-        const importedNames = new Set(
-          imports.split(',').map(s => s.trim().split(/\s+as\s+/).pop()!.trim()).filter(s => s.length > 0)
-        );
-
-        // 相対パスを絶対パスに解決
-        let resolvedPath = path.resolve(modelDir, importPath);
-        if (!resolvedPath.endsWith('.ts') && !resolvedPath.endsWith('.js')) {
-          resolvedPath += '.ts';
-        }
-
-        // 推移的なローカル依存を含めて再帰的にインライン化
-        const inlined = inlineLocalDeps(resolvedPath, importedNames, seenPaths);
-        if (inlined) localImports.push(inlined);
-        return ''; // 元のインポート文は除去
-      }
-    );
-    
-    // zod 以外のパッケージインポートを除去
-    modelContent = modelContent.replace(/import\s+.*?\s+from\s+['"].*?['"];?\s*/g, '');
-    modelContent = modelContent.replace(/export\s+(const|type|interface|class|function)\s+/g, '$1 ');
-    // type宣言を削除（ランタイムでは不要）
-    modelContent = modelContent.replace(/^type\s+\w+\s*=\s*[^;]+;/gm, '');
-    // interface宣言を削除（ランタイムでは不要、複数行対応）
-    modelContent = modelContent.replace(/^interface\s+\w+\s*\{[\s\S]*?\}/gm, '');
-    // コメントを削除
-    modelContent = modelContent.replace(/\/\*[\s\S]*?\*\//g, '');
-    modelContent = modelContent.replace(/\/\/.*/g, '');
-    // TypeScript の `as const` アサーションを削除（.mjs では構文エラーになる）
-    modelContent = modelContent.replace(/\s+as\s+const\b/g, '');
-    
-    // インライン化したローカルインポートを先頭に追加
-    const inlinedDeps = localImports.length > 0 ? localImports.join('\n\n') + '\n\n' : '';
-    
     // プロジェクトルートを探す（package.jsonがある場所）
     let projectRoot = path.dirname(modelPath);
     while (projectRoot !== path.dirname(projectRoot)) {
@@ -443,16 +375,11 @@ async function extractFieldsFromSchema(modelPath: string, schemaName: string): P
     }
     
     // プロジェクトルート内に一時スクリプトファイルを作成
-    const tempScript = path.join(projectRoot, `.swallowkit-parser-${Date.now()}.mjs`);
+    tempDirectory = fs.mkdtempSync(path.join(projectRoot, '.swallowkit-parser-'));
+    const compiledModel = compileModelModule(modelPath, tempDirectory);
+    const tempScript = path.join(tempDirectory, 'inspect.mjs');
     const scriptCode = `
-import { z } from 'zod/v4';
-
-// インライン化した依存スキーマ
-${inlinedDeps}
-// モデルファイルの内容を評価
-${modelContent}
-
-const schema = ${schemaName};
+  import { ${schemaName} as schema } from './${path.basename(compiledModel)}';
 
 // Zod v3とv4の両方に対応
 const isObject = (schema && schema._def && 
@@ -501,7 +428,7 @@ if (isObject) {
     // ZodArray をチェック
     if (getTypeName(fieldDef) === 'ZodArray') {
       isArray = true;
-      fieldDef = fieldDef._def.type || fieldDef._def.element;
+      fieldDef = fieldDef._def.element || fieldDef._def.type;
     }
     
     // 基本型を判定
@@ -552,8 +479,7 @@ if (isObject) {
     fs.writeFileSync(tempScript, scriptCode, 'utf8');
     
     try {
-      const tsxCliPath = resolveBundledTsxCliPath();
-      const result = execFileSync(process.execPath, [tsxCliPath, tempScript], {
+      const result = execFileSync(process.execPath, [tempScript], {
         encoding: 'utf8',
         cwd: projectRoot,
       });
@@ -573,10 +499,11 @@ if (isObject) {
       }
     }
   } catch (error) {
-    // tsxが使えない場合は正規表現フォールバック
     console.warn('Failed to use dynamic import, falling back to regex parsing');
     console.warn('Error:', error);
     return extractFieldsWithRegex(modelPath, schemaName);
+  } finally {
+    if (tempDirectory) fs.rmSync(tempDirectory, { recursive: true, force: true });
   }
   
   return fields;

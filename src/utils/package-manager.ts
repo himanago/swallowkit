@@ -30,13 +30,13 @@ export interface PackageManagerCommands {
   dlx: string;
   /** Run a script: "pnpm run" / "npm run" */
   run: string;
-  /** Run a script with filter: "pnpm run --filter <ws>" / "npm run --workspace=<ws>" */
+  /** Run a script with filter: "pnpm --filter <ws> run" / "npm run --workspace=<ws>" */
   runFilter: (workspace: string) => string;
   /** Start script: "pnpm start" / "npm start" */
   start: string;
   /** Install production only (in temp dir for CI): "pnpm install --prod" / "npm install --omit=dev" */
   installProd: string;
-  /** create-next-app flag: "--use-pnpm" / (none for npm) */
+  /** create-next-app flag: "--use-pnpm" / "--use-npm" */
   createNextAppFlag: string | null;
 }
 
@@ -55,9 +55,9 @@ export function getCommands(pm: PackageManager): PackageManagerCommands {
       exec: "pnpm exec",
       dlx: "pnpm dlx",
       run: "pnpm run",
-      runFilter: (ws) => `pnpm run --filter ${ws}`,
+      runFilter: (ws) => `pnpm --filter ${ws} run`,
       start: "pnpm start",
-      installProd: "pnpm install --prod",
+      installProd: "pnpm install --prod --no-frozen-lockfile",
       createNextAppFlag: "--use-pnpm",
     };
   }
@@ -76,22 +76,19 @@ export function getCommands(pm: PackageManager): PackageManagerCommands {
     runFilter: (ws) => `npm run --workspace=${ws}`,
     start: "npm start",
     installProd: "npm install --omit=dev",
-    createNextAppFlag: null,
+    createNextAppFlag: "--use-npm",
   };
 }
 
 /**
  * Detect the preferred package manager for new project initialisation.
  *
- * Strategy (pnpm-preferred):
- *   1. If pnpm is installed on the system → always use pnpm
- *      (even when invoked via `npx`, since `npx` is often used out of habit)
- *   2. Otherwise → npm
- *
- * This is intentionally independent of `npm_config_user_agent` so that
- * `npx swallowkit init` still creates a pnpm project when pnpm is available.
+ * Honor the invoking package manager before falling back to available binaries.
  */
 export function detectFromUserAgent(pnpmIsInstalled: () => boolean = isPnpmInstalled): PackageManager {
+  const agent = process.env.npm_config_user_agent || "";
+  if (agent.startsWith("pnpm/")) return "pnpm";
+  if (agent.startsWith("npm/")) return "npm";
   return pnpmIsInstalled() ? "pnpm" : "npm";
 }
 
@@ -111,10 +108,17 @@ function isPnpmInstalled(): boolean {
  * Detect the package manager used in an existing project directory
  * by checking for lockfiles.
  *
- * Priority: pnpm-lock.yaml > package-lock.json > fallback to detectFromUserAgent()
+ * Priority: explicit project metadata > lockfiles > workspace config > invocation/binaries
  */
 export function detectFromProject(projectDir?: string): PackageManager {
   const dir = projectDir || process.cwd();
+
+  const manifestPath = path.join(dir, "package.json");
+  if (fs.existsSync(manifestPath)) {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const manager = manifest.devEngines?.packageManager?.name || manifest.packageManager?.split("@")[0];
+    if (manager === "npm" || manager === "pnpm") return manager;
+  }
 
   if (fs.existsSync(path.join(dir, "pnpm-lock.yaml"))) {
     return "pnpm";
@@ -124,6 +128,7 @@ export function detectFromProject(projectDir?: string): PackageManager {
   }
 
   // No lockfile found — fall back to user agent detection
+  if (fs.existsSync(path.join(dir, "pnpm-workspace.yaml"))) return "pnpm";
   return detectFromUserAgent();
 }
 
@@ -151,7 +156,7 @@ export function getWorkspaceConfig(pm: PackageManager, workspaces: string[]) {
       /** pnpm uses pnpm-workspace.yaml */
       type: "file" as const,
       filename: "pnpm-workspace.yaml",
-      content: `packages:\n${workspaces.map((w) => `  - ${w}`).join("\n")}\n`,
+      content: `packages:\n${workspaces.map((w) => `  - ${w}`).join("\n")}\nallowBuilds:\n  protobufjs: false\n  unrs-resolver: false\n`,
     };
   }
 
@@ -171,7 +176,7 @@ export function getCiSetupStep(pm: PackageManager): string {
     return `      - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: latest`;
+          version: 11`;
   }
   // npm: no extra setup needed (comes with Node.js)
   return "";
@@ -199,7 +204,7 @@ export function getAzurePipelinesSetup(pm: PackageManager): string {
   if (pm === "pnpm") {
     return `  - script: |
       corepack enable
-      corepack prepare pnpm@latest --activate
+      corepack prepare pnpm@11 --activate
     displayName: 'Setup pnpm'`;
   }
   // npm: no extra step needed
@@ -213,7 +218,7 @@ export function getBuildScript(pm: PackageManager): string {
   const copyStandaloneAssets = `node -e "const fs=require('fs');fs.mkdirSync('.next/standalone/.next',{recursive:true});if(fs.existsSync('.next/static'))fs.cpSync('.next/static','.next/standalone/.next/static',{recursive:true});if(fs.existsSync('public'))fs.cpSync('public','.next/standalone/public',{recursive:true});"`;
 
   if (pm === "pnpm") {
-    return `pnpm run --filter shared build && next build --webpack && ${copyStandaloneAssets}`;
+    return `pnpm --filter shared run build && next build --webpack && ${copyStandaloneAssets}`;
   }
   return `npm run --workspace=shared build && next build --webpack && ${copyStandaloneAssets}`;
 }

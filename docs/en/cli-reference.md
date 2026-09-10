@@ -1,9 +1,11 @@
 # CLI reference
 
+See [package manager commands and troubleshooting](./package-managers.md) for pnpm 11/12 and npm usage.
+
 All SwallowKit CLI commands and their options.
 
 ::: tip Package manager
-Examples use `npx`. With pnpm, replace `npx` with `pnpm` (or `pnpm dlx` for `swallowkit init`).
+Bootstrap: `pnpm dlx swallowkit init my-app` or `npx swallowkit init my-app`. Inside the project: `pnpm exec swallowkit …` or `npx swallowkit …` uses the installed CLI. MCP independently resolves `latest`.
 :::
 
 ## Table of Contents
@@ -144,6 +146,7 @@ pnpm dlx swallowkit init [project-name] [options]
 | Option | Description | Values | Default |
 |--------|-------------|--------|---------|
 | `--template <template>` | Template to use | `default` | `default` |
+| `--package-manager <manager>` | Select the project package manager | `npm`, `pnpm` | invocation |
 | `--next-version <version>` | Next.js version | e.g. `16.0.7`, `latest` | `latest` |
 | `--cicd <provider>` | CI/CD provider | `github`, `azure`, `skip` | *(prompt)* |
 | `--backend-language <language>` | Azure Functions backend language | `typescript`, `csharp`, `python` | *(prompt)* |
@@ -317,7 +320,7 @@ my-app/
   - `npx swallowkit machine validate project`
   - `npx swallowkit machine generate scaffold <name> --api-only`
 - Do not hand-edit framework-owned artifacts when the MCP or machine interface can generate or validate them for you.
-- The MCP bootstrap requires pnpm and network access when the selected version is not cached.
+- MCP uses the selected project package manager (pnpm or npm/npx) and needs network access when the selected version is not cached.
 
 <!--
 - このリポジトリには、project-scoped な `.mcp.json` が含まれており、project MCP 設定を自動読込する runtime では同梱の SwallowKit MCP server を起動できます。

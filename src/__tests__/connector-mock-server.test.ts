@@ -3,6 +3,7 @@
  */
 
 import * as http from "http";
+import * as net from "net";
 import { ConnectorMockServer } from "../core/mock/connector-mock-server";
 import {
   createRdbConnectorModelInfo,
@@ -10,6 +11,16 @@ import {
 } from "./fixtures";
 
 // ─── Helpers ────────────────────────────────────────────────
+
+// Own the failing endpoint: closed ports can be filtered instead of refused on CI hosts.
+async function failingBackend() {
+  const backend = net.createServer(socket => socket.destroy());
+  await new Promise<void>(resolve => backend.listen(0, '127.0.0.1', resolve));
+  return {
+    target: `127.0.0.1:${(backend.address() as net.AddressInfo).port}`,
+    close: () => new Promise<void>(resolve => backend.close(() => resolve())),
+  };
+}
 
 function httpRequest(
   port: number,
@@ -201,20 +212,25 @@ describe("ConnectorMockServer", () => {
     expect(status).toBe(405);
   });
 
-  it("proxies non-connector routes to Functions target (returns 502 when Functions not running)", async () => {
-    server = new ConnectorMockServer({
-      port: TEST_PORT,
-      functionsTarget: "localhost:19877", // No server on this port
-      connectorModels: [createRdbConnectorModelInfo()],
-      mockCount: 1,
-    });
+  it("returns 502 when the Functions connection fails", async () => {
+    const backend = await failingBackend();
+    try {
+      server = new ConnectorMockServer({
+        port: TEST_PORT,
+        functionsTarget: backend.target,
+        connectorModels: [createRdbConnectorModelInfo()],
+        mockCount: 1,
+      });
 
-    await server.start();
+      await server.start();
 
-    // /api/todo is NOT a connector model route, so it should be proxied
-    const { status, body } = await httpRequest(TEST_PORT, "GET", "/api/todo");
-    expect(status).toBe(502);
-    expect((body as any).error).toContain("not available");
+      // /api/todo is NOT a connector model route, so it should be proxied
+      const { status, body } = await httpRequest(TEST_PORT, "GET", "/api/todo");
+      expect(status).toBe(502);
+      expect((body as any).error).toContain("not available");
+    } finally {
+      await backend.close();
+    }
   });
 
   it("handles multiple connector models simultaneously", async () => {
@@ -394,21 +410,25 @@ describe("ConnectorMockServer - Auth Endpoints", () => {
   });
 
   it("does not intercept auth routes when authConfig is not set", async () => {
-    // Without authConfig, auth routes should be proxied (which will fail since no real Functions)
-    server = new ConnectorMockServer({
-      port: AUTH_PORT,
-      functionsTarget: "localhost:19999", // non-existent to trigger proxy error
-      connectorModels: [],
-    });
-    await server.start();
+    const backend = await failingBackend();
+    try {
+      server = new ConnectorMockServer({
+        port: AUTH_PORT,
+        functionsTarget: backend.target,
+        connectorModels: [],
+      });
+      await server.start();
 
-    const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
-      loginId: "admin",
-      password: "password123",
-    });
+      const res = await httpRequest(AUTH_PORT, "POST", "/api/auth/login", {
+        loginId: "admin",
+        password: "password123",
+      });
 
-    // Should get 502 (proxy error) since auth is not handled by mock
-    expect(res.status).toBe(502);
+      // Should get 502 (proxy error) since auth is not handled by mock
+      expect(res.status).toBe(502);
+    } finally {
+      await backend.close();
+    }
   });
 
   it("returns 500 when no user model matches the configured userTable", async () => {

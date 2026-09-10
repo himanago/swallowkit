@@ -1,5 +1,7 @@
 # AI / MCP integration
 
+See [package manager commands and troubleshooting](./package-managers.md) for pnpm 11/12 and npm usage.
+
 SwallowKit provides a machine-readable CLI (`swallowkit machine`) and a bundled MCP stdio server (`swallowkit-mcp`) so coding agents can operate through official generators, inspectors, and validators instead of guessing raw filesystem edits.
 
 For guidance on using SwallowKit throughout discovery, specification, planning,
@@ -30,9 +32,9 @@ npx swallowkit machine inspect entities
 npx swallowkit machine inspect routes
 ```
 ```bash [pnpm]
-pnpm swallowkit machine inspect project
-pnpm swallowkit machine inspect entities
-pnpm swallowkit machine inspect routes
+pnpm exec swallowkit machine inspect project
+pnpm exec swallowkit machine inspect entities
+pnpm exec swallowkit machine inspect routes
 ```
 :::
 
@@ -50,7 +52,7 @@ These commands return framework-owned metadata such as:
 npx swallowkit machine validate project
 ```
 ```bash [pnpm]
-pnpm swallowkit machine validate project
+pnpm exec swallowkit machine validate project
 ```
 :::
 
@@ -70,8 +72,8 @@ npx swallowkit machine generate model todo --overwrite never
 npx swallowkit machine generate scaffold todo --api-only
 ```
 ```bash [pnpm]
-pnpm swallowkit machine generate model todo --overwrite never
-pnpm swallowkit machine generate scaffold todo --api-only
+pnpm exec swallowkit machine generate model todo --overwrite never
+pnpm exec swallowkit machine generate scaffold todo --api-only
 ```
 :::
 
@@ -88,9 +90,9 @@ npx swallowkit machine apply scaffold --plan <planId>
 npx swallowkit machine apply scaffold todo --approve
 ```
 ```bash [pnpm]
-pnpm swallowkit machine plan scaffold todo --api-only
-pnpm swallowkit machine apply scaffold --plan <planId>
-pnpm swallowkit machine apply scaffold todo --approve
+pnpm exec swallowkit machine plan scaffold todo --api-only
+pnpm exec swallowkit machine apply scaffold --plan <planId>
+pnpm exec swallowkit machine apply scaffold todo --approve
 ```
 :::
 
@@ -108,8 +110,8 @@ npx swallowkit machine plan provision -g my-rg --location japaneast --swa-locati
 npx swallowkit machine apply provision --plan <planId> --approve
 ```
 ```bash [pnpm]
-pnpm swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia
-pnpm swallowkit machine apply provision --plan <planId> --approve
+pnpm exec swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia
+pnpm exec swallowkit machine apply provision --plan <planId> --approve
 ```
 :::
 
@@ -125,8 +127,8 @@ npx swallowkit machine inspect boundaries
 npx swallowkit machine inspect infra
 ```
 ```bash [pnpm]
-pnpm swallowkit machine inspect boundaries
-pnpm swallowkit machine inspect infra
+pnpm exec swallowkit machine inspect boundaries
+pnpm exec swallowkit machine inspect infra
 ```
 :::
 
@@ -141,8 +143,8 @@ npx swallowkit machine inspect artifacts
 npx swallowkit machine inspect drift
 ```
 ```bash [pnpm]
-pnpm swallowkit machine inspect artifacts
-pnpm swallowkit machine inspect drift
+pnpm exec swallowkit machine inspect artifacts
+pnpm exec swallowkit machine inspect drift
 ```
 :::
 
@@ -159,10 +161,10 @@ npx swallowkit machine explain failure
 npx swallowkit machine explain failure --check typecheck
 ```
 ```bash [pnpm]
-pnpm swallowkit machine verify project
-pnpm swallowkit machine verify project --checks structure,drift
-pnpm swallowkit machine explain failure
-pnpm swallowkit machine explain failure --check typecheck
+pnpm exec swallowkit machine verify project
+pnpm exec swallowkit machine verify project --checks structure,drift
+pnpm exec swallowkit machine explain failure
+pnpm exec swallowkit machine explain failure --check typecheck
 ```
 :::
 
@@ -247,7 +249,7 @@ Use the bundled stdio MCP server when your agent platform supports MCP tools:
 npx swallowkit-mcp
 ```
 ```bash [pnpm]
-pnpm swallowkit-mcp
+pnpm exec swallowkit-mcp
 ```
 :::
 
@@ -284,8 +286,9 @@ Example shape:
 {
   "mcpServers": {
     "swallowkit": {
-      "command": "node",
-      "args": ["./node_modules/swallowkit/dist/mcp/index.js"],
+      "command": "pnpm",
+      "args": ["--package", "swallowkit@${SWALLOWKIT_MCP_VERSION}", "dlx", "swallowkit-mcp"],
+      "env": { "SWALLOWKIT_MCP_VERSION": "latest" },
       "cwd": "."
     }
   }
@@ -298,7 +301,7 @@ Practical behavior:
 - **GitHub Copilot CLI** can also discover workspace `.mcp.json` servers
 - **Other agents / Codex-style runtimes** can reuse the same launcher when their MCP client supports project-level config; otherwise they should use the machine CLI fallback
 
-The generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) explicitly tell agents to prefer MCP tools when available and fall back to `swallowkit machine ...` when they are not. The MCP bootstrap requires pnpm and network access when the selected version is not cached.
+The generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) explicitly tell agents to prefer MCP tools when available and fall back to `swallowkit machine ...` when they are not. The launcher uses the project package manager: pnpm for pnpm projects, or `npx --yes --package swallowkit@${SWALLOWKIT_MCP_VERSION} swallowkit-mcp` for npm projects. Network access is needed when the selected version is not cached. MCP intentionally defaults to `latest`; normal project commands use the locally installed CLI.
 
 ### Agent Skills (agentskills.io standard)
 

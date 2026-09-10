@@ -17,7 +17,7 @@ C# または Python バックエンドでは、OpenAPI ドキュメントの出�
 npx swallowkit create-model product
 ```
 ```bash [pnpm]
-pnpm swallowkit create-model product
+pnpm exec swallowkit create-model product
 ```
 :::
 
@@ -44,7 +44,7 @@ export type Product = z.infer<typeof product>;
 npx swallowkit create-model user post comment
 ```
 ```bash [pnpm]
-pnpm swallowkit create-model user post comment
+pnpm exec swallowkit create-model user post comment
 ```
 :::
 
@@ -98,7 +98,7 @@ export type Product = z.infer<typeof product>;
 npx swallowkit scaffold shared/models/product.ts
 ```
 ```bash [pnpm]
-pnpm swallowkit scaffold shared/models/product.ts
+pnpm exec swallowkit scaffold shared/models/product.ts
 ```
 :::
 
@@ -147,7 +147,7 @@ scaffold コマンドは以下のファイルを生成します：
 npx swallowkit dev
 ```
 ```bash [pnpm]
-pnpm swallowkit dev
+pnpm exec swallowkit dev
 ```
 :::
 
@@ -162,9 +162,9 @@ npx swallowkit create-dev-seeds local
 npx swallowkit dev --seed-env local
 ```
 ```bash [pnpm]
-pnpm swallowkit create-dev-seeds local
+pnpm exec swallowkit create-dev-seeds local
 # dev-seeds/local/*.json を編集
-pnpm swallowkit dev --seed-env local
+pnpm exec swallowkit dev --seed-env local
 ```
 :::
 

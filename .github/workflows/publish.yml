@@ -39,6 +39,12 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Packed consumer release gate
+        run: |
+          node scripts/consumer-smoke.mjs pnpm 11.0.0 typescript
+          node scripts/consumer-smoke.mjs pnpm 12 typescript
+          node scripts/consumer-smoke.mjs npm bundled typescript
+
       - name: Determine tag
         id: tag
         run: |

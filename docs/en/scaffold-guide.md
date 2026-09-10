@@ -17,7 +17,7 @@ Use the `create-model` command to generate a model template with `id`, `createdA
 npx swallowkit create-model product
 ```
 ```bash [pnpm]
-pnpm swallowkit create-model product
+pnpm exec swallowkit create-model product
 ```
 :::
 
@@ -44,7 +44,7 @@ export type Product = z.infer<typeof product>;
 npx swallowkit create-model user post comment
 ```
 ```bash [pnpm]
-pnpm swallowkit create-model user post comment
+pnpm exec swallowkit create-model user post comment
 ```
 :::
 
@@ -98,7 +98,7 @@ This ensures timestamp consistency and prevents clients from setting incorrect v
 npx swallowkit scaffold shared/models/product.ts
 ```
 ```bash [pnpm]
-pnpm swallowkit scaffold shared/models/product.ts
+pnpm exec swallowkit scaffold shared/models/product.ts
 ```
 :::
 
@@ -147,7 +147,7 @@ Start the development server:
 npx swallowkit dev
 ```
 ```bash [pnpm]
-pnpm swallowkit dev
+pnpm exec swallowkit dev
 ```
 :::
 
@@ -162,9 +162,9 @@ npx swallowkit create-dev-seeds local
 npx swallowkit dev --seed-env local
 ```
 ```bash [pnpm]
-pnpm swallowkit create-dev-seeds local
+pnpm exec swallowkit create-dev-seeds local
 # edit dev-seeds/local/*.json
-pnpm swallowkit dev --seed-env local
+pnpm exec swallowkit dev --seed-env local
 ```
 :::
 

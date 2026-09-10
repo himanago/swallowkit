@@ -51,10 +51,10 @@ npx swallowkit add-connector backlog --type api
 ```
 ```bash [pnpm]
 # Add an RDB connector (MySQL)
-pnpm swallowkit add-connector mysql --type rdb --provider mysql
+pnpm exec swallowkit add-connector mysql --type rdb --provider mysql
 
 # Add an API connector (Backlog)
-pnpm swallowkit add-connector backlog --type api
+pnpm exec swallowkit add-connector backlog --type api
 ```
 :::
 
@@ -74,10 +74,10 @@ npx swallowkit create-model backlog-issue --connector backlog
 ```
 ```bash [pnpm]
 # Create a model bound to the mysql connector
-pnpm swallowkit create-model user --connector mysql
+pnpm exec swallowkit create-model user --connector mysql
 
 # Create a model bound to the backlog connector
-pnpm swallowkit create-model backlog-issue --connector backlog
+pnpm exec swallowkit create-model backlog-issue --connector backlog
 ```
 :::
 
@@ -155,8 +155,8 @@ npx swallowkit scaffold shared/models/user.ts
 npx swallowkit scaffold shared/models/backlog-issue.ts
 ```
 ```bash [pnpm]
-pnpm swallowkit scaffold shared/models/user.ts
-pnpm swallowkit scaffold shared/models/backlog-issue.ts
+pnpm exec swallowkit scaffold shared/models/user.ts
+pnpm exec swallowkit scaffold shared/models/backlog-issue.ts
 ```
 :::
 
@@ -182,7 +182,7 @@ Start the dev server with the `--mock-connectors` flag to work without real exte
 npx swallowkit dev --mock-connectors
 ```
 ```bash [pnpm]
-pnpm swallowkit dev --mock-connectors
+pnpm exec swallowkit dev --mock-connectors
 ```
 :::
 
@@ -372,7 +372,7 @@ You can provide initial data for connector models using dev-seeds JSON files:
 npx swallowkit create-dev-seeds shared/models/user.ts
 ```
 ```bash [pnpm]
-pnpm swallowkit create-dev-seeds shared/models/user.ts
+pnpm exec swallowkit create-dev-seeds shared/models/user.ts
 ```
 :::
 

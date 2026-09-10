@@ -4,6 +4,7 @@
  */
 
 import * as fs from "fs";
+import { detectFromProject, getCommands } from "../../utils/package-manager";
 import * as path from "path";
 import { ensureSwallowKitProject } from "../../core/config";
 import { ApiConnectorConfig, ConnectorDefinition } from "../../types";
@@ -40,7 +41,7 @@ export async function addConnectorCommand(options: AddConnectorOptions) {
   console.log("\n📝 Next steps:");
   console.log(`  1. Review the connector settings in ${configPath}`);
   console.log(`  2. Set the required environment variables in functions/local.settings.json`);
-  console.log(`  3. Create models with: npx swallowkit create-model <name> --connector=${options.name}`);
+  console.log(`  3. Create models with: ${getCommands(detectFromProject()).exec} swallowkit create-model <name> --connector=${options.name}`);
 }
 
 function findConfigFile(): string | null {

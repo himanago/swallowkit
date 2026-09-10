@@ -1,5 +1,7 @@
 # Local development
 
+See [package manager commands and troubleshooting](./package-managers.md) for pnpm 11/12 and npm usage.
+
 This page covers the `swallowkit dev` command, local seed data management, and backend-specific setup.
 
 ## Starting the dev server
@@ -9,7 +11,7 @@ This page covers the `swallowkit dev` command, local seed data management, and b
 npx swallowkit dev
 ```
 ```bash [pnpm]
-pnpm swallowkit dev
+pnpm exec swallowkit dev
 ```
 :::
 
@@ -73,7 +75,7 @@ Dev seeds let you populate the local Cosmos DB Emulator with known data before s
 npx swallowkit create-dev-seeds local
 ```
 ```bash [pnpm]
-pnpm swallowkit create-dev-seeds local
+pnpm exec swallowkit create-dev-seeds local
 ```
 :::
 
@@ -109,7 +111,7 @@ Every document must include an `id` field.
 npx swallowkit create-dev-seeds local --from-emulator --force
 ```
 ```bash [pnpm]
-pnpm swallowkit create-dev-seeds local --from-emulator --force
+pnpm exec swallowkit create-dev-seeds local --from-emulator --force
 ```
 :::
 
@@ -122,7 +124,7 @@ This exports the current data from matching Cosmos DB Emulator containers into t
 npx swallowkit dev --seed-env local
 ```
 ```bash [pnpm]
-pnpm swallowkit dev --seed-env local
+pnpm exec swallowkit dev --seed-env local
 ```
 :::
 
@@ -146,7 +148,7 @@ For models that use external data connectors (MySQL, PostgreSQL, REST APIs), you
 npx swallowkit dev --mock-connectors
 ```
 ```bash [pnpm]
-pnpm swallowkit dev --mock-connectors
+pnpm exec swallowkit dev --mock-connectors
 ```
 :::
 
