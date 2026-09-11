@@ -113,7 +113,8 @@ mechanical な SwallowKit verification の後に semantic/specification/engineer
 
 タスクに関係する inspection だけを利用します。
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit machine inspect project
 npx swallowkit machine inspect entities
 npx swallowkit machine inspect routes
@@ -121,6 +122,15 @@ npx swallowkit machine inspect boundaries
 npx swallowkit machine inspect drift
 npx swallowkit machine inspect infra
 ```
+```bash [pnpm]
+pnpm exec swallowkit machine inspect project
+pnpm exec swallowkit machine inspect entities
+pnpm exec swallowkit machine inspect routes
+pnpm exec swallowkit machine inspect boundaries
+pnpm exec swallowkit machine inspect drift
+pnpm exec swallowkit machine inspect infra
+```
+:::
 
 利用可能なら同等の `swallowkit_*` MCP tools を優先し、利用できない場合は Agent-facing
 fallback として machine interface を使います。
@@ -164,17 +174,69 @@ inspect → plan → conflict/approval の評価 → apply → verify
 runtime が公開している場合は MCP tools を優先し、それ以外では structured machine
 operations を使用します。
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit machine inspect drift
 npx swallowkit machine plan scaffold todo
 npx swallowkit machine apply scaffold --plan <planId>
 npx swallowkit machine verify project
 ```
+```bash [pnpm]
+pnpm exec swallowkit machine inspect drift
+pnpm exec swallowkit machine plan scaffold todo
+pnpm exec swallowkit machine apply scaffold --plan <planId>
+pnpm exec swallowkit machine verify project
+```
+:::
 
 Agent Skills 対応 runtime では `swallowkit-add-model`、`swallowkit-modify-model`、
 `swallowkit-verify-repair` を利用します。それ以外では対応する
 `.swallowkit/workflows/` runbook を読みます。これらは上位の implementation process から
 呼び出せる task-level capability です。
+
+### エージェントへの依頼例
+
+モデル変更は、生成ファイルごとの修正ではなく、実現したい振る舞いとして依頼します。
+
+> Todo に優先度を追加してください。このプロジェクトの AGENTS.md と関連する Skill／workflow を読み、
+> 選択済みのパッケージマネージャーを維持してください。編集前に ownership と drift を確認し、
+> モデルを変更したら scaffold の Plan を作成してください。変更対象と競合を確認して Apply し、
+> verify と優先度の振る舞いを確認するテストまで実施してください。
+> 手編集の上書きなど判断が必要な場合は、対象の差分と選択肢を示してください。
+
+ここでの **Plan は SwallowKit が返す変更計画**です。エージェントの文章による作業計画や
+Plan モードとは別で、生成対象・競合・`planId` を持ちます。Plan は生成対象を変更しませんが、
+計画自体は `.swallowkit/state/plans/` に保存します。内容を確認した Plan の `planId` を
+Apply に渡してください。
+
+`stale-plan` が返ったら、計画時に記録したファイルが変更されています。現在の差分を調べ、
+Plan を作り直して再確認します。`--approve` は古い Plan を有効にするオプションではありません。
+`requires-human` の場合は、求められた判断を確認してから進めます。
+競合のない通常の変更に、一律の追加承認手順を設ける必要はありません。
+
+### ドリフトが見つかったとき
+
+ドリフトは、モデル・生成時の記録・現在のファイルなどの間のずれです。
+`machine inspect drift` の finding にある種類、重要度、`repairAction` と、
+`machine inspect boundaries` の編集ポリシーを合わせて確認します。
+finding があるだけで、すべてを上書きする必要があるとは限りません。
+
+| finding | エージェントが確認すること |
+| --- | --- |
+| `schema-drift` | 意図したモデル変更か確認し、対象モデルの scaffold を Plan → Apply します。 |
+| `artifact-modified` | 生成後の差分と ownership を確認します。ユーザー編集が認められる領域の変更は正常な場合があります。必要なカスタマイズを消さないでください。 |
+| `artifact-missing` | 削除が意図したものか確認し、必要な生成物を再生成します。 |
+| `generator-drift` | 生成時と実行中の SwallowKit のバージョンを確認し、更新を採用する場合は再生成の差分をレビューします。 |
+| `manifest-drift` | 実際のプロジェクト構造と記録のずれを調べ、提示された `repairAction` に従います。 |
+
+MCP は既定で `latest`、通常の CLI はプロジェクトに固定されたバージョンを使います。
+バージョン差がある場合は同じ環境だと決めつけず、各インターフェースの現在の機能を確認してください。
+Plan と Apply は同じプロジェクト・同じバージョンの実行経路で行います。
+MCP のバージョン指定は[パッケージマネージャーガイド](./package-managers.md)を参照してください。
+
+修復後は `machine verify project` を実行し、失敗時は `machine explain failure` の証拠を
+確認します。ドリフトが解消しても、依頼した機能の振る舞いや Azure デプロイの成功まで
+証明されたわけではありません。それぞれのテスト・実行結果で確認してください。
 
 ## Verification と semantic review の違い
 

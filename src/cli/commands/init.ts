@@ -2774,8 +2774,9 @@ ${pnpmSetupStep ? `${pnpmSetupStep}\n` : ''}
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: ${pm}
-          cache-dependency-path: ${pm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}
+${npmWorkspaceNormalizationStep ? '' : `          cache: ${pm}
+          cache-dependency-path: ${projectPm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}
+`}
 ${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}` : ''}
       - name: Install dependencies
         run: |
@@ -3125,7 +3126,14 @@ ${commonSetup}  - task: UsePythonVersion@0
 `;
 }
 
+// setup-node selects the runner runtime only; Oryx reads the app manifest separately.
+export function getSwaNodeVersionCommand(): string {
+  return `node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.engines={...p.engines,node:'>=22.14.0 <23'};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+String.fromCharCode(10));"`;
+}
+
 export function buildAzureSwaPipeline(pm: PackageManager, projectPm: PackageManager = pm): string {
+  // SWA/Oryx also invokes npm internally; normalize only the disposable CI checkout.
+  pm = 'npm';
   const pmCmd = getCommands(pm);
   const azPipelinesSetup = getAzurePipelinesSetup(pm);
   const npmWorkspaceNormalizationStep = getAzurePipelinesNpmWorkspaceNormalizationStep(pm, projectPm);
@@ -3170,6 +3178,9 @@ steps:
       versionSpec: '22.x'
     displayName: 'Install Node.js'
 ${azPipelinesSetup ? `\n${azPipelinesSetup}\n` : ''}
+  - script: |
+      ${getSwaNodeVersionCommand()}
+    displayName: 'Select Node.js 22 for SWA'
 ${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}\n` : ''}
   - script: |
       ${getCiInstallCommand(pm, projectPm)}
@@ -3206,7 +3217,7 @@ function getAzurePipelinesNpmWorkspaceNormalizationStep(pm: PackageManager, proj
       }
 
       function writeJson(path, value) {
-        fs.writeFileSync(path, JSON.stringify(value, null, 2) + '\\n');
+        fs.writeFileSync(path, JSON.stringify(value, null, 2) + String.fromCharCode(10));
       }
 
       const sharedPackagePath = 'shared/package.json';
@@ -3225,7 +3236,9 @@ function getAzurePipelinesNpmWorkspaceNormalizationStep(pm: PackageManager, proj
       }
 
       const root = readJson('package.json');
-      root.workspaces = ['shared', 'functions'];
+      root.workspaces = ['shared', 'functions'].filter(dir => fs.existsSync(dir + '/package.json'));
+      delete root.packageManager;
+      root.devEngines = { ...root.devEngines, packageManager: { name: 'npm', version: '>=10', onFail: 'error' } };
       replaceSharedWorkspaceDep(root, 'file:shared');
       root.scripts = root.scripts || {};
       root.scripts.build = ${JSON.stringify(getBuildScript('npm'))};
@@ -3261,7 +3274,7 @@ function getGitHubNpmWorkspaceNormalizationStep(pm: PackageManager, projectPm: P
           }
 
           function writeJson(path, value) {
-            fs.writeFileSync(path, JSON.stringify(value, null, 2) + '\\n');
+            fs.writeFileSync(path, JSON.stringify(value, null, 2) + String.fromCharCode(10));
           }
 
           const sharedPackagePath = 'shared/package.json';
@@ -3280,7 +3293,9 @@ function getGitHubNpmWorkspaceNormalizationStep(pm: PackageManager, projectPm: P
           }
 
           const root = readJson('package.json');
-          root.workspaces = ['shared', 'functions'];
+          root.workspaces = ['shared', 'functions'].filter(dir => fs.existsSync(dir + '/package.json'));
+          delete root.packageManager;
+          root.devEngines = { ...root.devEngines, packageManager: { name: 'npm', version: '>=10', onFail: 'error' } };
           replaceSharedWorkspaceDep(root, 'file:shared');
           root.scripts = root.scripts || {};
           root.scripts.build = ${JSON.stringify(getBuildScript('npm'))};
@@ -3323,6 +3338,8 @@ async function createGitHubActionsWorkflows(
 }
 
 export function buildGitHubSwaWorkflow(pm: PackageManager, projectPm: PackageManager = pm): string {
+  // SWA/Oryx also invokes npm internally; normalize only the disposable CI checkout.
+  pm = 'npm';
   const npmWorkspaceNormalizationStep = getGitHubNpmWorkspaceNormalizationStep(pm, projectPm);
 
   return `name: Deploy Static Web App
@@ -3338,7 +3355,7 @@ on:
       - 'shared/**'
       - 'public/**'
       - 'package.json'
-      - '${pm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}'
+      - '${projectPm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}'
       - 'next.config.js'
       - 'next.config.ts'
   workflow_dispatch:
@@ -3352,7 +3369,7 @@ on:
       - 'shared/**'
       - 'public/**'
       - 'package.json'
-      - '${pm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}'
+      - '${projectPm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}'
       - 'next.config.js'
       - 'next.config.ts'
 
@@ -3371,8 +3388,12 @@ ${getCiSetupStep(pm) ? `${getCiSetupStep(pm)}\n` : ''}
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: ${pm}
-          cache-dependency-path: ${pm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}
+${npmWorkspaceNormalizationStep ? '' : `          cache: ${pm}
+          cache-dependency-path: ${projectPm === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'}
+`}
+      - name: Select Node.js 22 for SWA
+        run: |
+          ${getSwaNodeVersionCommand()}
 ${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}` : ''}
       - name: Install and build app
         run: |
@@ -3388,7 +3409,7 @@ ${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}` : ''}
           app_location: '/'
           api_location: ''
           output_location: ''
-          app_build_command: '${getSwaAppBuildCommand(pm, projectPm)}'
+          app_build_command: 'npm run build'
         env:
           NEXT_TURBOPACK_EXPERIMENTAL_USE_SYSTEM_TLS_CERTS: '1'
 `;

@@ -23,6 +23,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate release version and determine npm tag
+        id: tag
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { version } = require('./package.json');
+          const lock = require('./package-lock.json');
+          if (lock.version !== version || lock.packages[''].version !== version) {
+            throw new Error('package.json and package-lock.json versions must match');
+          }
+          if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v${version}`) {
+            throw new Error('Git tag must match package.json version');
+          }
+          const distTag = version.includes('-') ? 'next' : 'latest';
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\ndist_tag=${distTag}\n`);
+          NODE
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -45,14 +62,6 @@ jobs:
           node scripts/consumer-smoke.mjs pnpm 12 typescript
           node scripts/consumer-smoke.mjs npm bundled typescript
 
-      - name: Determine tag
-        id: tag
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          # Always publish as latest (even for pre-release) until a stable release exists
-          echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
-
       - name: Publish (dry run)
         if: ${{ github.event.inputs.dry-run == 'true' }}
         run: npm publish --tag ${{ steps.tag.outputs.dist_tag }} --dry-run
@@ -66,6 +75,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Summary
+        if: ${{ github.event.inputs.dry-run != 'true' }}
         run: |
           echo "## 📦 Published to npm" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"

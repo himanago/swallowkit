@@ -81,22 +81,24 @@ Generation stays non-interactive and returns JSON describing created or updated 
 
 ### Plan / Apply
 
-A two-phase flow that lets agents preview changes before writing anything. This is the recommended path for autonomous loops.
+A two-phase flow that lets agents preview changes before changing generated targets. This is the recommended path for autonomous loops.
 
 ::: code-group
 ```bash [npm]
 npx swallowkit machine plan scaffold todo --api-only
 npx swallowkit machine apply scaffold --plan <planId>
-npx swallowkit machine apply scaffold todo --approve
+# Only after approval to overwrite the reported conflicts
+npx swallowkit machine apply scaffold --plan <planId> --approve
 ```
 ```bash [pnpm]
 pnpm exec swallowkit machine plan scaffold todo --api-only
 pnpm exec swallowkit machine apply scaffold --plan <planId>
-pnpm exec swallowkit machine apply scaffold todo --approve
+# Only after approval to overwrite the reported conflicts
+pnpm exec swallowkit machine apply scaffold --plan <planId> --approve
 ```
 :::
 
-- `plan scaffold` writes nothing to disk; it returns the files that would be created / updated / overwritten, plus any conflicts. Plans are stored in `.swallowkit/state/plans/` and referenced by `planId`.
+- `plan scaffold` leaves generated targets unchanged; it returns the files that would be created / updated / overwritten, plus any conflicts. Plans are stored in `.swallowkit/state/plans/` and referenced by `planId`.
 - `apply scaffold --plan <planId>` rejects the plan with `stale-plan` (`status: "blocked"`) if any planned file changed after planning.
 - Overwriting a managed file that was hand-edited after generation returns `approval-required` (`status: "requires-human"`) and requires an explicit `--approve`.
 - C# / Python OpenAPI and native schema artifacts are included in plans and participate in stale-plan detection, conflict checks, approval, and the artifact ledger. Planning does not invoke external tools or the network; validation and environment bootstrap with NSwag or datamodel-code-generator run only during apply, as a pre-flight step before any file is written. If validation fails (for example, the .NET SDK is missing), apply fails without modifying the project.

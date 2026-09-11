@@ -87,16 +87,18 @@ pnpm exec swallowkit machine generate scaffold todo --api-only
 ```bash [npm]
 npx swallowkit machine plan scaffold todo --api-only
 npx swallowkit machine apply scaffold --plan <planId>
-npx swallowkit machine apply scaffold todo --approve
+# 競合の上書きについて承認を得た場合のみ
+npx swallowkit machine apply scaffold --plan <planId> --approve
 ```
 ```bash [pnpm]
 pnpm exec swallowkit machine plan scaffold todo --api-only
 pnpm exec swallowkit machine apply scaffold --plan <planId>
-pnpm exec swallowkit machine apply scaffold todo --approve
+# 競合の上書きについて承認を得た場合のみ
+pnpm exec swallowkit machine apply scaffold --plan <planId> --approve
 ```
 :::
 
-- `plan scaffold` はファイルを一切書かず、作成 / 更新 / 上書き予定のファイル一覧と競合（conflict）を返します。plan は `.swallowkit/state/plans/` に保存され、`planId` で参照できます。
+- `plan scaffold` は生成対象のファイルを変更せず、作成 / 更新 / 上書き予定のファイル一覧と競合（conflict）を返します。plan は `.swallowkit/state/plans/` に保存され、`planId` で参照できます。
 - `apply scaffold --plan <planId>` は、plan 作成後に対象ファイルが変更されていた場合 `stale-plan`（`status: "blocked"`）で拒否します。
 - 生成後に手編集された managed ファイルを上書きする場合は `approval-required`（`status: "requires-human"`）となり、`--approve` の明示が必要です。
 - C# / Python の OpenAPI / native schema 生成物も plan に含まれ、stale-plan 検出、競合判定、承認、生成物台帳の対象になります。plan では外部 tool やネットワークを使用せず、NSwag / datamodel-code-generator による検証と環境 bootstrap は apply 時だけ実行されます。この検証はファイル書き込み前のプリフライトとして行われ、失敗した場合（例: .NET SDK 未インストール）はプロジェクトを一切変更せずに失敗します。

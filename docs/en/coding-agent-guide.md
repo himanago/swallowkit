@@ -118,7 +118,8 @@ for the other.
 
 Use only the inspections relevant to the task:
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit machine inspect project
 npx swallowkit machine inspect entities
 npx swallowkit machine inspect routes
@@ -126,6 +127,15 @@ npx swallowkit machine inspect boundaries
 npx swallowkit machine inspect drift
 npx swallowkit machine inspect infra
 ```
+```bash [pnpm]
+pnpm exec swallowkit machine inspect project
+pnpm exec swallowkit machine inspect entities
+pnpm exec swallowkit machine inspect routes
+pnpm exec swallowkit machine inspect boundaries
+pnpm exec swallowkit machine inspect drift
+pnpm exec swallowkit machine inspect infra
+```
+:::
 
 Prefer equivalent `swallowkit_*` MCP tools when available. Use the machine
 interface as the agent-facing fallback.
@@ -172,17 +182,69 @@ inspect → plan → evaluate conflicts/approval → apply → verify
 Prefer MCP tools when the runtime exposes them. Otherwise use structured
 machine operations, for example:
 
-```bash
+::: code-group
+```bash [npm]
 npx swallowkit machine inspect drift
 npx swallowkit machine plan scaffold todo
 npx swallowkit machine apply scaffold --plan <planId>
 npx swallowkit machine verify project
 ```
+```bash [pnpm]
+pnpm exec swallowkit machine inspect drift
+pnpm exec swallowkit machine plan scaffold todo
+pnpm exec swallowkit machine apply scaffold --plan <planId>
+pnpm exec swallowkit machine verify project
+```
+:::
 
 Use `swallowkit-add-model`, `swallowkit-modify-model`, and
 `swallowkit-verify-repair` when the runtime supports Agent Skills. Otherwise
 read the corresponding `.swallowkit/workflows/` runbook. These task-level
 capabilities are designed to be invoked from a larger implementation process.
+
+### Example request for your agent
+
+Describe the behavior you want rather than asking for separate edits to each generated file.
+
+> Add priority to Todo. Read this project's AGENTS.md and relevant Skill/workflow,
+> and keep its selected package manager. Inspect ownership and drift before editing.
+> After changing the model, create a scaffold Plan, inspect its changes and conflicts,
+> then Apply it. Run verify and tests for the priority behavior.
+> If a decision is needed, such as overwriting hand edits, show the affected diff and options.
+
+A **Plan here is a change plan returned by SwallowKit**. It is separate from an agent's
+written task plan or Plan mode: it contains planned operations, conflicts, and a `planId`.
+Planning does not change generated targets, but saves the plan under
+`.swallowkit/state/plans/`. Pass the reviewed plan's `planId` to Apply.
+
+A `stale-plan` response means files fingerprinted during planning have changed.
+Inspect the current diff, create a new Plan, and review it again. `--approve` does not
+make a stale Plan valid. For `requires-human`, obtain the requested decision before
+continuing. Ordinary changes without conflicts do not need an additional blanket approval step.
+
+### When drift is reported
+
+Drift is a mismatch between models, generation records, current files, or project metadata.
+Read each finding's kind, severity, and `repairAction` from `machine inspect drift`,
+together with the editing policy from `machine inspect boundaries`.
+A finding does not automatically mean every affected file should be overwritten.
+
+| Finding | What the agent should check |
+| --- | --- |
+| `schema-drift` | Confirm the model change is intentional, then Plan and Apply scaffold for the affected model. |
+| `artifact-modified` | Review the post-generation diff and ownership. Changes in user-editable areas can be expected; preserve needed customizations. |
+| `artifact-missing` | Check whether deletion was intentional and regenerate artifacts that are still needed. |
+| `generator-drift` | Compare the generating and running SwallowKit versions; review regeneration changes when adopting an update. |
+| `manifest-drift` | Investigate the mismatch between the actual project structure and its records, then follow the supplied `repairAction`. |
+
+MCP defaults to `latest`, while normal CLI commands use the project's pinned version.
+If versions differ, inspect the current capabilities of each interface instead of assuming
+they are identical. Use the same project and version of the interface for Plan and Apply.
+See the [package manager guide](./package-managers.md) for configuring the MCP version.
+
+After repair, run `machine verify project`; use `machine explain failure` to inspect
+evidence for failures. Resolving drift does not by itself prove the requested feature
+behavior or a successful Azure deployment. Check those through their own tests and execution results.
 
 ## Verification versus semantic review
 

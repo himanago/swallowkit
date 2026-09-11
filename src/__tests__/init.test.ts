@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { execFileSync, spawnSync } from "child_process";
 
 import {
   buildGeneratedProjectDependencies,
@@ -304,11 +305,22 @@ describe("Infrastructure generation", () => {
 });
 
 describe("GitHub Actions workflow generation", () => {
+  it("only enables setup-node caching when no package-manager conversion is needed", () => {
+    expect(buildGitHubSwaWorkflow("npm")).toContain("Select Node.js 22 for SWA");
+    expect(buildGitHubSwaWorkflow("npm")).toContain("app_build_command: 'npm run build'");
+    expect(buildAzureSwaPipeline("npm")).toContain("Select Node.js 22 for SWA");
+    expect(buildGitHubSwaWorkflow("npm")).toContain("cache: npm");
+    expect(buildGitHubSwaWorkflow("npm")).toContain("cache-dependency-path: package-lock.json");
+    expect(getGitHubFunctionsWorkflow("pnpm", "typescript")).toContain("cache: pnpm");
+    expect(getGitHubFunctionsWorkflow("npm", "typescript", "pnpm")).not.toContain("cache:");
+    expect(getGitHubFunctionsWorkflow("npm", "typescript", "pnpm")).not.toContain("cache-dependency-path:");
+  });
+
   it("uses npm ci for the SWA workflow when the project was initialized with pnpm", () => {
     const workflow = buildGitHubSwaWorkflow("npm", "pnpm");
 
     expect(workflow).toContain("Normalize pnpm workspace for npm CI");
-    expect(workflow).toContain("root.workspaces = ['shared', 'functions']");
+    expect(workflow).toContain("root.workspaces = ['shared', 'functions'].filter");
     expect(workflow).toContain("replaceSharedWorkspaceDep(root, 'file:shared')");
     expect(workflow).toContain("root.scripts.build = \"npm run --workspace=shared build");
     expect(workflow).toContain("npm install --package-lock-only --ignore-scripts");
@@ -336,7 +348,7 @@ describe("GitHub Actions workflow generation", () => {
     const pipeline = buildAzureSwaPipeline("npm", "pnpm");
 
     expect(pipeline).toContain("Normalize pnpm workspace for npm CI");
-    expect(pipeline).toContain("root.workspaces = ['shared', 'functions']");
+    expect(pipeline).toContain("root.workspaces = ['shared', 'functions'].filter");
     expect(pipeline).toContain("replaceSharedWorkspaceDep(root, 'file:shared')");
     expect(pipeline).toContain("root.scripts.build = \"npm run --workspace=shared build");
     expect(pipeline).toContain("npm install --package-lock-only --ignore-scripts");
@@ -359,5 +371,74 @@ describe("GitHub Actions workflow generation", () => {
     expect(pipeline).toContain("npm run --workspace=functions build");
     expect(pipeline).not.toContain("corepack enable");
     expect(pipeline).not.toContain("pnpm install --frozen-lockfile");
+  });
+});
+
+
+describe("SWA npm compatibility with pnpm projects", () => {
+  it.each([
+    ["github", true], ["github", false], ["azure", true], ["azure", false],
+  ])("executes %s normalization and npm with Node Functions=%s", (provider, hasFunctions) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-swa-npm-"));
+    try {
+      const writePackage = (relative: string, value: object) => {
+        const target = path.join(dir, relative, "package.json");
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, JSON.stringify(value));
+      };
+      writePackage("", {
+        name: "sample", version: "1.0.0", private: true,
+        packageManager: "pnpm@11.0.0",
+        devEngines: {
+          packageManager: { name: "pnpm", version: ">=11 <13", onFail: "error" },
+          runtime: { name: "node", version: ">=22.14.0" },
+        },
+        dependencies: { "@sample/shared": "workspace:*" },
+        scripts: { probe: 'node -e "process.stdout.write(process.env.npm_config_user_agent)"' },
+      });
+      writePackage("shared", { name: "@sample/shared", version: "1.0.0" });
+      if (hasFunctions) writePackage("functions", {
+        name: "functions", version: "1.0.0",
+        dependencies: { "@sample/shared": "workspace:*" },
+        scripts: { prestart: "pnpm run build" },
+      });
+      const env = { ...process.env, npm_config_cache: path.join(dir, "cache") };
+      // setup-node's npm cache lookup is an npm command too, before any install.
+      const cacheBefore = spawnSync("npm", ["config", "get", "cache"], { cwd: dir, env, encoding: "utf8" });
+      expect(cacheBefore.status).not.toBe(0);
+      expect(cacheBefore.stderr).toContain("EBADDEVENGINES");
+      const before = spawnSync("npm", ["run", "probe"], { cwd: dir, env, encoding: "utf8" });
+      expect(before.status).not.toBe(0);
+      expect(before.stderr).toContain("EBADDEVENGINES");
+
+      const workflow = provider === "github" ? buildGitHubSwaWorkflow("pnpm") : buildAzureSwaPipeline("pnpm");
+      expect(workflow).toContain("Normalize pnpm workspace for npm CI");
+      expect(workflow).not.toContain("pnpm install --frozen-lockfile");
+      expect(workflow).not.toContain("pnpm/action-setup");
+      if (provider === "github") {
+        expect(workflow).not.toContain("cache:");
+        expect(workflow).not.toContain("cache-dependency-path:");
+        expect(workflow).toContain("app_build_command: 'npm run build'");
+      }
+      const runtimeCommand = workflow.match(/node -e "const fs=require\('fs'\);const p=JSON.parse[^\n]+/);
+      expect(runtimeCommand).not.toBeNull();
+      execFileSync("bash", ["-c", runtimeCommand![0]], { cwd: dir });
+      const match = workflow.match(/node <<'NODE'\n([\s\S]*?)\n\s+NODE/);
+      expect(match).not.toBeNull();
+      execFileSync(process.execPath, ["-e", match![1]], { cwd: dir });
+      const normalized = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+      expect(normalized.engines.node).toBe(">=22.14.0 <23");
+      expect(normalized.packageManager).toBeUndefined();
+      expect(normalized.devEngines.packageManager.name).toBe("npm");
+      expect(normalized.devEngines.runtime.version).toBe(">=22.14.0");
+      expect(normalized.workspaces).toEqual(hasFunctions ? ["shared", "functions"] : ["shared"]);
+      expect(normalized.dependencies["@sample/shared"]).toBe("file:shared");
+      const cacheAfter = execFileSync("npm", ["config", "get", "cache"], { cwd: dir, env, encoding: "utf8" });
+      expect(cacheAfter.trim()).toBe(env.npm_config_cache);
+      const after = execFileSync("npm", ["run", "probe"], { cwd: dir, env, encoding: "utf8" });
+      expect(after).toContain("npm/");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

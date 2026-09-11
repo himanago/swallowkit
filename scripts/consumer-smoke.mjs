@@ -246,6 +246,34 @@ test('compiled shared model validates data through the installed workspace', () 
         protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'consumer-smoke', version: '1.0.0' },
       } })}\n`);
     });
+    if (manager === 'pnpm') {
+      // SWA/Oryx uses npm even when local development uses pnpm. Exercise the
+      // generated CI checkout conversion and rebuild without pnpm node_modules.
+      const swaCheckout = path.join(directory, 'swa-ci');
+      fs.cpSync(project, swaCheckout, {
+        recursive: true,
+        filter: source => !['node_modules', '.next', '.git'].includes(path.basename(source)),
+      });
+      const workflow = fs.readFileSync(path.join(swaCheckout, '.github/workflows/deploy-swa.yml'), 'utf8');
+      const normalization = workflow.match(/node <<'NODE'\n([\s\S]*?)\n\s+NODE/);
+      assert(normalization, 'SWA must normalize pnpm projects for npm/Oryx');
+      assert(!workflow.includes('cache: npm'), 'setup-node must not invoke npm before normalization');
+      assert(workflow.includes("app_build_command: 'npm run build'"));
+      const runtimeCommand = workflow.match(/node -e "const fs=require\('fs'\);const p=JSON.parse[^\n]+/);
+      assert(runtimeCommand, 'SWA must bound the Node runtime selected by Oryx');
+      await run('bash', ['-c', runtimeCommand[0]], swaCheckout);
+      await run('node', ['-e', normalization[1]], swaCheckout);
+      await run('npm', ['install', '--package-lock-only', '--ignore-scripts'], swaCheckout);
+      await run('npm', ['ci'], swaCheckout);
+      await run('npm', ['run', 'build'], swaCheckout);
+      // Oryx installs first, then invokes app_build_command. Never run npm ci here.
+      await run('npm', ['install'], swaCheckout);
+      const appBuildCommand = workflow.match(/app_build_command: '([^']+)'/)[1];
+      await run('bash', ['-c', appBuildCommand], swaCheckout);
+      const localManifest = JSON.parse(fs.readFileSync(path.join(project, 'package.json'), 'utf8'));
+      assert.equal(localManifest.devEngines.packageManager.name, 'pnpm', 'Local contract must remain pnpm');
+      assert(!fs.existsSync(path.join(project, 'package-lock.json')));
+    }
   }
   console.log(`PASS ${manager} ${major} ${backend}${bootstrapOnly ? ' bootstrap' : ''}`);
 } finally {
