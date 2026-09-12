@@ -89,18 +89,17 @@ function detectSchemaDrift(
   projectRoot: string,
   findings: DriftFinding[]
 ): void {
-  const bySchema = new Map<string, { schemaHash: string; sourceModel?: string; paths: string[] }>();
+  const byModel = new Map<string, ArtifactRecord[]>();
 
   for (const record of records) {
     if (!record.schemaHash || !record.sourceModel) continue;
-    const key = record.sourceModel;
-    const entry = bySchema.get(key) ?? { schemaHash: record.schemaHash, sourceModel: record.sourceModel, paths: [] };
-    entry.schemaHash = record.schemaHash;
-    entry.paths.push(record.path);
-    bySchema.set(key, entry);
+    if (record.ownership === "extension-point" || record.ownership === "user-owned") continue;
+    const modelRecords = byModel.get(record.sourceModel) ?? [];
+    modelRecords.push(record);
+    byModel.set(record.sourceModel, modelRecords);
   }
 
-  for (const [modelName, entry] of bySchema) {
+  for (const [modelName, modelRecords] of byModel) {
     // モデルファイルは shared/models/<kebab>.ts 規約
     const kebab = modelName
       .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
@@ -111,14 +110,16 @@ function detectSchemaDrift(
     if (currentSchemaHash === null) {
       continue; // モデルファイルが見つからない場合は manifest-drift 側で検出される
     }
-    if (currentSchemaHash !== entry.schemaHash) {
+    const staleRecords = modelRecords.filter((record) => record.schemaHash !== currentSchemaHash);
+    if (staleRecords.length > 0) {
+      const staleSchemaHashes = [...new Set(staleRecords.map((record) => record.schemaHash!))].sort();
       findings.push({
         kind: "schema-drift",
         severity: "warning",
-        message: `Model "${modelName}" changed after its artifacts were generated (${entry.paths.length} artifact(s) are stale).`,
+        message: `Model "${modelName}" changed after its artifacts were generated (${staleRecords.length} artifact(s) are stale).`,
         path: `shared/models/${kebab}.ts`,
         entity: modelName,
-        expected: entry.schemaHash,
+        expected: staleSchemaHashes.join(", "),
         actual: currentSchemaHash,
         repairAction: `Run "swallowkit machine plan scaffold ${kebab}" then apply to regenerate artifacts for ${modelName}.`,
       });

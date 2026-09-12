@@ -1137,7 +1137,7 @@ npx swallowkit verify [options]
 | --- | --- |
 | `structure` | Project structure conventions (same as `validate project`) |
 | `drift` | Detect divergence between generated artifacts and the current state |
-| `typecheck` | TypeScript type check (uses the `typecheck` script if present, otherwise `npx tsc --noEmit`) |
+| `typecheck` | TypeScript type check (uses the `typecheck` script if present, otherwise runs `tsc --noEmit` with the project's package manager) |
 
 Results are saved to `.swallowkit/state/last-verify.json`; use `swallowkit machine explain failure` to get failure details.
 

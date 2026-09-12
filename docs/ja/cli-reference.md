@@ -1258,7 +1258,7 @@ npx swallowkit verify [options]
 | --- | --- |
 | `structure` | プロジェクト構造規約（`validate project` と同等） |
 | `drift` | 生成物と現在状態の乖離検出 |
-| `typecheck` | TypeScript 型検査（`typecheck` script があればそれを、なければ `npx tsc --noEmit` を実行） |
+| `typecheck` | TypeScript 型検査（`typecheck` script があればそれを、なければプロジェクトの package manager で `tsc --noEmit` を実行） |
 
 結果は `.swallowkit/state/last-verify.json` に保存され、`swallowkit machine explain failure` で失敗の詳細を取得できます。
 

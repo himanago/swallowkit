@@ -233,15 +233,15 @@ function runTypecheckCheck(projectRoot: string): VerifyCheckResult {
   }
 
   const scripts = readPackageScripts(projectRoot);
+  const pm = detectFromProject(projectRoot);
   let command: string;
   let args: string[];
   if (typeof scripts.typecheck === "string") {
-    const pm = detectFromProject(projectRoot);
     command = getCommands(pm).name;
     args = ["run", "typecheck"];
   } else {
-    command = "npx";
-    args = ["tsc", "--noEmit"];
+    command = getCommands(pm).name;
+    args = pm === "pnpm" ? ["exec", "tsc", "--noEmit"] : ["exec", "tsc", "--", "--noEmit"];
   }
 
   return runCommandCheck(projectRoot, {

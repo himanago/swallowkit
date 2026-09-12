@@ -11,8 +11,10 @@ import * as os from "os";
 import * as path from "path";
 import * as childProcess from "child_process";
 import { runMachineCli } from "../machine";
+import { hashContent } from "../core/operations/file-session";
+import { detectDrift } from "../core/project/drift";
 import { inspectInfra } from "../core/project/infra";
-import { loadCustomVerifyChecks, compactVerifyResult, VerifyResult } from "../core/verify";
+import { loadCustomVerifyChecks, compactVerifyResult, runVerify, VerifyResult } from "../core/verify";
 import { buildAgentSkills, buildWorkflowDocs, writeAgentSkills, writeWorkflowDocs } from "../core/project/workflows";
 
 jest.mock("child_process", () => {
@@ -338,6 +340,110 @@ describe("agent loop phase 3/4", () => {
     const checks = loadCustomVerifyChecks(tempDir);
     expect(checks).toHaveLength(1);
     expect(checks[0]).toMatchObject({ id: "smoke-api", command: "node scripts/smoke.js" });
+  });
+
+  it.each<[string, string[]]>([
+    ["pnpm", ["exec", "tsc", "--noEmit"]],
+    ["npm", ["exec", "tsc", "--", "--noEmit"]],
+  ])("uses %s for the typecheck fallback", async (packageManager, expectedArgs) => {
+    writeFile(
+      path.join(tempDir, "package.json"),
+      JSON.stringify({
+        name: "sample-app",
+        devEngines: { packageManager: { name: packageManager, version: ">=11 <13", onFail: "error" } },
+      })
+    );
+    writeFile(path.join(tempDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { noEmit: true } }));
+    (childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>).mockReturnValue({ status: 0, stdout: "", stderr: "" });
+
+    const result = await runVerify(["typecheck"], tempDir);
+
+    expect(result.checks[0]).toMatchObject({
+      status: "pass",
+      evidence: { command: `${packageManager} ${expectedArgs.join(" ")}` },
+    });
+    expect(childProcess.spawnSync).toHaveBeenCalledWith(
+      packageManager,
+      expectedArgs,
+      expect.objectContaining({ cwd: tempDir })
+    );
+  });
+
+  it("uses the existing typecheck script when present", async () => {
+    writeFile(
+      path.join(tempDir, "package.json"),
+      JSON.stringify({
+        name: "sample-app",
+        scripts: { typecheck: "tsc --noEmit" },
+        devEngines: { packageManager: { name: "pnpm", version: ">=11 <13", onFail: "error" } },
+      })
+    );
+    writeFile(path.join(tempDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { noEmit: true } }));
+    (childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>).mockReturnValue({ status: 0, stdout: "", stderr: "" });
+
+    const result = await runVerify(["typecheck"], tempDir);
+
+    expect(result.checks[0]).toMatchObject({ status: "pass", evidence: { command: "pnpm run typecheck" } });
+    expect(childProcess.spawnSync).toHaveBeenCalledWith(
+      "pnpm",
+      ["run", "typecheck"],
+      expect.objectContaining({ cwd: tempDir })
+    );
+  });
+
+  it("counts only stale schema-generated artifacts in a mixed-hash ledger", async () => {
+    const modelSource = "export const Todo = {};\n";
+    const currentSchemaHash = hashContent(modelSource);
+    writeFile(path.join(tempDir, "shared", "models", "todo.ts"), modelSource);
+    writeFile(
+      path.join(tempDir, ".swallowkit", "artifacts.json"),
+      JSON.stringify({
+        version: 1,
+        swallowkitVersion: "1.0.0",
+        artifacts: [
+          {
+            path: "functions/src/todo.ts",
+            ownership: "managed",
+            generator: "scaffold",
+            generatorVersion: "1.0.0",
+            sourceModel: "Todo",
+            schemaHash: currentSchemaHash,
+            contentHash: "current-managed-content",
+            generatedAt: "2026-01-01T00:00:00.000Z",
+            lastOperation: "update",
+          },
+          {
+            path: "app/api/todo/route.ts",
+            ownership: "managed",
+            generator: "scaffold",
+            generatorVersion: "1.0.0",
+            sourceModel: "Todo",
+            schemaHash: "stale-managed-hash",
+            contentHash: "stale-managed-content",
+            generatedAt: "2026-01-01T00:00:00.000Z",
+            lastOperation: "update",
+          },
+          {
+            path: "functions/src/extensions/todo.ts",
+            ownership: "extension-point",
+            generator: "scaffold",
+            generatorVersion: "1.0.0",
+            sourceModel: "Todo",
+            schemaHash: "old-extension-hash",
+            contentHash: "extension-content",
+            generatedAt: "2026-01-01T00:00:00.000Z",
+            lastOperation: "update",
+          },
+        ],
+      })
+    );
+
+    const result = await detectDrift(tempDir);
+    const schemaFindings = result.findings.filter((finding) => finding.kind === "schema-drift");
+
+    expect(schemaFindings).toHaveLength(1);
+    expect(schemaFindings[0]).toMatchObject({ entity: "Todo", expected: "stale-managed-hash", actual: currentSchemaHash });
+    expect(schemaFindings[0].message).toContain("(1 artifact(s) are stale)");
   });
 
   it("compactVerifyResult suppresses info findings without changing the summary", () => {
