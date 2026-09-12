@@ -12,6 +12,7 @@
 import * as path from "path";
 import { getSwallowKitVersion } from "../../version";
 import { hashFileIfExists } from "../operations/file-session";
+import { parseModelFile } from "../scaffold/model-parser";
 import { ArtifactRecord, loadArtifactLedger } from "./artifacts";
 import { buildProjectManifest, readProjectManifest, SWALLOWKIT_MANIFEST_PATH } from "./manifest";
 
@@ -84,11 +85,11 @@ function detectArtifactDrift(
   }
 }
 
-function detectSchemaDrift(
+async function detectSchemaDrift(
   records: ArtifactRecord[],
   projectRoot: string,
   findings: DriftFinding[]
-): void {
+): Promise<void> {
   const byModel = new Map<string, ArtifactRecord[]>();
 
   for (const record of records) {
@@ -110,7 +111,10 @@ function detectSchemaDrift(
     if (currentSchemaHash === null) {
       continue; // モデルファイルが見つからない場合は manifest-drift 側で検出される
     }
-    const staleRecords = modelRecords.filter((record) => record.schemaHash !== currentSchemaHash);
+    const semanticSchemaHash = (await parseModelFile(modelPath)).semanticFingerprint;
+    const staleRecords = modelRecords.filter(
+      (record) => record.schemaHash !== semanticSchemaHash && record.schemaHash !== currentSchemaHash
+    );
     if (staleRecords.length > 0) {
       const staleSchemaHashes = [...new Set(staleRecords.map((record) => record.schemaHash!))].sort();
       findings.push({
@@ -120,7 +124,7 @@ function detectSchemaDrift(
         path: `shared/models/${kebab}.ts`,
         entity: modelName,
         expected: staleSchemaHashes.join(", "),
-        actual: currentSchemaHash,
+        actual: semanticSchemaHash,
         repairAction: `Run "swallowkit machine plan scaffold ${kebab}" then apply to regenerate artifacts for ${modelName}.`,
       });
     }
@@ -182,7 +186,7 @@ export async function detectDrift(projectRoot: string = process.cwd()): Promise<
     for (const record of ledger.artifacts) {
       detectArtifactDrift(record, projectRoot, findings);
     }
-    detectSchemaDrift(ledger.artifacts, projectRoot, findings);
+    await detectSchemaDrift(ledger.artifacts, projectRoot, findings);
     detectGeneratorDrift(ledger.artifacts, findings);
   } else {
     findings.push({

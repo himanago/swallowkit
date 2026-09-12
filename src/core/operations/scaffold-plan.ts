@@ -12,6 +12,7 @@ import { savePlanState } from "../project/state";
 import {
   ArtifactOwnership,
   FileOperationSession,
+  SchemaAnalysisSnapshot,
   hashFileIfExists,
   runWithFileSession,
 } from "./file-session";
@@ -52,6 +53,8 @@ export interface ScaffoldPlanData {
   swallowkitVersion: string;
   operations: ScaffoldPlanOperation[];
   warnings: string[];
+  diagnostics: string[];
+  schemaAnalysis: SchemaAnalysisSnapshot;
   conflicts: ScaffoldPlanOperation[];
   requiresApproval: boolean;
   /** project-relative path -> pre-plan content hash (null = did not exist). Used for stale-plan detection. */
@@ -112,6 +115,10 @@ export async function planScaffoldOperation(options: PlanScaffoldOptions): Promi
   const operations: ScaffoldPlanOperation[] = [];
   const fingerprints: Record<string, string | null> = { ...session.inputFingerprints };
   const warnings = [...session.warnings];
+  const schemaAnalysis = session.schemaAnalysis;
+  if (!schemaAnalysis) {
+    throw new Error("Scaffold completed without recording schema analysis metadata.");
+  }
 
   for (const op of session.operations) {
     fingerprints[op.path] = op.previousHash;
@@ -173,6 +180,7 @@ export async function planScaffoldOperation(options: PlanScaffoldOptions): Promi
         options: { functionsDir: options.functionsDir, apiDir: options.apiDir, apiOnly: options.apiOnly },
         operations: operations.map((op) => ({ path: op.path, action: op.action })),
         fingerprints,
+        schemaAnalysis,
       })
     )
     .digest("hex")
@@ -191,6 +199,8 @@ export async function planScaffoldOperation(options: PlanScaffoldOptions): Promi
     swallowkitVersion: getSwallowKitVersion(),
     operations,
     warnings,
+    diagnostics: schemaAnalysis.warnings.map((warning) => `warning:${warning}`),
+    schemaAnalysis,
     conflicts,
     requiresApproval: conflicts.length > 0,
     fingerprints,

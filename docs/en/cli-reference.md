@@ -89,6 +89,9 @@ npx swallowkit machine explain failure --check typecheck
 - success and failure are both structured (the `status` field reports `complete` / `in-progress` / `blocked` / `requires-human` / `failed`)
 - `generate model` requires an explicit overwrite policy (`always` or `never`)
 - generated artifacts are tracked in the `.swallowkit/artifacts.json` ledger (Git-managed)
+- scaffold analyzes supported Zod object/enum/literal expressions with the TypeScript AST before considering dynamic evaluation; it never applies lossy regex metadata
+- scaffold plans include the parser mode, canonical model metadata, semantic fingerprint, and diagnostics; apply is blocked with `schema-analysis-mismatch` if re-analysis differs
+- unavailable schema or verification child processes return `schema-evaluation-unavailable` or `verification-command-unavailable` with `status: blocked` and diagnostics
 
 See the [AI / MCP Guide](./ai-mcp-guide.md) for architecture details and response examples.
 

@@ -75,6 +75,23 @@ export async function applyScaffoldOperation(options: ApplyScaffoldOptions): Pro
   // 常に最新状態で collect し、競合を検出する(plan 指定時も現況を再確認)
   const currentPlan = await planScaffoldOperation(effectiveOptions);
 
+  if (basePlan &&
+      (!basePlan.schemaAnalysis ||
+       basePlan.schemaAnalysis.parserMode !== currentPlan.schemaAnalysis.parserMode ||
+       basePlan.schemaAnalysis.semanticFingerprint !== currentPlan.schemaAnalysis.semanticFingerprint)) {
+    throw new MachineCommandError(
+      "schema-analysis-mismatch",
+      `Plan "${basePlan.planId}" used different schema analysis metadata; no artifacts were written.`,
+      {
+        planId: basePlan.planId,
+        expected: basePlan.schemaAnalysis,
+        actual: currentPlan.schemaAnalysis,
+        nextAction: "Re-run plan scaffold in the same environment, then apply the new plan.",
+      },
+      "blocked"
+    );
+  }
+
   if (currentPlan.requiresApproval && !options.approve) {
     // 承認待ちの plan は残し、参照できるようにする
     throw new MachineCommandError(
@@ -88,7 +105,10 @@ export async function applyScaffoldOperation(options: ApplyScaffoldOptions): Pro
     );
   }
 
-  const result = await runMachineScaffoldOperation(effectiveOptions);
+  const result = await runMachineScaffoldOperation({
+    ...effectiveOptions,
+    expectedSchemaAnalysis: currentPlan.schemaAnalysis,
+  });
 
   // 適用済み plan の状態を破棄
   deletePlanState(currentPlan.planId, projectRoot);

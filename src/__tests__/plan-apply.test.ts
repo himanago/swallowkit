@@ -9,6 +9,7 @@ jest.mock("child_process", () => {
   const actual = jest.requireActual<typeof import("child_process")>("child_process");
   return {
     ...actual,
+    execFileSync: jest.fn(actual.execFileSync),
     spawn: jest.fn(),
     spawnSync: jest.fn(),
   };
@@ -143,6 +144,8 @@ describe("plan / apply / drift / verify machine commands", () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-agent-"));
     process.chdir(tempDir);
+    const actual = jest.requireActual<typeof import("child_process")>("child_process");
+    (childProcess.execFileSync as unknown as ReturnType<typeof jest.fn>).mockImplementation(actual.execFileSync);
   });
 
   afterEach(() => {
@@ -161,6 +164,16 @@ describe("plan / apply / drift / verify machine commands", () => {
     expect(response.status).toBe("complete");
     expect(response.data.planId).toMatch(/^[0-9a-f]{12}$/);
     expect(response.data.requiresApproval).toBe(false);
+    expect(response.data.schemaAnalysis).toMatchObject({
+      parserMode: "static-ast",
+      semanticFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+      canonicalModel: expect.objectContaining({
+        name: "Todo",
+        fields: expect.arrayContaining([expect.objectContaining({ name: "id", type: "string" })]),
+      }),
+      warnings: [],
+    });
+    expect(response.data.diagnostics).toEqual([]);
     expect(response.data.operations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ path: "app/api/todo/route.ts", action: "create", ownership: "managed" }),
@@ -309,6 +322,55 @@ describe("plan / apply / drift / verify machine commands", () => {
     }
   );
 
+  it("preserves enum and literal semantics in UI, OpenAPI, and C# artifacts", async () => {
+    createNativeBackendFixture(tempDir, "csharp");
+    writeFile(
+      path.join(tempDir, "shared", "models", "learning-question.ts"),
+      `import { z } from 'zod/v4';
+export const LearningQuestion = z.object({
+  id: z.string(),
+  kind: z.enum(['grammar', 'vocabulary']),
+  level: z.literal('5'),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+export type LearningQuestion = z.infer<typeof LearningQuestion>;
+`
+    );
+    const restoreCodegenMocks = mockSuccessfulNativeCodegen();
+
+    try {
+      const applied = await runMachine(machineArgs("apply", "scaffold", "learning-question"));
+      expect(applied.response).toEqual(expect.objectContaining({ ok: true, status: "complete" }));
+
+      const form = fs.readFileSync(
+        path.join(tempDir, "app", "learning-question", "_components", "LearningQuestionForm.tsx"),
+        "utf-8"
+      );
+      expect(form).toContain('<select');
+      expect(form).toContain('<option value="grammar">grammar</option>');
+      expect(form).toContain('<option value="5">5</option>');
+
+      const openApi = JSON.parse(
+        fs.readFileSync(path.join(tempDir, "functions", "openapi", "learning-question.openapi.json"), "utf-8")
+      );
+      const properties = openApi.components.schemas.LearningQuestion.properties;
+      expect(properties.kind.enum).toEqual(["grammar", "vocabulary"]);
+      expect(properties.level.enum).toEqual(["5"]);
+
+      const csharp = fs.readFileSync(
+        path.join(tempDir, "functions", "generated", "csharp-models", "src", "SwallowKitBackendModels", "Model", "LearningQuestion.cs"),
+        "utf-8"
+      );
+      expect(csharp).toContain("public enum KindEnum");
+      expect(csharp).toContain("public enum LevelEnum");
+      expect(csharp).not.toContain("Dictionary<string, object> Kind");
+      expect(csharp).not.toContain("Dictionary<string, object> Level");
+    } finally {
+      restoreCodegenMocks();
+    }
+  });
+
   it("leaves the project untouched when the native toolchain validation fails on apply", async () => {
     createNativeBackendFixture(tempDir, "csharp");
     const spawnSyncMock = childProcess.spawnSync as unknown as any;
@@ -354,6 +416,96 @@ describe("plan / apply / drift / verify machine commands", () => {
     expect(response.error.details.changedFiles).toContain("shared/models/todo.ts");
     // Nothing was applied
     expect(fs.existsSync(path.join(tempDir, "app"))).toBe(false);
+  });
+
+  it("blocks planning without writing artifacts when dynamic schema evaluation cannot start", async () => {
+    createProjectFixture(tempDir);
+    writeFile(
+      path.join(tempDir, "shared", "models", "computed.ts"),
+      `import { z } from 'zod/v4';
+const field = z.string();
+export const Computed = z.object({ id: field.transform(value => value) });
+`
+    );
+    const unavailable = Object.assign(new Error("spawn EPERM"), { code: "EPERM" });
+    (childProcess.execFileSync as unknown as ReturnType<typeof jest.fn>).mockImplementation(() => { throw unavailable; });
+
+    const { response, exitCode } = await runMachine(machineArgs("plan", "scaffold", "computed", "--api-only"));
+
+    expect(exitCode).toBe(1);
+    expect(response).toMatchObject({
+      ok: false,
+      status: "blocked",
+      error: {
+        code: "schema-evaluation-unavailable",
+        details: expect.objectContaining({ command: process.execPath, reason: "EPERM" }),
+      },
+    });
+    expect(fs.existsSync(path.join(tempDir, "app"))).toBe(false);
+    expect(fs.existsSync(path.join(tempDir, ".swallowkit", "artifacts.json"))).toBe(false);
+  });
+
+  it("blocks apply when saved parser metadata differs from current analysis", async () => {
+    createProjectFixture(tempDir);
+    const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only"));
+    const planPath = path.join(tempDir, ".swallowkit", "state", "plans", `${plan.response.data.planId}.json`);
+    const savedPlan = JSON.parse(fs.readFileSync(planPath, "utf-8"));
+    savedPlan.schemaAnalysis.parserMode = "dynamic";
+    fs.writeFileSync(planPath, JSON.stringify(savedPlan, null, 2));
+
+    const { response, exitCode } = await runMachine(
+      machineArgs("apply", "scaffold", "--plan", plan.response.data.planId)
+    );
+
+    expect(exitCode).toBe(1);
+    expect(response).toMatchObject({ ok: false, status: "blocked", error: { code: "schema-analysis-mismatch" } });
+    expect(fs.existsSync(path.join(tempDir, "app"))).toBe(false);
+    expect(fs.existsSync(path.join(tempDir, ".swallowkit", "artifacts.json"))).toBe(false);
+  });
+
+  it("blocks apply without writes when dynamic evaluation becomes unavailable after planning", async () => {
+    createProjectFixture(tempDir);
+    writeFile(
+      path.join(tempDir, "shared", "models", "computed.ts"),
+      `import { z } from 'zod/v4';
+const baseFields = { id: z.string(), kind: z.enum(['grammar', 'vocabulary']) };
+export const Computed = z.object({ ...baseFields, level: z.literal('5') });
+`
+    );
+    const plan = await runMachine(machineArgs("plan", "scaffold", "computed", "--api-only"));
+    expect(plan.response).toMatchObject({
+      ok: true,
+      data: { schemaAnalysis: { parserMode: "dynamic" } },
+    });
+
+    const unavailable = Object.assign(new Error("spawn EPERM"), { code: "EPERM" });
+    (childProcess.execFileSync as unknown as ReturnType<typeof jest.fn>).mockImplementation(() => { throw unavailable; });
+    const applied = await runMachine(machineArgs("apply", "scaffold", "--plan", plan.response.data.planId));
+
+    expect(applied.exitCode).toBe(1);
+    expect(applied.response).toMatchObject({
+      ok: false,
+      status: "blocked",
+      error: { code: "schema-evaluation-unavailable" },
+    });
+    expect(fs.existsSync(path.join(tempDir, "app"))).toBe(false);
+    expect(fs.existsSync(path.join(tempDir, ".swallowkit", "artifacts.json"))).toBe(false);
+  });
+
+  it("does not report schema drift for an unrelated exported response contract", async () => {
+    createProjectFixture(tempDir);
+    await runMachine(machineArgs("apply", "scaffold", "todo", "--api-only"));
+    fs.appendFileSync(
+      path.join(tempDir, "shared", "models", "todo.ts"),
+      "\nexport const TodoRevealFeedback = z.object({ message: z.string() });\n"
+    );
+
+    const drift = await runMachine(machineArgs("inspect", "drift"));
+
+    expect(drift.response.ok).toBe(true);
+    expect(
+      drift.response.data.findings.filter((finding: { kind: string }) => finding.kind === "schema-drift")
+    ).toEqual([]);
   });
 
   it("rejects a native backend plan when a nested model changes after planning", async () => {

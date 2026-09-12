@@ -8,6 +8,14 @@ import * as path from "path";
 import * as ts from "typescript";
 
 import { ModelConnectorConfig, ModelAuthPolicy } from "../../types";
+import { MachineCommandError } from "../../machine/errors";
+import { hashContent } from "../operations/file-session";
+
+export type SchemaParserMode = "static-ast" | "dynamic";
+
+export interface ModelParserOptions {
+  executeNode?: typeof execFileSync;
+}
 
 export interface ModelInfo {
   name: string; // モデル名（例: "Todo"）
@@ -22,6 +30,9 @@ export interface ModelInfo {
   connectorConfig?: ModelConnectorConfig; // コネクタメタデータ（外部データソース用）
   authPolicy?: ModelAuthPolicy; // 認可ポリシー（ロールベースアクセス制御用）
   partitionKey: string; // Cosmos DB パーティションキーパス（デフォルト: "/id"）
+  parserMode: SchemaParserMode;
+  parserWarnings: string[];
+  semanticFingerprint: string;
 }
 
 export interface FieldInfo {
@@ -55,7 +66,7 @@ export interface NestedSchemaRef {
 /**
  * モデルファイルを解析して ModelInfo を返す
  */
-export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
+export async function parseModelFile(modelPath: string, options: ModelParserOptions = {}): Promise<ModelInfo> {
   if (!fs.existsSync(modelPath)) {
     throw new Error(`Model file not found: ${modelPath}`);
   }
@@ -100,7 +111,8 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
   const nestedSchemaRefs = detectNestedSchemaRefs(modelPath, content, schemaName);
   
   // フィールド情報を抽出（動的インポートを使用）
-  const fields = await extractFieldsFromSchema(modelPath, schemaName);
+  const parsedSchema = await extractFieldsFromSchema(modelPath, schemaName, options.executeNode ?? execFileSync);
+  const fields = parsedSchema.fields;
   
   // ネストスキーマ情報をフィールドにマージ
   mergeNestedSchemaInfo(fields, nestedSchemaRefs);
@@ -121,7 +133,7 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
     }
   }
   
-  return {
+  const modelInfo: ModelInfo = {
     name: modelName,
     displayName,
     schemaName,
@@ -134,7 +146,25 @@ export async function parseModelFile(modelPath: string): Promise<ModelInfo> {
     partitionKey,
     ...(connectorConfig ? { connectorConfig } : {}),
     ...(authPolicy ? { authPolicy } : {}),
+    parserMode: parsedSchema.mode,
+    parserWarnings: parsedSchema.warnings,
+    semanticFingerprint: "",
   };
+  modelInfo.semanticFingerprint = createModelSemanticFingerprint(modelInfo);
+  return modelInfo;
+}
+
+export function createModelSemanticFingerprint(model: Omit<ModelInfo, "semanticFingerprint" | "filePath">): string {
+  return hashContent(JSON.stringify({
+    name: model.name,
+    displayName: model.displayName,
+    schemaName: model.schemaName,
+    fields: model.fields,
+    nestedSchemaRefs: model.nestedSchemaRefs,
+    partitionKey: model.partitionKey,
+    connectorConfig: model.connectorConfig,
+    authPolicy: model.authPolicy,
+  }));
 }
 
 /**
@@ -360,7 +390,128 @@ function compileModelModule(modelPath: string, directory: string, modules = new 
 /**
  * Zodスキーマから動的にフィールド情報を抽出
  */
-async function extractFieldsFromSchema(modelPath: string, schemaName: string): Promise<FieldInfo[]> {
+interface ParsedSchemaFields {
+  fields: FieldInfo[];
+  mode: SchemaParserMode;
+  warnings: string[];
+}
+
+function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] | null {
+  const source = ts.createSourceFile(modelPath, fs.readFileSync(modelPath, "utf-8"), ts.ScriptTarget.Latest, true);
+  const constants = new Map<string, ts.Expression>();
+  const importedObjectSchemas = new Set<string>();
+  for (const statement of source.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier) &&
+        statement.moduleSpecifier.text.startsWith(".") && statement.importClause?.namedBindings &&
+        ts.isNamedImports(statement.importClause.namedBindings)) {
+      const base = path.resolve(path.dirname(modelPath), statement.moduleSpecifier.text);
+      const targetPath = [base, `${base}.ts`, path.join(base, "index.ts")].find(candidate => fs.existsSync(candidate));
+      if (targetPath) {
+        const targetContent = fs.readFileSync(targetPath, "utf-8");
+        for (const element of statement.importClause.namedBindings.elements) {
+          const importedName = element.propertyName?.text ?? element.name.text;
+          if (new RegExp(`(?:export\\s+)?const\\s+${importedName}\\s*=\\s*z\\.object\\s*\\(`).test(targetContent)) {
+            importedObjectSchemas.add(element.name.text);
+          }
+        }
+      }
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.initializer) constants.set(declaration.name.text, declaration.initializer);
+    }
+  }
+
+  const schema = constants.get(schemaName);
+  if (!schema || !ts.isCallExpression(schema) || !ts.isPropertyAccessExpression(schema.expression) ||
+      schema.expression.name.text !== "object" || schema.arguments.length === 0 || !ts.isObjectLiteralExpression(schema.arguments[0])) {
+    return null;
+  }
+
+  const literalValues = (expression: ts.Expression): string[] | null => {
+    let value = expression;
+    if (ts.isAsExpression(value)) value = value.expression;
+    if (ts.isIdentifier(value)) {
+      const resolved = constants.get(value.text);
+      return resolved ? literalValues(resolved) : null;
+    }
+    if (!ts.isArrayLiteralExpression(value)) return null;
+    const values: string[] = [];
+    for (const element of value.elements) {
+      if (ts.isStringLiteral(element) || ts.isNumericLiteral(element)) values.push(element.text);
+      else return null;
+    }
+    return values;
+  };
+
+  const parseExpression = (expression: ts.Expression): Omit<FieldInfo, "name"> | null => {
+    if (ts.isIdentifier(expression)) {
+      const resolved = constants.get(expression.text);
+      if (resolved) return parseExpression(resolved);
+      return importedObjectSchemas.has(expression.text)
+        ? { type: "object", isOptional: false, isNullable: false, isArray: false }
+        : null;
+    }
+    if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression)) return null;
+    const method = expression.expression.name.text;
+    const receiver = expression.expression.expression;
+    const wrappers = new Set(["optional", "nullable", "default", "min", "max", "int", "positive", "negative", "nonnegative", "nonpositive", "regex", "email", "url", "uuid", "trim"]);
+    if (wrappers.has(method)) {
+      const inner = parseExpression(receiver);
+      if (!inner) return null;
+      if (method === "optional" || method === "default") inner.isOptional = true;
+      if (method === "nullable") inner.isNullable = true;
+      return inner;
+    }
+    if (!ts.isIdentifier(receiver) || receiver.text !== "z") return null;
+    if (["string", "number", "boolean", "date"].includes(method)) {
+      return { type: method, isOptional: false, isNullable: false, isArray: false };
+    }
+    if (method === "object") return { type: "object", isOptional: false, isNullable: false, isArray: false };
+    if (method === "array" && expression.arguments[0]) {
+      const element = parseExpression(expression.arguments[0]);
+      return element ? { ...element, isArray: true } : null;
+    }
+    if (method === "enum" && expression.arguments[0]) {
+      const enumValues = literalValues(expression.arguments[0]);
+      return enumValues ? { type: "string", isOptional: false, isNullable: false, isArray: false, enumValues } : null;
+    }
+    if (method === "literal" && expression.arguments[0]) {
+      const value = expression.arguments[0];
+      if (ts.isStringLiteral(value) || ts.isNumericLiteral(value)) {
+        return { type: ts.isNumericLiteral(value) ? "number" : "string", isOptional: false, isNullable: false, isArray: false, enumValues: [value.text] };
+      }
+      if (value.kind === ts.SyntaxKind.TrueKeyword || value.kind === ts.SyntaxKind.FalseKeyword) {
+        return { type: "boolean", isOptional: false, isNullable: false, isArray: false, enumValues: [value.kind === ts.SyntaxKind.TrueKeyword ? "true" : "false"] };
+      }
+    }
+    return null;
+  };
+
+  const fields: FieldInfo[] = [];
+  for (const property of schema.arguments[0].properties) {
+    if (!ts.isPropertyAssignment(property)) return null;
+    const name = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? property.name.text : null;
+    if (!name) return null;
+    const parsed = parseExpression(property.initializer);
+    if (!parsed) return null;
+    const isForeignKey = name.endsWith("Id") && name.length > 2 && parsed.type === "string";
+    fields.push({
+      name,
+      ...parsed,
+      ...(isForeignKey ? { isForeignKey: true, referencedModel: name.slice(0, -2).replace(/^./, char => char.toUpperCase()) } : {}),
+    });
+  }
+  return fields;
+}
+
+async function extractFieldsFromSchema(
+  modelPath: string,
+  schemaName: string,
+  executeNode: typeof execFileSync
+): Promise<ParsedSchemaFields> {
+  const staticFields = staticParseFields(modelPath, schemaName);
+  if (staticFields) return { fields: staticFields, mode: "static-ast", warnings: [] };
   const fields: FieldInfo[] = [];
   let tempDirectory: string | undefined;
   
@@ -389,7 +540,7 @@ if (isObject) {
   const shape = typeof schema._def.shape === 'function' ? schema._def.shape() : schema._def.shape;
   const fields = Object.keys(shape).map(key => {
     const field = shape[key];
-    let type = 'string';
+    let type = undefined;
     let isOptional = false;
     let isNullable = false;
     let isArray = false;
@@ -457,6 +608,19 @@ if (isObject) {
           ? fieldDef._def.entries
           : Object.values(fieldDef._def.entries);
       }
+    } else if (typeName === 'ZodLiteral') {
+      const rawLiteralValues = fieldDef.values || fieldDef._def.values ||
+        (fieldDef._def.value !== undefined ? [fieldDef._def.value] : undefined);
+      const literalValues = rawLiteralValues instanceof Set ? Array.from(rawLiteralValues) : rawLiteralValues;
+      if (Array.isArray(literalValues) && literalValues.length > 0) {
+        const literalValue = literalValues[0];
+        type = typeof literalValue === 'number' ? 'number' : typeof literalValue === 'boolean' ? 'boolean' : 'string';
+        enumValues = literalValues.map(value => String(value));
+      }
+    }
+
+    if (!type || ((typeName === 'ZodEnum' || typeName === 'ZodNativeEnum') && (!enumValues || enumValues.length === 0))) {
+      throw new Error('Unsupported or ambiguous Zod field "' + key + '" (' + (typeName || 'unknown') + ')');
     }
     
     // 外部キー検出: フィールド名が <ModelName>Id のパターンの場合
@@ -473,13 +637,15 @@ if (isObject) {
   });
   
   console.log(JSON.stringify(fields));
+} else {
+  throw new Error('Exported schema is not a Zod object');
 }
 `;
     
     fs.writeFileSync(tempScript, scriptCode, 'utf8');
     
     try {
-      const result = execFileSync(process.execPath, [tempScript], {
+      const result = executeNode(process.execPath, [tempScript], {
         encoding: 'utf8',
         cwd: projectRoot,
       });
@@ -499,71 +665,37 @@ if (isObject) {
       }
     }
   } catch (error) {
-    console.warn('Failed to use dynamic import, falling back to regex parsing');
-    console.warn('Error:', error);
-    return extractFieldsWithRegex(modelPath, schemaName);
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError.code === "EPERM" || nodeError.code === "EACCES" || nodeError.code === "ENOENT") {
+      throw new MachineCommandError(
+        "schema-evaluation-unavailable",
+        `Schema evaluation could not start: ${nodeError.message}`,
+        {
+          command: process.execPath,
+          reason: nodeError.code,
+          modelPath,
+          diagnostics: ["Dynamic schema evaluation requires permission to start a Node.js child process."],
+          nextAction: "Re-run in an environment that permits normal Node.js child process execution.",
+        },
+        "blocked"
+      );
+    }
+    throw new MachineCommandError(
+      "schema-analysis-unsupported",
+      `The model could not be analyzed safely without losing schema semantics: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        command: process.execPath,
+        modelPath,
+        diagnostics: ["Lossy regex parsing was not used."],
+        nextAction: "Use supported static Zod expressions or re-run where dynamic schema evaluation succeeds.",
+      },
+      "blocked"
+    );
   } finally {
     if (tempDirectory) fs.rmSync(tempDirectory, { recursive: true, force: true });
   }
   
-  return fields;
-}
-
-/**
- * 正規表現でフィールド情報を抽出（フォールバック用）
- */
-function extractFieldsWithRegex(modelPath: string, schemaName: string): FieldInfo[] {
-  const fields: FieldInfo[] = [];
-  const content = fs.readFileSync(modelPath, "utf-8");
-  
-  // z.object({ ... }) の内容を抽出（ネストした括弧に対応）
-  const objectContent = extractObjectContent(content, schemaName);
-  
-  if (!objectContent) {
-    return fields;
-  }
-  
-  // 各フィールドを解析
-  const fieldRegex = /(\w+)\s*:\s*(z\.\w+)/g;
-  let match;
-  
-  while ((match = fieldRegex.exec(objectContent)) !== null) {
-    const fieldName = match[1];
-    const zodDef = match[2];
-    const zodType = zodDef.split('.')[1];
-    
-    const fieldStart = match.index;
-    const fieldEnd = objectContent.indexOf(',', fieldStart);
-    const fieldDef = fieldEnd > -1 
-      ? objectContent.substring(fieldStart, fieldEnd) 
-      : objectContent.substring(fieldStart);
-    
-    fields.push({
-      name: fieldName,
-      type: mapZodTypeToTs(zodType),
-      isOptional: fieldDef.includes(".optional()"),
-      isNullable: fieldDef.includes(".nullable()"),
-      isArray: fieldDef.includes(".array()"),
-    });
-  }
-  
-  return fields;
-}
-
-/**
- * Zod 型を TypeScript 型にマッピング
- */
-function mapZodTypeToTs(zodType: string): string {
-  const typeMap: Record<string, string> = {
-    string: "string",
-    number: "number",
-    boolean: "boolean",
-    date: "Date",
-    object: "object",
-    array: "array",
-  };
-  
-  return typeMap[zodType] || "any";
+  return { fields, mode: "dynamic", warnings: [] };
 }
 
 /**

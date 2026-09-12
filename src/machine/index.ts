@@ -548,13 +548,27 @@ function createMachineProgram(): Command {
         "verify-project",
         async () => {
           const result = await runVerify(options.checks ? options.checks.split(",") : undefined);
+          const unavailable = result.checks.find(
+            (check) => check.evidence.errorCode === "verification-command-unavailable"
+          );
+          if (unavailable) {
+            throw new MachineCommandError(
+              "verification-command-unavailable",
+              `Verification could not start "${unavailable.evidence.command ?? unavailable.id}" in this environment.`,
+              {
+                check: unavailable.id,
+                command: unavailable.evidence.command,
+                diagnostics: unavailable.evidence.diagnostics ?? unavailable.evidence.logTail,
+                nextAction: "Re-run verification in an environment that permits normal child process execution.",
+              },
+              "blocked"
+            );
+          }
           return options.compact ? compactVerifyResult(result) : result;
         },
         (result) => ({
-          status: result.summary.done ? "complete" : "in-progress",
-          nextActions: result.summary.done
-            ? []
-            : [
+          status: result.summary.done ? "complete" : "failed",
+          nextActions: result.summary.done ? [] : [
                 {
                   command: "swallowkit machine explain failure",
                   description: "Get evidence and suggested actions for the failed checks.",

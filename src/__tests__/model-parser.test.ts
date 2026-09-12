@@ -139,4 +139,94 @@ export const couponSchema = z.object({
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("statically preserves enum and literal metadata without starting Node", async () => {
+    const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-model-parser-"));
+    const modelPath = path.join(tempDir, "learning-question.ts");
+    const executeNode = jest.fn(() => { throw new Error("static parser unexpectedly started Node"); });
+    try {
+      fs.writeFileSync(modelPath, `import { z } from 'zod/v4';
+const kinds = ['grammar', 'vocabulary'] as const;
+export const LearningQuestion = z.object({
+  id: z.string(), kind: z.enum(kinds), level: z.literal('5'),
+  score: z.number().int().positive().max(100).optional(),
+  tags: z.array(z.string()).default([]), publishedAt: z.date().nullable(),
+});
+`);
+
+      const model = await parseModelFile(modelPath, { executeNode });
+
+      expect(model.parserMode).toBe("static-ast");
+      expect(executeNode).not.toHaveBeenCalled();
+      expect(model.fields).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "kind", type: "string", enumValues: ["grammar", "vocabulary"] }),
+        expect.objectContaining({ name: "level", type: "string", enumValues: ["5"] }),
+        expect.objectContaining({ name: "score", type: "number", isOptional: true }),
+        expect.objectContaining({ name: "tags", type: "string", isArray: true, isOptional: true }),
+        expect.objectContaining({ name: "publishedAt", type: "date", isNullable: true }),
+      ]));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores unrelated exported response schemas in the semantic fingerprint", async () => {
+    const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-model-parser-"));
+    const modelPath = path.join(tempDir, "learning-question.ts");
+    const modelSource = `import { z } from 'zod/v4';
+export const LearningQuestion = z.object({ id: z.string(), kind: z.enum(['grammar', 'vocabulary']) });
+`;
+    try {
+      fs.writeFileSync(modelPath, modelSource);
+      const before = await parseModelFile(modelPath);
+      fs.writeFileSync(modelPath, `${modelSource}\nexport const LearningQuestionRevealFeedback = z.object({ message: z.string() });\n`);
+      const after = await parseModelFile(modelPath);
+
+      expect(after.semanticFingerprint).toBe(before.semanticFingerprint);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks when dynamic schema evaluation cannot start", async () => {
+    const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-model-parser-"));
+    const modelPath = path.join(tempDir, "computed.ts");
+    fs.writeFileSync(path.join(tempDir, "package.json"), JSON.stringify({ name: "fixture" }));
+    fs.writeFileSync(modelPath, `import { z } from 'zod/v4';
+const field = z.string();
+export const Computed = z.object({ id: field.transform(value => value) });
+`);
+    const unavailable = Object.assign(new Error("spawn EPERM"), { code: "EPERM" });
+    const executeNode = jest.fn(() => { throw unavailable; });
+
+    try {
+      await expect(parseModelFile(modelPath, { executeNode })).rejects.toMatchObject({
+        code: "schema-evaluation-unavailable",
+        status: "blocked",
+        details: expect.objectContaining({ command: process.execPath, reason: "EPERM" }),
+      });
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks unsupported dynamic fields instead of returning lossy metadata", async () => {
+    const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-model-parser-"));
+    const modelPath = path.join(tempDir, "lossy.ts");
+    fs.writeFileSync(path.join(tempDir, "package.json"), JSON.stringify({ name: "fixture" }));
+    fs.writeFileSync(modelPath, `import { z } from 'zod/v4';
+const baseFields = { id: z.string() };
+export const Lossy = z.object({ ...baseFields, ambiguous: z.union([z.string(), z.number()]) });
+`);
+
+    try {
+      await expect(parseModelFile(modelPath)).rejects.toMatchObject({
+        code: "schema-analysis-unsupported",
+        status: "blocked",
+        details: expect.objectContaining({ diagnostics: ["Lossy regex parsing was not used."] }),
+      });
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });

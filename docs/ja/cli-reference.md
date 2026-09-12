@@ -89,6 +89,9 @@ npx swallowkit machine explain failure --check typecheck
 - 成功 / 失敗ともに構造化出力（`status` フィールドで `complete` / `in-progress` / `blocked` / `requires-human` / `failed` を返す）
 - `generate model` は overwrite policy（`always` または `never`）を明示する
 - 生成物は `.swallowkit/artifacts.json`（Git 管理対象）に台帳として記録される
+- scaffold は対応する Zod object / enum / literal を TypeScript AST で先に解析し、情報欠落を伴う regex metadata を apply しない
+- scaffold plan は parser mode、canonical model metadata、semantic fingerprint、diagnostics を保持し、apply 時の再解析が異なる場合は `schema-analysis-mismatch` で blocked になる
+- schema / verify の子プロセスを起動できない場合は、diagnostics 付きの `schema-evaluation-unavailable` / `verification-command-unavailable` と `status: blocked` を返す
 
 アーキテクチャやレスポンス例の詳細は [AI / MCP ガイド](./ai-mcp-guide.md) を参照してください。
 

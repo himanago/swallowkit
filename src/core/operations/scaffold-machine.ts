@@ -1,4 +1,5 @@
 import { scaffoldCommand } from "../../cli/commands/scaffold";
+import { SchemaAnalysisSnapshot } from "./file-session";
 import {
   captureConsoleMessagesWithError,
   deriveCapturedErrorMessage,
@@ -12,6 +13,7 @@ export interface MachineScaffoldOperationOptions {
   functionsDir?: string;
   apiDir?: string;
   apiOnly?: boolean;
+  expectedSchemaAnalysis?: SchemaAnalysisSnapshot;
 }
 
 export interface MachineScaffoldOperationResult {

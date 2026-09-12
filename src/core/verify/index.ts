@@ -31,6 +31,8 @@ export interface VerifyCheckEvidence {
   logTail?: string[];
   /** --compact で抑制された info-severity findings の件数。 */
   suppressedInfoFindings?: number;
+  errorCode?: "verification-command-unavailable";
+  diagnostics?: string[];
 }
 
 export interface VerifyCheckResult {
@@ -158,8 +160,13 @@ function runCommandCheck(projectRoot: string, spec: CommandCheckSpec): VerifyChe
         status: "error",
         durationMs: Date.now() - startedAt,
         fixable: false,
-        evidence: { command: commandLabel, logTail: [result.error.message] },
-        suggestedActions: [`Ensure "${commandLabel}" can run in this project.`],
+        evidence: {
+          command: commandLabel,
+          logTail: [result.error.message],
+          errorCode: "verification-command-unavailable",
+          diagnostics: [`Unable to start the verification command: ${result.error.message}`],
+        },
+        suggestedActions: [`Re-run "${commandLabel}" in an environment that permits child process execution.`],
       };
     }
 
@@ -183,8 +190,13 @@ function runCommandCheck(projectRoot: string, spec: CommandCheckSpec): VerifyChe
       status: "error",
       durationMs: Date.now() - startedAt,
       fixable: false,
-      evidence: { command: commandLabel, logTail: [error instanceof Error ? error.message : String(error)] },
-      suggestedActions: [],
+      evidence: {
+        command: commandLabel,
+        logTail: [error instanceof Error ? error.message : String(error)],
+        errorCode: "verification-command-unavailable",
+        diagnostics: ["The verification command could not be started in this environment."],
+      },
+      suggestedActions: [`Re-run "${commandLabel}" in an environment that permits child process execution.`],
     };
   }
 }
@@ -225,10 +237,17 @@ function runTypecheckCheck(projectRoot: string): VerifyCheckResult {
       status: "fail",
       durationMs: Date.now() - startedAt,
       fixable: true,
-      evidence: { command: sharedBuild.command, logTail: sharedBuild.logTail },
-      suggestedActions: [
-        "Fix the shared package build errors first; typecheck resolves the shared package from its built dist/.",
-      ],
+      evidence: {
+        command: sharedBuild.command,
+        logTail: sharedBuild.logTail,
+        ...(sharedBuild.unavailable ? {
+          errorCode: "verification-command-unavailable" as const,
+          diagnostics: ["The shared package build command could not be started in this environment."],
+        } : {}),
+      },
+      suggestedActions: sharedBuild.unavailable
+        ? ["Re-run verification in an environment that permits child process execution."]
+        : ["Fix the shared package build errors first; typecheck resolves the shared package from its built dist/."],
     };
   }
 
@@ -264,6 +283,7 @@ interface SharedBuildOutcome {
   ok: boolean;
   command?: string;
   logTail?: string[];
+  unavailable?: boolean;
 }
 
 /** shared/package.json に build script があれば実行する (なければ no-op)。 */
@@ -292,6 +312,7 @@ function runSharedBuildIfPresent(projectRoot: string): SharedBuildOutcome {
     ok,
     command: `${command} run build (in shared/)`,
     logTail: ok ? undefined : tailLines(result.error ? `${output}\n${result.error.message}` : output, 50),
+    unavailable: Boolean(result.error),
   };
 }
 

@@ -11,8 +11,8 @@ import * as os from "os";
 import * as path from "path";
 import * as childProcess from "child_process";
 import { runMachineCli } from "../machine";
-import { hashContent } from "../core/operations/file-session";
 import { detectDrift } from "../core/project/drift";
+import { parseModelFile } from "../core/scaffold/model-parser";
 import { inspectInfra } from "../core/project/infra";
 import { loadCustomVerifyChecks, compactVerifyResult, runVerify, VerifyResult } from "../core/verify";
 import { buildAgentSkills, buildWorkflowDocs, writeAgentSkills, writeWorkflowDocs } from "../core/project/workflows";
@@ -391,10 +391,41 @@ describe("agent loop phase 3/4", () => {
     );
   });
 
+  it("reports verification command startup failures as blocked", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { noEmit: true } }));
+    const unavailable = Object.assign(new Error("spawn EPERM"), { code: "EPERM" });
+    (childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>).mockReturnValue({
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: unavailable,
+    });
+
+    const { response, exitCode } = await runMachine([
+      "node", "swallowkit", "machine", "verify", "project", "--checks", "typecheck",
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(response).toMatchObject({
+      ok: false,
+      status: "blocked",
+      error: {
+        code: "verification-command-unavailable",
+        details: expect.objectContaining({
+          command: expect.stringContaining("tsc"),
+          diagnostics: [expect.stringContaining("spawn EPERM")],
+        }),
+      },
+    });
+    expect(response.error.details.nextAction).toContain("permits normal child process execution");
+  });
+
   it("counts only stale schema-generated artifacts in a mixed-hash ledger", async () => {
-    const modelSource = "export const Todo = {};\n";
-    const currentSchemaHash = hashContent(modelSource);
-    writeFile(path.join(tempDir, "shared", "models", "todo.ts"), modelSource);
+    const modelSource = "import { z } from 'zod/v4';\nexport const Todo = z.object({ id: z.string() });\n";
+    const modelPath = path.join(tempDir, "shared", "models", "todo.ts");
+    writeFile(modelPath, modelSource);
+    const currentSchemaHash = (await parseModelFile(modelPath)).semanticFingerprint;
     writeFile(
       path.join(tempDir, ".swallowkit", "artifacts.json"),
       JSON.stringify({

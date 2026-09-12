@@ -22,6 +22,9 @@ export function createBasicModelInfo(overrides?: Partial<ModelInfo>): ModelInfo 
     hasUpdatedAt: true,
     nestedSchemaRefs: [],
     partitionKey: '/id',
+    parserMode: "static-ast",
+    parserWarnings: [],
+    semanticFingerprint: "test-semantic-fingerprint",
     ...overrides,
   };
 }

@@ -8,6 +8,7 @@ import * as path from "path";
 import { spawnSync } from "child_process";
 import { getBackendLanguage, getConnectorDefinition, getAuthConfig, getFullConfig, getNormalizedAuthConfig, ensureSwallowKitProject, normalizeAuthConfig, validateConfig } from "../../core/config";
 import { ModelInfo, parseModelFile, toKebabCase, toPascalCase, toCamelCase } from "../../core/scaffold/model-parser";
+import { MachineCommandError } from "../../machine/errors";
 import {
   generateCSharpAzureFunctionsCRUD,
   generateCompactAzureFunctionsCRUD,
@@ -47,7 +48,7 @@ import { generateBFFCallFunctionWithAuth, generateBFFCallFunctionWithMultipleAut
 import {
   FileOperationSession,
   getActiveFileSession,
-  hashFileIfExists,
+  SchemaAnalysisSnapshot,
 } from "../../core/operations/file-session";
 import { recordSessionOperations } from "../../core/project/artifacts";
 
@@ -58,6 +59,7 @@ interface ScaffoldOptions {
   functionsDir?: string; // Azure Functions のディレクトリ（デフォルト: "functions"）
   apiDir?: string; // Next.js API routes のディレクトリ（デフォルト: "app/api"）
   apiOnly?: boolean; // true の場合、UI を生成しない（デフォルト: false）
+  expectedSchemaAnalysis?: SchemaAnalysisSnapshot;
 }
 
 function getMachineAwareStdio(): "inherit" | "pipe" {
@@ -100,6 +102,31 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     // 2. Parse model file
     console.log("🔍 Parsing model file...");
     const modelInfo = await parseModelFile(modelPath);
+    const schemaAnalysis: SchemaAnalysisSnapshot = {
+      parserMode: modelInfo.parserMode,
+      semanticFingerprint: modelInfo.semanticFingerprint,
+      canonicalModel: {
+        name: modelInfo.name,
+        schemaName: modelInfo.schemaName,
+        fields: modelInfo.fields,
+        nestedSchemaRefs: modelInfo.nestedSchemaRefs,
+        partitionKey: modelInfo.partitionKey,
+        connectorConfig: modelInfo.connectorConfig,
+        authPolicy: modelInfo.authPolicy,
+      },
+      warnings: modelInfo.parserWarnings,
+    };
+    if (options.expectedSchemaAnalysis &&
+        (options.expectedSchemaAnalysis.parserMode !== schemaAnalysis.parserMode ||
+         options.expectedSchemaAnalysis.semanticFingerprint !== schemaAnalysis.semanticFingerprint)) {
+      throw new MachineCommandError(
+        "schema-analysis-mismatch",
+        "Schema analysis changed between plan and apply; no artifacts were written.",
+        { expected: options.expectedSchemaAnalysis, actual: schemaAnalysis, nextAction: "Re-run plan scaffold in the same environment, then apply the new plan." },
+        "blocked"
+      );
+    }
+    session.setSchemaAnalysis(schemaAnalysis);
     console.log(`✅ Model parsed: ${modelInfo.name} (${modelInfo.schemaName})`);
 
     const backendLanguage = getBackendLanguage();
@@ -199,7 +226,7 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
 
     if (session.mode === "commit") {
       recordSessionOperations(session.operations, {
-        schemaHash: hashFileIfExists(modelPath) ?? undefined,
+        schemaHash: modelInfo.semanticFingerprint,
         sourceModel: modelInfo.name,
       });
       await syncProjectManifest();
@@ -223,6 +250,7 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     );
     console.log(`  ${options.apiOnly ? (backendLanguage === "typescript" ? "4" : "5") : (backendLanguage === "typescript" ? "6" : "7")}. Run '${getCommands(detectFromProject()).exec} swallowkit dev' to test the generated code`);
   } catch (error: any) {
+    if (error instanceof MachineCommandError) throw error;
     console.error("\n❌ Scaffold failed:", error.message);
     process.exit(1);
   }

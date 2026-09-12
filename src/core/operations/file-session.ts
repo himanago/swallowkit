@@ -43,6 +43,13 @@ export interface RecordedFileOperation {
   newHash: string | null;
 }
 
+export interface SchemaAnalysisSnapshot {
+  parserMode: string;
+  semanticFingerprint: string;
+  canonicalModel: unknown;
+  warnings: string[];
+}
+
 export function normalizeContentForHash(content: string): string {
   return content.replace(/\r\n/g, "\n");
 }
@@ -78,6 +85,7 @@ export class FileOperationSession {
   private readonly inputFingerprintsByPath = new Map<string, string | null>();
   /** overlay: absolute normalized path -> content (null = deleted in session) */
   private readonly overlay = new Map<string, string | null>();
+  private schemaAnalysisValue: SchemaAnalysisSnapshot | null = null;
 
   constructor(mode: FileSessionMode, rootDirectory: string = process.cwd()) {
     this.mode = mode;
@@ -92,6 +100,14 @@ export class FileOperationSession {
     return Object.fromEntries(
       Array.from(this.inputFingerprintsByPath.entries()).sort(([left], [right]) => left.localeCompare(right))
     );
+  }
+
+  get schemaAnalysis(): SchemaAnalysisSnapshot | null {
+    return this.schemaAnalysisValue;
+  }
+
+  setSchemaAnalysis(analysis: SchemaAnalysisSnapshot): void {
+    this.schemaAnalysisValue = analysis;
   }
 
   addWarning(message: string): void {
