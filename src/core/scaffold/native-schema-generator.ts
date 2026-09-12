@@ -101,6 +101,57 @@ function toPascalIdentifier(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+interface CSharpEnumMember {
+  value: string;
+  name: string;
+}
+
+const CSHARP_RESERVED_IDENTIFIERS = new Set([
+  "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked",
+  "class", "const", "continue", "decimal", "default", "delegate", "do", "double", "else",
+  "enum", "event", "explicit", "extern", "false", "finally", "fixed", "float", "for", "foreach",
+  "goto", "if", "implicit", "in", "int", "interface", "internal", "is", "lock", "long",
+  "namespace", "new", "null", "object", "operator", "out", "override", "params", "private",
+  "protected", "public", "readonly", "ref", "return", "sbyte", "sealed", "short", "sizeof",
+  "stackalloc", "static", "string", "struct", "switch", "this", "throw", "true", "try",
+  "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort", "using", "virtual", "void",
+  "volatile", "while",
+]);
+
+function toCSharpEnumMemberBase(value: string): string {
+  const encoded = Array.from(value)
+    .map((character) => {
+      if (/^[A-Za-z0-9_-]$/.test(character)) return character;
+      if (/^\s$/.test(character)) return "-";
+      return `-U${character.codePointAt(0)!.toString(16).toUpperCase()}-`;
+    })
+    .join("");
+  let identifier = toPascalIdentifier(encoded).replace(/[^A-Za-z0-9_]/g, "");
+  if (!identifier) identifier = "Value";
+  if (/^[0-9]/.test(identifier)) identifier = `Value${identifier}`;
+  if (CSHARP_RESERVED_IDENTIFIERS.has(identifier)) identifier = `Value${identifier}`;
+  return identifier;
+}
+
+function buildCSharpEnumMemberMap(values: string[], enumType: string): CSharpEnumMember[] {
+  const uniqueValues = [...new Set(values)];
+  const bases = uniqueValues.map((value) => ({ value, base: toCSharpEnumMemberBase(value) }));
+  const baseCounts = new Map<string, number>();
+  for (const entry of bases) baseCounts.set(entry.base, (baseCounts.get(entry.base) ?? 0) + 1);
+
+  return bases.map(({ value, base }) => {
+    let name = base;
+    if ((baseCounts.get(base) ?? 0) > 1 || name === enumType) {
+      name = `${base}_${Buffer.from(value, "utf-8").toString("hex").toUpperCase() || "Empty"}`;
+    }
+    return { value, name };
+  });
+}
+
+function csharpStringLiteral(value: string): string {
+  return JSON.stringify(value);
+}
+
 function isDateLikeField(field: Pick<ModelInfo["fields"][number], "name" | "type">): boolean {
   return field.type === "date" || (field.type === "string" && field.name.toLowerCase().endsWith("at"));
 }
@@ -256,23 +307,27 @@ namespace SwallowKitBackendModels.Client
 `;
 }
 
-function buildCSharpEnumMembers(values: string[]): string {
-  return values
-    .map((value, index) => `            ${toPascalIdentifier(value)} = ${index + 1}`)
+function buildCSharpEnumMembers(members: CSharpEnumMember[]): string {
+  return members
+    .map((member, index) => `            ${member.name} = ${index + 1}`)
     .join(",\n\n");
 }
 
-function buildCSharpEnumFromStringCases(field: ModelInfo["fields"][number], nullable: boolean): string {
+function buildCSharpEnumFromStringCases(
+  field: ModelInfo["fields"][number],
+  members: CSharpEnumMember[],
+  nullable: boolean
+): string {
   const enumType = `${toPascalIdentifier(field.name)}Enum`;
-  return field.enumValues!
-    .map((value) => `            if (value.Equals("${value}", StringComparison.Ordinal))\n                return ${enumType}.${toPascalIdentifier(value)};`)
+  return members
+    .map((member) => `            if (value.Equals(${csharpStringLiteral(member.value)}, StringComparison.Ordinal))\n                return ${enumType}.${member.name};`)
     .join("\n\n") + (nullable ? `\n\n            return null;` : `\n\n            throw new NotImplementedException($"Could not convert value to type ${enumType}: '{value}'");`);
 }
 
-function buildCSharpEnumToJsonCases(field: ModelInfo["fields"][number]): string {
+function buildCSharpEnumToJsonCases(field: ModelInfo["fields"][number], members: CSharpEnumMember[]): string {
   const enumType = `${toPascalIdentifier(field.name)}Enum`;
-  return field.enumValues!
-    .map((value) => `            if (value == ${enumType}.${toPascalIdentifier(value)})\n                return "${value}";`)
+  return members
+    .map((member) => `            if (value == ${enumType}.${member.name})\n                return ${csharpStringLiteral(member.value)};`)
     .join("\n\n");
 }
 
@@ -295,28 +350,29 @@ function generateLegacyCompatibleCSharpModelSource(model: ModelInfo): string {
     .filter((field) => field.enumValues?.length)
     .map((field) => {
       const enumType = `${toPascalIdentifier(field.name)}Enum`;
+      const enumMembers = buildCSharpEnumMemberMap(field.enumValues!, enumType);
       return `        /// <summary>
         /// Defines ${toPascalIdentifier(field.name)}
         /// </summary>
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public enum ${enumType}
         {
-${buildCSharpEnumMembers(field.enumValues!)}
+${buildCSharpEnumMembers(enumMembers)}
         }
 
         public static ${enumType} ${enumType}FromString(string value)
         {
-${buildCSharpEnumFromStringCases(field, false)}
+${buildCSharpEnumFromStringCases(field, enumMembers, false)}
         }
 
         public static ${enumType}? ${enumType}FromStringOrDefault(string value)
         {
-${buildCSharpEnumFromStringCases(field, true)}
+${buildCSharpEnumFromStringCases(field, enumMembers, true)}
         }
 
         public static string ${enumType}ToJsonValue(${enumType}? value)
         {
-${buildCSharpEnumToJsonCases(field)}
+${buildCSharpEnumToJsonCases(field, enumMembers)}
 
             throw new NotImplementedException($"Value could not be handled: '{value}'");
         }`;

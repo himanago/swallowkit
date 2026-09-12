@@ -4,6 +4,7 @@ import * as path from "path";
 import * as childProcess from "child_process";
 import { EventEmitter } from "events";
 import { runMachineCli } from "../machine";
+import { getCSharpSchemaModelPath } from "../core/scaffold/native-schema-generator";
 
 jest.mock("child_process", () => {
   const actual = jest.requireActual<typeof import("child_process")>("child_process");
@@ -329,8 +330,8 @@ describe("plan / apply / drift / verify machine commands", () => {
       `import { z } from 'zod/v4';
 export const LearningQuestion = z.object({
   id: z.string(),
-  kind: z.enum(['grammar', 'vocabulary']),
-  level: z.literal('5'),
+  kind: z.enum(['grammar', 'in_progress', '123', '5級', 'a-b', 'a_b', 'class']),
+  examLevel: z.literal('5'),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
@@ -355,21 +356,50 @@ export type LearningQuestion = z.infer<typeof LearningQuestion>;
         fs.readFileSync(path.join(tempDir, "functions", "openapi", "learning-question.openapi.json"), "utf-8")
       );
       const properties = openApi.components.schemas.LearningQuestion.properties;
-      expect(properties.kind.enum).toEqual(["grammar", "vocabulary"]);
-      expect(properties.level.enum).toEqual(["5"]);
+      expect(properties.kind.enum).toEqual(["grammar", "in_progress", "123", "5級", "a-b", "a_b", "class"]);
+      expect(properties.examLevel.enum).toEqual(["5"]);
 
-      const csharp = fs.readFileSync(
-        path.join(tempDir, "functions", "generated", "csharp-models", "src", "SwallowKitBackendModels", "Model", "LearningQuestion.cs"),
-        "utf-8"
-      );
+      const csharpOutputDir = path.join(tempDir, "functions", "generated", "csharp-models");
+      const csharp = fs.readFileSync(getCSharpSchemaModelPath(csharpOutputDir, "LearningQuestion"), "utf-8");
       expect(csharp).toContain("public enum KindEnum");
-      expect(csharp).toContain("public enum LevelEnum");
+      expect(csharp).toContain("public enum ExamLevelEnum");
+      expect(csharp).toContain("Grammar = 1");
+      expect(csharp).toContain("InProgress = 2");
+      expect(csharp).toContain("Value123 = 3");
+      expect(csharp).toContain("Value5U7D1A = 4");
+      expect(csharp).toContain("AB_612D62 = 5");
+      expect(csharp).toContain("AB_615F62 = 6");
+      expect(csharp).toContain("Class = 7");
+      expect(csharp).toContain("Value5 = 1");
+      expect(csharp).toContain('value.Equals("5", StringComparison.Ordinal)');
+      expect(csharp).toContain("return ExamLevelEnum.Value5;");
+      expect(csharp).toContain('return "5";');
+      expect(csharp).toContain('value.Equals("a-b", StringComparison.Ordinal)');
+      expect(csharp).toContain("return KindEnum.AB_612D62;");
+      expect(csharp).toContain("if (value == KindEnum.AB_615F62)");
+      expect(csharp).toContain('return "a_b";');
       expect(csharp).not.toContain("Dictionary<string, object> Kind");
-      expect(csharp).not.toContain("Dictionary<string, object> Level");
+      expect(csharp).not.toContain("Dictionary<string, object> ExamLevel");
+
+      writeFile(
+        path.join(csharpOutputDir, "SwallowKitBackendModels.csproj"),
+        `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>
+`
+      );
+      expect(() => childProcess.execFileSync("dotnet", ["build", "--nologo", "--verbosity", "quiet"], {
+        cwd: csharpOutputDir,
+        stdio: "pipe",
+        timeout: 120_000,
+      })).not.toThrow();
     } finally {
       restoreCodegenMocks();
     }
-  });
+  }, 150_000);
 
   it("leaves the project untouched when the native toolchain validation fails on apply", async () => {
     createNativeBackendFixture(tempDir, "csharp");
