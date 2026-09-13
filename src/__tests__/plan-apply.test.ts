@@ -83,6 +83,19 @@ function createInfrastructureFixture(rootDir: string): void {
   writeFile(path.join(rootDir, "infra", "modules", "cosmosdb.bicep"), "// baseline cosmos\n");
 }
 
+function addLegacyContainerToInfrastructure(rootDir: string, modelKebab: string): void {
+  const containerPath = `containers/${modelKebab}-container.bicep`;
+  fs.appendFileSync(
+    path.join(rootDir, "infra", "main.bicep"),
+    `\nmodule ${modelKebab.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase())}Container '${containerPath}' = {\n  name: '${modelKebab}-container'\n}\n`,
+    "utf-8"
+  );
+  writeFile(
+    path.join(rootDir, "infra", containerPath),
+    "param partitionKeyPath string = '/id'\n\nresource container 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-11-15' = {\n  name: 'Todos'\n}\n"
+  );
+}
+
 function createNativeBackendFixture(rootDir: string, backendLanguage: "csharp" | "python"): void {
   createProjectFixture(rootDir);
   writeFile(
@@ -252,6 +265,94 @@ describe("plan / apply / drift / verify machine commands", () => {
         template: "infra/migrations/0001-create-todo-container/main.bicep",
       }),
     ]);
+  });
+
+  it("updates baseline-owned model artifacts without creating a second container migration", async () => {
+    createNativeBackendFixture(tempDir, "csharp");
+    writeFile(path.join(tempDir, "shared", "models", "answer-record.ts"), createModelSource("AnswerRecord"));
+    createInfrastructureFixture(tempDir);
+    addLegacyContainerToInfrastructure(tempDir, "answer-record");
+    const original = initializeLegacyMigrations(tempDir);
+    const restoreCodegenMocks = mockSuccessfulNativeCodegen();
+
+    try {
+      const baselineModelApply = await runMachine(machineArgs("apply", "scaffold", "answer-record"));
+      expect(baselineModelApply.exitCode).toBe(0);
+      expect(loadMigrationManifest(tempDir).migrations).toEqual([]);
+
+      writeFile(
+        path.join(tempDir, "shared", "models", "written-mock-session.ts"),
+        createModelSource("WrittenMockSession")
+      );
+      const newModelApply = await runMachine(machineArgs("apply", "scaffold", "written-mock-session"));
+      expect(newModelApply.exitCode).toBe(0);
+      expect(loadMigrationManifest(tempDir).migrations).toEqual([
+        expect.objectContaining({
+          version: 1,
+          slug: "create-written-mock-session-container",
+          sourceModel: "WrittenMockSession",
+        }),
+      ]);
+
+      writeFile(
+        path.join(tempDir, "shared", "models", "answer-record.ts"),
+        createModelSource("AnswerRecord", "\n  writtenMockSessionId: z.string().optional(),")
+      );
+      const plan = await runMachine(machineArgs("plan", "scaffold", "answer-record"));
+
+      expect(plan.exitCode).toBe(0);
+      expect(plan.response.ok).toBe(true);
+      expect(plan.response.data.operations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: "functions/openapi/answer-record.openapi.json", action: "update" }),
+        expect.objectContaining({
+          path: "functions/generated/csharp-models/src/SwallowKitBackendModels/Model/AnswerRecord.cs",
+          action: "update",
+        }),
+        expect.objectContaining({ path: "app/answer-record/_components/AnswerRecordForm.tsx", action: "update" }),
+      ]));
+      expect(plan.response.data.operations).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: expect.stringContaining("infra/migrations/0002-") }),
+      ]));
+      expect(plan.response.data.operations).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: MIGRATION_MANIFEST_PATH.replace(/\\/g, "/") }),
+      ]));
+
+      const apply = await runMachine(machineArgs("apply", "scaffold", "--plan", plan.response.data.planId));
+      expect(apply.exitCode).toBe(0);
+      const updated = loadMigrationManifest(tempDir);
+      expect(updated.migrations).toHaveLength(1);
+      expect(updated.baseline).toEqual(original.baseline);
+
+      const verify = await runMachine(machineArgs("verify", "project", "--checks", "structure,drift"));
+      expect(verify.exitCode).toBe(0);
+      expect(verify.response.ok).toBe(true);
+      expect(verify.response.data.summary.done).toBe(true);
+    } finally {
+      restoreCodegenMocks();
+    }
+  });
+
+  it("requires an explicit migration when a baseline-owned container partition key changes", async () => {
+    createProjectFixture(tempDir);
+    writeFile(
+      path.join(tempDir, "shared", "models", "todo.ts"),
+      `${createModelSource("Todo")}\nexport const partitionKey = '/tenantId';\n`
+    );
+    createInfrastructureFixture(tempDir);
+    addLegacyContainerToInfrastructure(tempDir, "todo");
+    initializeLegacyMigrations(tempDir);
+
+    const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only"));
+
+    expect(plan.exitCode).toBe(1);
+    expect(plan.response.ok).toBe(false);
+    expect(plan.response.status).toBe("blocked");
+    expect(plan.response.error.code).toBe("baseline-container-configuration-change");
+    expect(plan.response.error.details).toEqual(expect.objectContaining({
+      baselinePartitionKey: "/id",
+      requestedPartitionKey: "/tenantId",
+    }));
+    expect(fs.existsSync(path.join(tempDir, "infra", "migrations", "0001-create-todo-container"))).toBe(false);
   });
 
   it("uses the same approval-free manifest update for a non-legacy project", async () => {

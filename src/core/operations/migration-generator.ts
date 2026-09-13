@@ -68,6 +68,37 @@ function appendMigration(manifest: MigrationManifest, migration: InfrastructureM
   };
 }
 
+function baselineOwnsModelContainer(
+  manifest: MigrationManifest,
+  model: { name: string; partitionKey: string },
+  session: FileOperationSession
+): boolean {
+  const containerSlug = normalizeSlug(model.name);
+  const containerPath = `infra/containers/${containerSlug}-container.bicep`;
+  const mainPath = "infra/main.bicep";
+  const baselinePaths = new Set(manifest.baseline.files.map((file) => file.path.replace(/\\/g, "/")));
+  if (!baselinePaths.has(containerPath) || !baselinePaths.has(mainPath)) return false;
+
+  const mainBicep = session.readFile(path.join(session.rootDirectory, mainPath));
+  const wired = mainBicep.includes(`'containers/${containerSlug}-container.bicep'`) ||
+    mainBicep.includes(`"containers/${containerSlug}-container.bicep"`);
+  if (!wired) return false;
+
+  const containerBicep = session.readFile(path.join(session.rootDirectory, containerPath));
+  const baselinePartitionKey = containerBicep.match(
+    /param\s+partitionKeyPath\s+string\s*=\s*['"]([^'"]+)['"]/
+  )?.[1];
+  if (baselinePartitionKey && baselinePartitionKey !== model.partitionKey) {
+    throw new MachineCommandError(
+      "baseline-container-configuration-change",
+      `Model ${model.name} changes the partition key of a baseline-owned container. Create an explicit infrastructure migration instead of regenerating the container.`,
+      { model: model.name, baselinePartitionKey, requestedPartitionKey: model.partitionKey, containerPath },
+      "blocked"
+    );
+  }
+  return true;
+}
+
 function initializeMigrations(projectRoot: string, legacy: boolean): MigrationManifest {
   const manifest = createMigrationManifest(projectRoot, { legacy });
   const session = new FileOperationSession("commit", projectRoot);
@@ -124,9 +155,12 @@ param location string
 export function generateModelContainerMigration(
   model: { name: string; partitionKey: string },
   session: FileOperationSession = new FileOperationSession("commit")
-): InfrastructureMigration {
+): InfrastructureMigration | null {
   const manifest = readManifestForSession(session);
   const existing = manifest.migrations.find((migration) => migration.source === "model" && migration.sourceModel === model.name);
+  if (!existing && baselineOwnsModelContainer(manifest, model, session)) {
+    return null;
+  }
   const slug = normalizeSlug(`create-${model.name}-container`);
   const version = existing?.version ?? manifest.migrations.length + 1;
   const directory = path.join("infra", "migrations", `${formatVersion(version)}-${slug}`);

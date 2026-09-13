@@ -851,7 +851,11 @@ export async function generateCosmosContainer(modelInfo: any, session: FileOpera
     return;
   }
   const migration = generateModelContainerMigration(modelInfo, session);
-  console.log(`✅ Created migration ${migration.version}: ${migration.template}`);
+  if (migration) {
+    console.log(`✅ Created migration ${migration.version}: ${migration.template}`);
+  } else {
+    console.log(`ℹ️  Cosmos DB container is already owned by the migration baseline. Skipping infrastructure migration.`);
+  }
 }
 
 /**
