@@ -2,13 +2,14 @@ import * as fs from "fs";
 import * as path from "path";
 import { MachineCommandError } from "../../machine/errors";
 import { FileOperationSession } from "./file-session";
+import { recordSessionOperations } from "../project/artifacts";
 import {
   InfrastructureMigration,
   MIGRATION_MANIFEST_PATH,
   MigrationManifest,
   createMigrationManifest,
+  findBaselineDrift,
   loadMigrationManifest,
-  saveMigrationManifest,
   validateMigrationManifest,
 } from "../project/migrations";
 
@@ -44,6 +45,15 @@ function readManifestForSession(session: FileOperationSession): MigrationManifes
   try {
     const manifest = JSON.parse(session.readFile(manifestPath)) as MigrationManifest;
     validateMigrationManifest(manifest, session.rootDirectory);
+    const baselineDrift = findBaselineDrift(manifest, session.rootDirectory);
+    if (baselineDrift.length > 0) {
+      throw new MachineCommandError(
+        "baseline-drift",
+        "Baseline infrastructure files changed after migration tracking was initialized. Create an explicit migration or reconcile the baseline first.",
+        { changedFiles: baselineDrift },
+        "blocked"
+      );
+    }
     return manifest;
   } catch (error) {
     if (error instanceof MachineCommandError) throw error;
@@ -58,16 +68,24 @@ function appendMigration(manifest: MigrationManifest, migration: InfrastructureM
   };
 }
 
-export function initializeLegacyMigrations(projectRoot: string = process.cwd()): MigrationManifest {
-  const manifest = createMigrationManifest(projectRoot, { legacy: true });
-  saveMigrationManifest(manifest, projectRoot);
+function initializeMigrations(projectRoot: string, legacy: boolean): MigrationManifest {
+  const manifest = createMigrationManifest(projectRoot, { legacy });
+  const session = new FileOperationSession("commit", projectRoot);
+  session.writeFile(
+    path.join(projectRoot, MIGRATION_MANIFEST_PATH),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    { ownership: "metadata", generator: GENERATOR }
+  );
+  recordSessionOperations(session.operations, {}, projectRoot);
   return manifest;
 }
 
+export function initializeLegacyMigrations(projectRoot: string = process.cwd()): MigrationManifest {
+  return initializeMigrations(projectRoot, true);
+}
+
 export function initializeNewProjectMigrations(projectRoot: string): MigrationManifest {
-  const manifest = createMigrationManifest(projectRoot, { legacy: false });
-  saveMigrationManifest(manifest, projectRoot);
-  return manifest;
+  return initializeMigrations(projectRoot, false);
 }
 
 export function createCustomMigration(slugValue: string, projectRoot: string = process.cwd()): InfrastructureMigration {

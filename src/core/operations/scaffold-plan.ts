@@ -8,6 +8,7 @@ import * as path from "path";
 import { scaffoldCommand } from "../../cli/commands/scaffold";
 import { getSwallowKitVersion } from "../../version";
 import { findArtifactRecord, loadArtifactLedger } from "../project/artifacts";
+import { MIGRATION_MANIFEST_PATH } from "../project/migrations";
 import { savePlanState } from "../project/state";
 import {
   ArtifactOwnership,
@@ -31,6 +32,16 @@ export interface PlanScaffoldOptions {
 }
 
 export type ScaffoldPlanAction = "create" | "update" | "overwrite" | "append" | "delete" | "skip";
+
+function isValidatedMigrationManifestUpdate(operation: {
+  path: string;
+  ownership: ArtifactOwnership;
+  generator: string;
+}): boolean {
+  return operation.path === MIGRATION_MANIFEST_PATH.replace(/\\/g, "/") &&
+    operation.ownership === "metadata" &&
+    operation.generator === "infrastructure-migration";
+}
 
 export interface ScaffoldPlanOperation {
   path: string;
@@ -142,7 +153,12 @@ export async function planScaffoldOperation(options: PlanScaffoldOptions): Promi
         break;
       case "modify": {
         const record = ledger ? findArtifactRecord(ledger, op.path) : undefined;
-        if (record && record.contentHash === op.previousHash) {
+        if (isValidatedMigrationManifestUpdate(op)) {
+          // migration generator validates the existing manifest before producing
+          // an append-only metadata update. This also supports manifests created
+          // by older CLI versions that were not registered in the artifact ledger.
+          action = "update";
+        } else if (record && record.contentHash === op.previousHash) {
           // 生成後に変更されていない managed ファイルの再生成 — 安全
           action = "update";
         } else if (record) {

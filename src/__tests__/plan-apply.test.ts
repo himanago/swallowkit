@@ -5,6 +5,13 @@ import * as childProcess from "child_process";
 import { EventEmitter } from "events";
 import { runMachineCli } from "../machine";
 import { getCSharpSchemaModelPath } from "../core/scaffold/native-schema-generator";
+import { initializeLegacyMigrations } from "../core/operations/migration-generator";
+import {
+  MIGRATION_MANIFEST_PATH,
+  createMigrationManifest,
+  loadMigrationManifest,
+  saveMigrationManifest,
+} from "../core/project/migrations";
 
 jest.mock("child_process", () => {
   const actual = jest.requireActual<typeof import("child_process")>("child_process");
@@ -65,6 +72,15 @@ function createProjectFixture(rootDir: string): void {
     path.join(rootDir, "node_modules", "zod"),
     "junction"
   );
+}
+
+function createInfrastructureFixture(rootDir: string): void {
+  writeFile(path.join(rootDir, "infra", "main.bicep"), "targetScope = 'resourceGroup'\n");
+  writeFile(
+    path.join(rootDir, "infra", "main.parameters.json"),
+    JSON.stringify({ parameters: { projectName: { value: "sample-app" } } }, null, 2)
+  );
+  writeFile(path.join(rootDir, "infra", "modules", "cosmosdb.bicep"), "// baseline cosmos\n");
 }
 
 function createNativeBackendFixture(rootDir: string, backendLanguage: "csharp" | "python"): void {
@@ -190,6 +206,122 @@ describe("plan / apply / drift / verify machine commands", () => {
     expect(
       fs.existsSync(path.join(tempDir, ".swallowkit", "state", "plans", `${response.data.planId}.json`))
     ).toBe(true);
+  });
+
+  it("updates a ledger-unregistered legacy manifest without approval and preserves baseline identity", async () => {
+    createProjectFixture(tempDir);
+    createInfrastructureFixture(tempDir);
+    const original = initializeLegacyMigrations(tempDir);
+    fs.rmSync(path.join(tempDir, ".swallowkit", "artifacts.json"));
+    expect(fs.existsSync(path.join(tempDir, ".swallowkit", "artifacts.json"))).toBe(false);
+
+    const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only"));
+
+    expect(plan.exitCode).toBe(0);
+    expect(plan.response.ok).toBe(true);
+    expect(plan.response.status).toBe("complete");
+    expect(plan.response.data.requiresApproval).toBe(false);
+    expect(plan.response.data.conflicts).toEqual([]);
+    expect(plan.response.data.operations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: MIGRATION_MANIFEST_PATH.replace(/\\/g, "/"),
+        action: "update",
+        ownership: "metadata",
+        conflict: false,
+      }),
+      expect.objectContaining({
+        path: "infra/migrations/0001-create-todo-container/main.bicep",
+        action: "create",
+        conflict: false,
+      }),
+    ]));
+
+    const apply = await runMachine(machineArgs("apply", "scaffold", "--plan", plan.response.data.planId));
+    expect(apply.exitCode).toBe(0);
+    expect(apply.response.ok).toBe(true);
+
+    const updated = loadMigrationManifest(tempDir);
+    expect(updated.projectId).toBe(original.projectId);
+    expect(updated.baseline).toEqual(original.baseline);
+    expect(updated.migrations).toEqual([
+      expect.objectContaining({
+        version: 1,
+        slug: "create-todo-container",
+        source: "model",
+        sourceModel: "Todo",
+        template: "infra/migrations/0001-create-todo-container/main.bicep",
+      }),
+    ]);
+  });
+
+  it("uses the same approval-free manifest update for a non-legacy project", async () => {
+    createProjectFixture(tempDir);
+    createInfrastructureFixture(tempDir);
+    const original = createMigrationManifest(tempDir, { legacy: false, projectId: "new-project" });
+    saveMigrationManifest(original, tempDir);
+
+    const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only"));
+
+    expect(plan.exitCode).toBe(0);
+    expect(plan.response.data.requiresApproval).toBe(false);
+    expect(plan.response.data.operations).toContainEqual(expect.objectContaining({
+      path: MIGRATION_MANIFEST_PATH.replace(/\\/g, "/"),
+      action: "update",
+      conflict: false,
+    }));
+  });
+
+  it.each([
+    {
+      name: "invalid manifest",
+      arrange: (rootDir: string) => writeFile(path.join(rootDir, MIGRATION_MANIFEST_PATH), "{ invalid json\n"),
+      code: "invalid-migration-manifest",
+    },
+    {
+      name: "baseline drift",
+      arrange: (rootDir: string) => {
+        initializeLegacyMigrations(rootDir);
+        writeFile(path.join(rootDir, "infra", "main.bicep"), "// changed after baseline\n");
+      },
+      code: "baseline-drift",
+    },
+    {
+      name: "missing migration template",
+      arrange: (rootDir: string) => {
+        const manifest = createMigrationManifest(rootDir, { legacy: true, projectId: "legacy-project" });
+        manifest.migrations.push({
+          version: 1,
+          slug: "missing-template",
+          template: "infra/migrations/0001-missing-template/main.bicep",
+          source: "custom",
+        });
+        saveMigrationManifest(manifest, rootDir);
+      },
+      code: "migration-file-not-found",
+    },
+    {
+      name: "discontinuous migration versions",
+      arrange: (rootDir: string) => {
+        const manifest = createMigrationManifest(rootDir, { legacy: true, projectId: "legacy-project" });
+        const template = "infra/migrations/0002-version-gap/main.bicep";
+        writeFile(path.join(rootDir, template), "targetScope = 'resourceGroup'\n");
+        manifest.migrations.push({ version: 2, slug: "version-gap", template, source: "custom" });
+        saveMigrationManifest(manifest, rootDir);
+      },
+      code: "invalid-migration-manifest",
+    },
+  ])("fails closed for $name before planning scaffold writes", async ({ arrange, code }) => {
+    createProjectFixture(tempDir);
+    createInfrastructureFixture(tempDir);
+    arrange(tempDir);
+
+    const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only"));
+
+    expect(plan.exitCode).toBe(1);
+    expect(plan.response.ok).toBe(false);
+    expect(plan.response.status).toBe("blocked");
+    expect(plan.response.error.code).toBe(code);
+    expect(fs.existsSync(path.join(tempDir, "infra", "migrations", "0002-create-todo-container"))).toBe(false);
   });
 
   it("plans and applies multiple models in one command (scaffold batch)", async () => {
