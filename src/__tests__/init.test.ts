@@ -296,10 +296,18 @@ describe("Infrastructure generation", () => {
       expect(fs.existsSync(path.join(projectDir, "infra", "modules", "private-endpoint-cosmos.bicep"))).toBe(true);
 
       const mainBicep = fs.readFileSync(path.join(projectDir, "infra", "main.bicep"), "utf-8");
+      const migrationManifest = JSON.parse(
+        fs.readFileSync(path.join(projectDir, "infra", "migrations", "manifest.json"), "utf-8")
+      );
       expect(mainBicep).toContain("param enableVNet bool = false");
       expect(mainBicep).toContain("module vnet 'modules/vnet.bicep' = if (enableVNet)");
       expect(mainBicep).toContain("functionsAppName: functionsFlex.outputs.name");
       expect(mainBicep).not.toContain("functionsHostKey:");
+      expect(migrationManifest).toMatchObject({
+        schemaVersion: 1,
+        baseline: { version: 0, legacy: false },
+        migrations: [],
+      });
     },
   );
 });

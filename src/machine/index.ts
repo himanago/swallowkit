@@ -366,7 +366,10 @@ function createMachineProgram(): Command {
     .requiredOption("--swa-location <region>", "Static Web App location")
     .option("--subscription <id>", "Azure subscription GUID")
     .option("--what-if", "Run az deployment group what-if (requires az login)", false)
-    .action(async (options: { resourceGroup: string; location: string; swaLocation: string; subscription?: string; whatIf?: boolean }) => {
+    .option("--adopt-existing", "Adopt an existing untagged resource group without deploying main.bicep", false)
+    .option("--baseline <version>", "Baseline version for adoption", (value) => Number(value))
+    .option("--reconcile", "Explicitly redeploy infra/main.bicep", false)
+    .action(async (options: { resourceGroup: string; location: string; swaLocation: string; subscription?: string; whatIf?: boolean; adoptExisting?: boolean; baseline?: number; reconcile?: boolean }) => {
       await handleMachineAction(
         "plan-provision",
         async () => {
@@ -377,6 +380,9 @@ function createMachineProgram(): Command {
             swaLocation: options.swaLocation,
             subscription: options.subscription,
             whatIf: options.whatIf,
+            adoptExisting: options.adoptExisting,
+            baseline: options.baseline,
+            reconcile: options.reconcile,
           });
         },
         (planData) => ({

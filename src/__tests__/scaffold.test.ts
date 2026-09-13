@@ -16,6 +16,7 @@ import {
   getPythonSchemaModelPath,
 } from "../core/scaffold/native-schema-generator";
 import { createBasicModelInfo } from "./fixtures";
+import { createMigrationManifest, saveMigrationManifest } from "../core/project/migrations";
 
 describe("authenticated UI scaffold layouts", () => {
   const originalCwd = process.cwd();
@@ -215,6 +216,7 @@ describe("generateCosmosContainer", () => {
     process.chdir(tempDir);
     fs.mkdirSync(path.join(tempDir, "infra", "containers"), { recursive: true });
     fs.writeFileSync(path.join(tempDir, "infra", "main.bicep"), "module cosmosDbServerless 'modules/cosmosdb-serverless.bicep' = if (cosmosDbMode == 'serverless') {\n  name: 'cosmosDb'\n}\n");
+    saveMigrationManifest(createMigrationManifest(tempDir, { projectId: "test-project" }), tempDir);
   });
 
   afterEach(() => {
@@ -222,18 +224,19 @@ describe("generateCosmosContainer", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("generates container templates without container-level throughput settings", async () => {
+  it("generates a container migration without changing main.bicep", async () => {
+    const mainBefore = fs.readFileSync(path.join(tempDir, "infra", "main.bicep"), "utf-8");
     await generateCosmosContainer({ name: "SurveyResponse", partitionKey: "/id" });
 
-    const containerFilePath = path.join(tempDir, "infra", "containers", "survey-response-container.bicep");
+    const containerFilePath = path.join(tempDir, "infra", "migrations", "0001-create-survey-response-container", "main.bicep");
     const containerContent = fs.readFileSync(containerFilePath, "utf-8");
     const mainContent = fs.readFileSync(path.join(tempDir, "infra", "main.bicep"), "utf-8");
 
     expect(containerContent).toContain("resource container");
+    expect(containerContent).toContain("existing");
     expect(containerContent).not.toContain("throughput");
     expect(containerContent).not.toContain("options:");
-    expect(mainContent).toContain("module surveyResponseContainer 'containers/survey-response-container.bicep'");
-    expect(mainContent).not.toContain("dependsOn");
+    expect(mainContent).toBe(mainBefore);
   });
 });
   describe("non-destructive native schema generation", () => {

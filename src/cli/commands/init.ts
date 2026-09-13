@@ -19,6 +19,7 @@ import {
 import { syncProjectManifest } from "../../core/project/manifest";
 import { writeWorkflowDocs, writeAgentSkills } from "../../core/project/workflows";
 import { writeAgentInstructionFiles } from "../../core/project/agent-instructions";
+import { initializeNewProjectMigrations } from "../../core/operations/migration-generator";
 import {
   buildCSharpCodegenToolManifestSource,
   buildPythonCodegenRequirementsSource,
@@ -2759,6 +2760,7 @@ output privateDnsZoneId string = privateDnsZone.id
 
   console.log('✅ VNet module definitions created\n');
 
+  initializeNewProjectMigrations(projectDir);
   console.log('✅ Infrastructure files created\n');
 }
 

@@ -21,6 +21,8 @@ SwallowKit CLI の全コマンドとオプションです。
 - [swallowkit status](#swallowkit-status)
 - [swallowkit verify](#swallowkit-verify)
 - [swallowkit create-dev-seeds](#swallowkit-create-dev-seeds)
+- [swallowkit migrations init](#swallowkit-migrations-init)
+- [swallowkit create-migration](#swallowkit-create-migration)
 - [swallowkit provision](#swallowkit-provision)
 
 ## swallowkit machine
@@ -52,7 +54,7 @@ npx swallowkit machine <command> <subcommand> [options]
 | `apply scaffold` | plan の鮮度・承認を検証して scaffold を適用する（複数 model 対応） |
 | `plan auth` | 書き込まずに add-auth の変更計画を返す（`--allowed-providers` で SWA identity provider を指定） |
 | `apply auth` | plan の鮮度・承認を検証して認証コードを適用する |
-| `plan provision` | プロビジョニングのローカルプリフライト（`--what-if` で az what-if） |
+| `plan provision` | Azure 状態を確認し bootstrap / adoption / migration / reconcile の plan を返す |
 | `apply provision` | 承認済み plan を適用する（常に `--approve` 必須） |
 | `verify project` | structure / drift / typecheck（+ build / lint / test / カスタム）チェックを実行する（`--compact` で info-severity findings を抑制） |
 | `explain failure` | 直近の verify 失敗の証拠と修復アクションを返す |
@@ -76,6 +78,7 @@ npx swallowkit machine inspect boundaries
 npx swallowkit machine inspect capabilities
 npx swallowkit machine inspect infra
 npx swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia
+npx swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia --adopt-existing --baseline 0 --what-if
 npx swallowkit machine apply provision --plan <planId> --approve
 npx swallowkit machine verify project --checks structure,drift
 npx swallowkit machine verify project --compact
@@ -1335,7 +1338,7 @@ npx swallowkit dev --seed-env local
 
 ## swallowkit provision
 
-Azure リソースを Bicep でプロビジョニングします。
+Azure の状態を確認し、初回構築または未適用の Infrastructure Migration を実行します。既存環境では通常 `main.bicep` を再デプロイしません。
 
 ### 使用法
 
@@ -1351,6 +1354,13 @@ pnpm dlx swallowkit provision [options]
 |----------|------|------|------|
 | `--resource-group <name>` | `-g` | リソースグループ名 | ✅ |
 | `--subscription <id>` | | サブスクリプション ID | |
+| `--location <region>` | | Functions / Cosmos DB のリージョン。非対話実行では必須 | |
+| `--swa-location <region>` | | Static Web Apps のリージョン。非対話実行では必須 | |
+| `--what-if` | | Azure what-if を plan に含める | |
+| `--adopt-existing` | | タグなし既存環境を baseline として採用する | |
+| `--baseline <version>` | | adoption の baseline。現在は `0` のみ | |
+| `--reconcile` | | `main.bicep` 全体を明示的に再デプロイする | |
+| `--approve` | | 表示された plan を非対話で承認する | |
 
 ### リージョン選択
 
@@ -1420,8 +1430,50 @@ npx swallowkit provision --resource-group my-app-rg
 # サブスクリプション指定
 npx swallowkit provision \
   --resource-group my-app-rg \
-  --subscription "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  --subscription "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
+  --location japaneast --swa-location eastasia
 ```
+
+### 状態別の動作
+
+| Azure の状態 | 動作 |
+|---|---|
+| Resource Group が存在しない | `main.bicep` を初回デプロイし、baseline 0 タグを記録 |
+| タグとローカル checksum が一致 | 未適用 migration のみを version 順に実行 |
+| migration がない | `noop`。Azure リソースを変更しない |
+| Resource Group はあるがタグがない | `adoption-required`。明示 adoption が必要 |
+| Azure の version が先行、または checksum 不一致 | 安全のため停止 |
+
+適用直前と各 migration の前にもタグを再確認します。別のデプロイが先に状態を進めた場合は `stale-azure-state` で停止します。
+
+## swallowkit migrations init
+
+旧バージョンで作成したプロジェクトの現在の `infra/` を、変更せずに baseline 0 として記録します。
+
+```bash
+npx swallowkit migrations init --legacy-baseline
+```
+
+生成される `infra/migrations/manifest.json` は Git にコミットしてください。このコマンドは Azure に接続せず、既存 manifest を上書きしません。続いて次の adoption を実行します。
+
+```bash
+npx swallowkit provision -g my-app-rg \
+  --location japaneast --swa-location eastasia \
+  --adopt-existing --baseline 0 --what-if
+```
+
+adoption は `main.bicep` を実行せず、Resource Group の既存タグを保持したまま SwallowKit の状態タグだけを追加します。what-if に Create/Delete がある場合は停止します。
+
+## swallowkit create-migration
+
+標準外の追加 Azure リソース用に、次の version の Bicep を生成します。
+
+```bash
+npx swallowkit create-migration add-search-service
+# infra/migrations/0001-add-search-service/main.bicep を編集
+```
+
+生成した Bicep は `projectName` と `location` を受け取ります。既存リソースは `existing` で参照し、原則として追加的かつ再実行可能にしてください。適用済みファイルを編集すると checksum 不一致で停止するため、修正は新しい migration にします。
 
 ### プロビジョニング後の確認
 
@@ -1442,7 +1494,7 @@ az functionapp show \
   --query "defaultHostName" -o tsv
 ```
 
-### Bicep ファイルのカスタマイズ
+### Baseline Bicep のカスタマイズ
 
 プロビジョニング前に `infra/` の Bicep ファイルを編集できます:
 
@@ -1455,7 +1507,7 @@ resource flexFunctionsServer 'Microsoft.Web/sites@2023-12-01' = {
 }
 ```
 
-編集後、`swallowkit provision` を再実行して変更を適用します。
+baseline を意図的に変更した場合、通常の `provision` は `baseline-drift` で停止します。影響を Azure what-if で確認したうえで、`--reconcile --what-if` を指定してください。Functions app settings など template 管理プロパティが上書きされる可能性があります。追加リソースには `create-migration` を使用する方が安全です。
 
 ### トラブルシューティング
 

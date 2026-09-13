@@ -179,7 +179,7 @@ export function inspectCapabilities(): CapabilitiesContract {
       "inspect project | entities | routes | artifacts | boundaries | infra | drift | capabilities",
       "validate project",
       "generate model <names...> | generate scaffold <model>",
-      "plan scaffold <models...> | plan auth --provider <p> [--scheme <name>] [--allowed-providers <csv>] | plan provision -g <rg> --location <loc> --swa-location <loc>",
+      "plan scaffold <models...> | plan auth --provider <p> [--scheme <name>] [--allowed-providers <csv>] | plan provision -g <rg> --location <loc> --swa-location <loc> [--adopt-existing --baseline 0 --what-if] [--reconcile --what-if]",
       "apply scaffold [models...] --plan <id> [--approve] | apply auth --plan <id> [--approve] | apply provision --plan <id> --approve",
       "verify project [--checks <ids>] [--compact]",
       "explain failure [--check <id>]",

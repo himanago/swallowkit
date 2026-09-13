@@ -352,18 +352,24 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_plan_provision",
-      description: "Preflight Azure provisioning locally (Bicep analysis, az CLI availability, command preview). Never deploys. Set whatIf=true to run az what-if (requires az login). The returned plan always requires human approval.",
+      description: "Plan Azure bootstrap or pending infrastructure migrations. Existing untagged environments require explicit adoption with what-if; full main.bicep redeployment requires reconcile=true. Never deploys and always requires human approval.",
       inputSchema: z.object({
         resourceGroup: z.string(),
         location: z.string(),
         swaLocation: z.string(),
         subscription: z.string().optional(),
         whatIf: z.boolean().optional(),
+        adoptExisting: z.boolean().optional(),
+        baseline: z.number().int().nonnegative().optional(),
+        reconcile: z.boolean().optional(),
       }),
-      handler: async ({ resourceGroup, location, swaLocation, subscription, whatIf }: { resourceGroup: string; location: string; swaLocation: string; subscription?: string; whatIf?: boolean }) => {
+      handler: async ({ resourceGroup, location, swaLocation, subscription, whatIf, adoptExisting, baseline, reconcile }: { resourceGroup: string; location: string; swaLocation: string; subscription?: string; whatIf?: boolean; adoptExisting?: boolean; baseline?: number; reconcile?: boolean }) => {
         const args = ["plan", "provision", "--resource-group", resourceGroup, "--location", location, "--swa-location", swaLocation];
         if (subscription) args.push("--subscription", subscription);
         if (whatIf) args.push("--what-if");
+        if (adoptExisting) args.push("--adopt-existing");
+        if (baseline !== undefined) args.push("--baseline", String(baseline));
+        if (reconcile) args.push("--reconcile");
 
         const response = await executeMachineCommand(args, runMachineCli);
         return jsonTextContent(withOperationStatus(response));

@@ -16,6 +16,9 @@ import { parseModelFile } from "../core/scaffold/model-parser";
 import { inspectInfra } from "../core/project/infra";
 import { loadCustomVerifyChecks, compactVerifyResult, runVerify, VerifyResult } from "../core/verify";
 import { buildAgentSkills, buildWorkflowDocs, writeAgentSkills, writeWorkflowDocs } from "../core/project/workflows";
+import { applyProvisionOperation, planProvisionOperation } from "../core/operations/provision-operations";
+import { createCustomMigration, initializeLegacyMigrations } from "../core/operations/migration-generator";
+import { createMigrationManifest, encodeMigrationState, getMigrationTagKey, saveMigrationManifest } from "../core/project/migrations";
 
 jest.mock("child_process", () => {
   const actual = jest.requireActual<typeof import("child_process")>("child_process");
@@ -298,6 +301,142 @@ describe("agent loop phase 3/4", () => {
     expect(applyMissing.response.ok).toBe(false);
     expect(applyMissing.response.error.code).toBe("plan-not-found");
     expect(applyMissing.response.status).toBe("blocked");
+  });
+
+  it("requires explicit adoption for an existing untagged resource group", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), JSON.stringify({ parameters: { projectName: { value: "sample-app" } } }));
+    initializeLegacyMigrations(tempDir);
+
+    (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
+      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: {} }), stderr: "" };
+      return { status: 1, stdout: "", stderr: "unexpected" };
+    });
+
+    const plan = await planProvisionOperation({ resourceGroup: "rg-sample", location: "japaneast", swaLocation: "eastasia" });
+
+    expect(plan.mode).toBe("adoption-required");
+    expect(plan.commands).toEqual([]);
+  });
+
+  it("adopts a legacy baseline without deploying main.bicep when what-if only modifies resources", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), JSON.stringify({ parameters: { projectName: { value: "sample-app" } } }));
+    initializeLegacyMigrations(tempDir);
+
+    (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
+      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: {} }), stderr: "" };
+      if (args[0] === "deployment" && args[2] === "what-if") {
+        return { status: 0, stdout: JSON.stringify({ changes: [{ changeType: "Modify", resourceId: "/functions/sample" }] }), stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected" };
+    });
+
+    const plan = await planProvisionOperation({
+      resourceGroup: "rg-sample",
+      location: "japaneast",
+      swaLocation: "eastasia",
+      adoptExisting: true,
+      baseline: 0,
+      whatIf: true,
+    });
+
+    expect(plan.mode).toBe("adopt");
+    expect(plan.commands).toHaveLength(1);
+    expect(plan.commands[0]).toContain("az tag update");
+    expect(plan.commands[0]).not.toContain("deployment group create");
+  });
+
+  it("recovers an interrupted bootstrap by reconciling before recording baseline state", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), JSON.stringify({ parameters: { projectName: { value: "sample-app" } } }));
+    saveMigrationManifest(createMigrationManifest(tempDir, { projectId: "new-project" }), tempDir);
+
+    (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
+      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: {} }), stderr: "" };
+      if (args[0] === "deployment" && args[2] === "what-if") return { status: 0, stdout: JSON.stringify({ changes: [] }), stderr: "" };
+      return { status: 1, stdout: "", stderr: "unexpected" };
+    });
+
+    const plan = await planProvisionOperation({
+      resourceGroup: "rg-sample",
+      location: "japaneast",
+      swaLocation: "eastasia",
+      reconcile: true,
+    });
+
+    expect(plan.mode).toBe("reconcile");
+    expect(plan.commands.some((command) => command.includes("deployment group create"))).toBe(true);
+    expect(plan.commands.at(-1)).toContain("tag update");
+    expect(plan.manifestAfterApply?.baseline.legacy).toBe(false);
+  });
+
+  it("plans only migrations newer than the Azure tag", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), JSON.stringify({ parameters: { projectName: { value: "sample-app" } } }));
+    const manifest = initializeLegacyMigrations(tempDir);
+    createCustomMigration("add-search", tempDir);
+    const tagValue = encodeMigrationState({ schemaVersion: 1, version: 0, checksum: manifest.baseline.checksum });
+
+    (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
+      if (args[0] === "group" && args[1] === "show") {
+        const tagKey = getMigrationTagKey(manifest.projectId);
+        return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: { [tagKey]: tagValue } }), stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected" };
+    });
+
+    const plan = await planProvisionOperation({ resourceGroup: "rg-sample", location: "japaneast", swaLocation: "eastasia" });
+
+    expect(plan.mode).toBe("migrate");
+    expect(plan.pendingMigrations.map((migration) => migration.version)).toEqual([1]);
+    expect(plan.commands.filter((command) => command.includes("deployment group create"))).toHaveLength(1);
+    expect(plan.commands.some((command) => command.includes("tag update") && command.includes("--operation Merge"))).toBe(true);
+  });
+
+  it("applies only the pending migration and advances its tag", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), JSON.stringify({ parameters: { projectName: { value: "sample-app" } } }));
+    const manifest = initializeLegacyMigrations(tempDir);
+    createCustomMigration("add-search", tempDir);
+    const tagKey = getMigrationTagKey(manifest.projectId);
+    let tagValue = encodeMigrationState({ schemaVersion: 1, version: 0, checksum: manifest.baseline.checksum });
+    const deployedTemplates: string[] = [];
+
+    (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
+      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: { [tagKey]: tagValue } }), stderr: "" };
+      if (args[0] === "deployment" && args[2] === "create") {
+        deployedTemplates.push(args[args.indexOf("--template-file") + 1]);
+        return { status: 0, stdout: JSON.stringify({ properties: { outputs: {} } }), stderr: "" };
+      }
+      if (args[0] === "tag" && args[1] === "update") {
+        tagValue = args[args.indexOf("--tags") + 1].slice(tagKey.length + 1);
+        return { status: 0, stdout: "{}", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected: ${args.join(" ")}` };
+    });
+
+    const plan = await planProvisionOperation({ resourceGroup: "rg-sample", location: "japaneast", swaLocation: "eastasia" });
+    const result = await applyProvisionOperation({ planId: plan.planId, approve: true });
+
+    expect(result.executedCommands).toHaveLength(2);
+    expect(deployedTemplates).toEqual([path.join(tempDir, "infra", "migrations", "0001-add-search", "main.bicep")]);
+    expect(tagValue).toContain(":1:");
   });
 
   it("rejects invalid provision inputs", async () => {

@@ -187,7 +187,7 @@ Stop and ask a human when:
       "Provision Azure resources (Static Web Apps, Functions, Cosmos DB) for a SwallowKit project using the two-phase plan/apply flow with a mandatory human approval gate. Use when asked to deploy infrastructure, provision Azure, create resource groups, or run Bicep deployments.",
     content: `# Workflow: Provision Azure resources
 
-Goal: deploy the Bicep infrastructure with an explicit human approval gate.
+Goal: bootstrap Azure once, then apply only pending versioned infrastructure migrations with an explicit human approval gate.
 
 ## Rules
 
@@ -196,6 +196,8 @@ Goal: deploy the Bicep infrastructure with an explicit human approval gate.
 - Never pass \`--approve\` to \`apply provision\` unless a human explicitly
   instructed you to provision in this session.
 - Inspect infra locally first — no \`az\` calls are needed for inspection.
+- Never edit an applied migration. Create a corrective migration instead.
+- Never use \`--reconcile\` for an ordinary model or resource addition.
 
 ## Steps
 
@@ -204,8 +206,10 @@ Goal: deploy the Bicep infrastructure with an explicit human approval gate.
    - review parameters, modules, outputs, and container wiring warnings.
 2. Compute the provisioning plan (no resources are created):
    \`${runCmd} swallowkit machine plan provision -g <resource-group> --location <region>\`
-   - optional: \`--what-if\` to include an \`az deployment ... what-if\` preview.
-   - the plan lists the exact \`az\` commands that would run.
+  - the plan reports \`bootstrap\`, \`migrate\`, \`noop\`, or \`adoption-required\`.
+  - it lists only pending migrations and the exact \`az\` commands that would run.
+  - for an older untagged environment, first run \`${runCmd} swallowkit migrations init --legacy-baseline\`, then plan with \`--adopt-existing --baseline 0 --what-if\`.
+  - only intentional baseline changes use \`--reconcile --what-if\`; this can reset template-managed settings.
 3. Present the plan to the human and wait for explicit approval.
 4. Only after approval:
    \`${runCmd} swallowkit machine apply provision --plan <planId> --approve\`

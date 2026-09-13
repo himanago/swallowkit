@@ -1,193 +1,124 @@
-import { Command } from 'commander';
-import { execSync } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
-import prompts from 'prompts';
-import { ensureSwallowKitProject } from '../../core/config';
+import { Command } from "commander";
+import prompts from "prompts";
+import { ensureSwallowKitProject } from "../../core/config";
+import { applyProvisionOperation, planProvisionOperation } from "../../core/operations/provision-operations";
 
-export const provisionCommand = new Command('provision')
-  .description('Provision Azure resources using Bicep templates')
-  .requiredOption('-g, --resource-group <name>', 'Resource group name')
-  .option('--subscription <id>', 'Azure subscription ID (optional)')
-  .action(async (options) => {
-    // SwallowKit プロジェクトディレクトリかどうかを検証
+const PRIMARY_REGIONS = [
+  { title: "Japan East (japaneast)", value: "japaneast" },
+  { title: "Japan West (japanwest)", value: "japanwest" },
+  { title: "East Asia (eastasia)", value: "eastasia" },
+  { title: "Southeast Asia (southeastasia)", value: "southeastasia" },
+  { title: "East US (eastus)", value: "eastus" },
+  { title: "East US 2 (eastus2)", value: "eastus2" },
+  { title: "West US 2 (westus2)", value: "westus2" },
+  { title: "Central US (centralus)", value: "centralus" },
+  { title: "West Europe (westeurope)", value: "westeurope" },
+];
+
+const SWA_REGIONS = [
+  { title: "East Asia (eastasia) - Recommended for Japan", value: "eastasia" },
+  { title: "West US 2 (westus2)", value: "westus2" },
+  { title: "Central US (centralus)", value: "centralus" },
+  { title: "East US 2 (eastus2)", value: "eastus2" },
+  { title: "West Europe (westeurope)", value: "westeurope" },
+];
+
+interface ProvisionCliOptions {
+  resourceGroup: string;
+  subscription?: string;
+  location?: string;
+  swaLocation?: string;
+  whatIf?: boolean;
+  adoptExisting?: boolean;
+  baseline?: string;
+  reconcile?: boolean;
+  approve?: boolean;
+}
+
+async function resolveLocations(options: ProvisionCliOptions): Promise<{ location: string; swaLocation: string }> {
+  if (options.location && options.swaLocation) {
+    return { location: options.location, swaLocation: options.swaLocation };
+  }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Non-interactive provision requires --location and --swa-location.");
+  }
+  const answer = await prompts([
+    {
+      type: options.location ? null : "select",
+      name: "location",
+      message: "Primary location for Functions and Cosmos DB",
+      choices: PRIMARY_REGIONS,
+      initial: 0,
+    },
+    {
+      type: options.swaLocation ? null : "select",
+      name: "swaLocation",
+      message: "Static Web App location",
+      choices: SWA_REGIONS,
+      initial: 0,
+    },
+  ]);
+  const location = options.location ?? answer.location;
+  const swaLocation = options.swaLocation ?? answer.swaLocation;
+  if (!location || !swaLocation) throw new Error("Region selection cancelled.");
+  return { location, swaLocation };
+}
+
+export const provisionCommand = new Command("provision")
+  .description("Bootstrap, adopt, migrate, or explicitly reconcile Azure resources")
+  .requiredOption("-g, --resource-group <name>", "Resource group name")
+  .option("--subscription <id>", "Azure subscription ID")
+  .option("--location <region>", "Primary location for Functions and Cosmos DB")
+  .option("--swa-location <region>", "Static Web App location")
+  .option("--what-if", "Include Azure what-if evidence", false)
+  .option("--adopt-existing", "Adopt an existing untagged resource group without deploying main.bicep", false)
+  .option("--baseline <version>", "Baseline version for adoption (currently 0)")
+  .option("--reconcile", "Explicitly redeploy infra/main.bicep", false)
+  .option("--approve", "Apply the displayed plan without an interactive confirmation", false)
+  .action(async (options: ProvisionCliOptions) => {
     ensureSwallowKitProject("provision");
+    const locations = await resolveLocations(options);
+    const baseline = options.baseline === undefined ? undefined : Number(options.baseline);
+    const plan = await planProvisionOperation({
+      resourceGroup: options.resourceGroup,
+      subscription: options.subscription,
+      location: locations.location,
+      swaLocation: locations.swaLocation,
+      whatIf: options.whatIf,
+      adoptExisting: options.adoptExisting,
+      baseline,
+      reconcile: options.reconcile,
+    });
 
-    console.log('🚀 Starting Azure resource provisioning...\n');
+    console.log(`Provision mode: ${plan.mode}`);
+    for (const warning of plan.warnings) console.warn(`Warning: ${warning}`);
+    if (plan.pendingMigrations.length > 0) {
+      console.log(`Pending migrations: ${plan.pendingMigrations.map((migration) => `${migration.version}-${migration.slug}`).join(", ")}`);
+    }
+    for (const command of plan.commands) console.log(`  ${command}`);
 
-    // Check if Azure CLI is installed
-    try {
-      execSync('az --version', { stdio: 'ignore' });
-    } catch {
-      console.error('❌ Azure CLI is not installed. Please install it first: https://aka.ms/azure-cli');
-      process.exit(1);
+    if (plan.mode === "adoption-required") {
+      throw new Error('Existing resource group requires: migrations init --legacy-baseline, then provision --adopt-existing --baseline 0 --what-if.');
     }
 
-    // Check if Bicep files exist
-    const infraDir = path.join(process.cwd(), 'infra');
-    const mainBicepPath = path.join(infraDir, 'main.bicep');
-    const parametersPath = path.join(infraDir, 'main.parameters.json');
-
-    if (!fs.existsSync(mainBicepPath)) {
-      console.error('❌ Bicep files not found. Run "swallowkit init" first to generate infrastructure files.');
-      process.exit(1);
-    }
-
-    try {
-      // Prompt for region selection
-      console.log('📍 Select Azure regions for your resources:\n');
-      
-      const regionChoices = await prompts([
-        {
-          type: 'select',
-          name: 'primaryLocation',
-          message: 'Primary location for Functions and Cosmos DB',
-          choices: [
-            { title: 'Japan East (japaneast)', value: 'japaneast' },
-            { title: 'Japan West (japanwest)', value: 'japanwest' },
-            { title: 'East Asia (eastasia)', value: 'eastasia' },
-            { title: 'Southeast Asia (southeastasia)', value: 'southeastasia' },
-            { title: 'East US (eastus)', value: 'eastus' },
-            { title: 'East US 2 (eastus2)', value: 'eastus2' },
-            { title: 'West US 2 (westus2)', value: 'westus2' },
-            { title: 'Central US (centralus)', value: 'centralus' },
-            { title: 'West Europe (westeurope)', value: 'westeurope' },
-          ],
-          initial: 0, // Default to japaneast
-        },
-        {
-          type: 'select',
-          name: 'swaLocation',
-          message: 'Static Web App location (limited availability)',
-          choices: [
-            { title: 'East Asia (eastasia) - Recommended for Japan', value: 'eastasia' },
-            { title: 'West US 2 (westus2)', value: 'westus2' },
-            { title: 'Central US (centralus)', value: 'centralus' },
-            { title: 'East US 2 (eastus2)', value: 'eastus2' },
-            { title: 'West Europe (westeurope)', value: 'westeurope' },
-          ],
-          initial: 0, // Default to eastasia
-        },
-      ], {
-        onCancel: () => {
-          throw new Error('User cancelled');
-        }
+    let approved = options.approve === true;
+    if (!approved) {
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        throw new Error("Non-interactive provision requires --approve after reviewing the plan.");
+      }
+      const answer = await prompts({
+        type: "confirm",
+        name: "approved",
+        message: `Apply the ${plan.mode} plan?`,
+        initial: false,
       });
-
-      if (!regionChoices.primaryLocation || !regionChoices.swaLocation) {
-        console.log('\n❌ Region selection cancelled.');
-        process.exit(1);
-      }
-
-      const primaryLocation = regionChoices.primaryLocation;
-      const swaLocation = regionChoices.swaLocation;
-
-      console.log(`\n✓ Primary location: ${primaryLocation}`);
-      console.log(`✓ Static Web App location: ${swaLocation}`);
-      
-      // Confirmation prompt to prevent accidental wrong selection
-      const confirmation = await prompts({
-        type: 'confirm',
-        name: 'proceed',
-        message: `Proceed with deployment to ${primaryLocation} (primary) and ${swaLocation} (SWA)?`,
-        initial: true
-      }, {
-        onCancel: () => {
-          throw new Error('User cancelled');
-        }
-      });
-
-      if (!confirmation.proceed) {
-        console.log('\n❌ Deployment cancelled by user.');
-        process.exit(0);
-      }
-
-      console.log('');
-      // Set subscription if provided
-      if (options.subscription) {
-        console.log(`🔧 Setting subscription: ${options.subscription}`);
-        execSync(`az account set --subscription ${options.subscription}`, { stdio: 'inherit' });
-      }
-
-      // Create resource group if it doesn't exist (use primary location)
-      console.log(`🔧 Ensuring resource group exists: ${options.resourceGroup}`);
-      execSync(
-        `az group create --name ${options.resourceGroup} --location ${primaryLocation}`,
-        { stdio: 'inherit' }
-      );
-
-      // Deploy Bicep template with both locations
-      console.log('\n📦 Deploying resources (this may take several minutes)...\n');
-      const deployCommand = `az deployment group create --resource-group ${options.resourceGroup} --template-file "${mainBicepPath}" --parameters "${parametersPath}" --parameters location=${primaryLocation} --parameters swaLocation=${swaLocation}`;
-      
-      const output = execSync(deployCommand, { encoding: 'utf-8', stdio: 'pipe' });
-      const deployment = JSON.parse(output);
-
-      // Display outputs
-      console.log('\n✅ Deployment completed successfully!\n');
-      console.log('📋 Resource Information:');
-      
-      let swaName = '<swa-name>';
-      let functionAppName = '<function-name>';
-      if (deployment.properties?.outputs) {
-        const outputs = deployment.properties.outputs;
-        if (outputs.staticWebAppName) {
-          swaName = outputs.staticWebAppName.value;
-          console.log(`  - Static Web App: ${swaName}`);
-          console.log(`  - URL: https://${outputs.staticWebAppUrl.value}`);
-        }
-        if (outputs.functionsAppName) {
-          functionAppName = outputs.functionsAppName.value;
-          console.log(`  - Function App: ${functionAppName}`);
-          console.log(`  - URL: https://${outputs.functionsAppUrl.value}`);
-        }
-        if (outputs.cosmosDbAccountName) {
-          console.log(`  - Cosmos DB: ${outputs.cosmosDbAccountName.value}`);
-          console.log(`  - Database: ${outputs.cosmosDatabaseName.value}`);
-        }
-      }
-
-      // Next steps guidance
-      console.log('\n📝 Next Steps:');
-      console.log('  1. Configure CI/CD secrets/variables:\n');
-
-      // Fetch SWA deployment token
-      console.log('     [AZURE_STATIC_WEB_APPS_API_TOKEN]');
-      try {
-        const swaToken = execSync(
-          `az staticwebapp secrets list --name ${swaName} --resource-group ${options.resourceGroup} --query "properties.apiKey" -o tsv`,
-          { encoding: 'utf-8', stdio: 'pipe' }
-        ).trim();
-        console.log(`       ${swaToken}\n`);
-      } catch {
-        console.log('       ⚠️  Failed to retrieve. Run manually:');
-        console.log(`       az staticwebapp secrets list --name ${swaName} --resource-group ${options.resourceGroup} --query "properties.apiKey" -o tsv\n`);
-      }
-
-      // Function App name (already known)
-      console.log('     [AZURE_FUNCTIONAPP_NAME]');
-      console.log(`       ${functionAppName}\n`);
-
-      // Fetch Function App publish profile
-      console.log('     [AZURE_FUNCTIONAPP_PUBLISH_PROFILE]');
-      try {
-        const publishProfile = execSync(
-          `az webapp deployment list-publishing-profiles --name ${functionAppName} --resource-group ${options.resourceGroup} --xml`,
-          { encoding: 'utf-8', stdio: 'pipe' }
-        ).trim();
-        console.log(`       ${publishProfile}\n`);
-      } catch {
-        console.log('       ⚠️  Failed to retrieve. Run manually:');
-        console.log(`       az webapp deployment list-publishing-profiles --name ${functionAppName} --resource-group ${options.resourceGroup} --xml\n`);
-      }
-
-      console.log('  2. Set up your CI/CD pipeline (GitHub Actions or Azure Pipelines)');
-      console.log('  3. Manually trigger the first deployment in your CI/CD pipeline');
-      console.log('     (Automatic deployments will run on subsequent pushes)\n');
-
-    } catch (error: any) {
-      console.error('❌ Deployment failed:');
-      console.error(error.message);
-      process.exit(1);
+      approved = answer.approved === true;
     }
+    if (!approved) {
+      console.log("Provision cancelled.");
+      return;
+    }
+
+    const result = await applyProvisionOperation({ planId: plan.planId, approve: true });
+    console.log(`Provision completed (${plan.mode}). ${result.executedCommands.length} command(s) executed.`);
   });

@@ -21,6 +21,8 @@ Bootstrap: `pnpm dlx swallowkit init my-app` or `npx swallowkit init my-app`. In
 - [swallowkit status](#swallowkit-status)
 - [swallowkit verify](#swallowkit-verify)
 - [swallowkit create-dev-seeds](#swallowkit-create-dev-seeds)
+- [swallowkit migrations init](#swallowkit-migrations-init)
+- [swallowkit create-migration](#swallowkit-create-migration)
 - [swallowkit provision](#swallowkit-provision)
 
 ## swallowkit machine
@@ -52,7 +54,7 @@ npx swallowkit machine <command> <subcommand> [options]
 | `apply scaffold` | Apply scaffold changes with plan freshness and approval checks; accepts multiple models |
 | `plan auth` | Compute the add-auth change plan without writing files (`--allowed-providers` sets SWA identity providers) |
 | `apply auth` | Apply auth code with plan freshness and approval checks |
-| `plan provision` | Local provisioning preflight (`--what-if` runs az what-if) |
+| `plan provision` | Inspect Azure state and return a bootstrap, adoption, migration, or reconcile plan |
 | `apply provision` | Apply an approved provisioning plan (always requires `--approve`) |
 | `verify project` | Run structure / drift / typecheck (plus build / lint / test / custom) verification checks; `--compact` suppresses info-severity findings |
 | `explain failure` | Return evidence and repair actions for the last verify failures |
@@ -76,6 +78,7 @@ npx swallowkit machine inspect boundaries
 npx swallowkit machine inspect capabilities
 npx swallowkit machine inspect infra
 npx swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia
+npx swallowkit machine plan provision -g my-rg --location japaneast --swa-location eastasia --adopt-existing --baseline 0 --what-if
 npx swallowkit machine apply provision --plan <planId> --approve
 npx swallowkit machine verify project --checks structure,drift
 npx swallowkit machine verify project --compact
@@ -1214,7 +1217,7 @@ npx swallowkit dev --seed-env local
 
 ## swallowkit provision
 
-Provision Azure resources using Bicep.
+Inspect Azure state and either bootstrap the environment or apply pending infrastructure migrations. Existing environments do not normally redeploy `main.bicep`.
 
 ### Usage
 
@@ -1230,6 +1233,13 @@ pnpm dlx swallowkit provision [options]
 |--------|-------|-------------|----------|
 | `--resource-group <name>` | `-g` | Resource group name | ✅ |
 | `--subscription <id>` | | Subscription ID | |
+| `--location <region>` | | Functions/Cosmos DB region; required non-interactively | |
+| `--swa-location <region>` | | Static Web Apps region; required non-interactively | |
+| `--what-if` | | Include Azure what-if evidence in the plan | |
+| `--adopt-existing` | | Adopt an existing untagged environment as a baseline | |
+| `--baseline <version>` | | Adoption baseline; currently only `0` | |
+| `--reconcile` | | Explicitly redeploy all of `main.bicep` | |
+| `--approve` | | Approve the displayed plan non-interactively | |
 
 ### Region Selection
 
@@ -1299,8 +1309,50 @@ npx swallowkit provision --resource-group my-app-rg
 # With subscription
 npx swallowkit provision \
   --resource-group my-app-rg \
-  --subscription "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  --subscription "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
+  --location japaneast --swa-location eastasia
 ```
+
+### Behavior by Azure State
+
+| Azure state | Behavior |
+|---|---|
+| Resource group does not exist | Deploy `main.bicep` once and record baseline 0 |
+| Tag matches the local checksum | Apply only pending migrations in version order |
+| No pending migrations | `noop`; no Azure resources are changed |
+| Resource group exists without a state tag | `adoption-required`; explicit adoption is required |
+| Azure version is ahead or checksums differ | Stop without applying changes |
+
+The tag is checked again immediately before apply and before every migration. A concurrent deployment causes `stale-azure-state` rather than applying against an unexpected version.
+
+## swallowkit migrations init
+
+Record the current `infra/` directory of a project created by an older SwallowKit version as baseline 0 without modifying it.
+
+```bash
+npx swallowkit migrations init --legacy-baseline
+```
+
+Commit the generated `infra/migrations/manifest.json`. This command does not contact Azure and does not overwrite an existing manifest. Then adopt the deployed environment:
+
+```bash
+npx swallowkit provision -g my-app-rg \
+  --location japaneast --swa-location eastasia \
+  --adopt-existing --baseline 0 --what-if
+```
+
+Adoption never deploys `main.bicep`. It preserves existing resource-group tags and adds only the SwallowKit state tag. It stops if what-if contains Create/Delete changes.
+
+## swallowkit create-migration
+
+Generate the next versioned Bicep file for an additional Azure resource:
+
+```bash
+npx swallowkit create-migration add-search-service
+# Edit infra/migrations/0001-add-search-service/main.bicep
+```
+
+The template receives `projectName` and `location`. Reference existing resources with `existing`, and keep migrations additive and safe to retry. Applied migrations are immutable; add a corrective migration instead of editing one.
 
 ### After Provisioning
 
@@ -1321,7 +1373,7 @@ az functionapp show \
   --query "defaultHostName" -o tsv
 ```
 
-### Customizing Bicep Files
+### Customizing Baseline Bicep
 
 Edit Bicep files in `infra/` before provisioning:
 
@@ -1334,7 +1386,7 @@ resource flexFunctionsServer 'Microsoft.Web/sites@2023-12-01' = {
 }
 ```
 
-After editing, run `swallowkit provision` again to apply changes.
+Normal `provision` stops with `baseline-drift` after an intentional baseline edit. Review Azure what-if and use `--reconcile --what-if` to deploy it. Reconcile may reset template-managed properties such as Function App settings. Prefer `create-migration` for additional resources.
 
 ### Troubleshooting
 

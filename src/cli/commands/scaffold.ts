@@ -50,6 +50,7 @@ import {
   getActiveFileSession,
   SchemaAnalysisSnapshot,
 } from "../../core/operations/file-session";
+import { generateModelContainerMigration } from "../../core/operations/migration-generator";
 import { recordSessionOperations } from "../../core/project/artifacts";
 
 const SCAFFOLD_GENERATOR = "scaffold";
@@ -842,155 +843,15 @@ async function generateBFFRoutes(
  * Generate Cosmos DB container Bicep file
  */
 export async function generateCosmosContainer(modelInfo: any, session: FileOperationSession = new FileOperationSession("commit")): Promise<void> {
-  console.log("\n🗄️  Generating Cosmos DB container Bicep file...");
+  console.log("\n🗄️  Generating Cosmos DB container migration...");
 
-  const modelKebab = toKebabCase(modelInfo.name);
-  const modelPascal = toPascalCase(modelInfo.name);
-  const cwd = process.cwd();
-
-  // Check if infra directory exists
-  const infraDir = path.join(cwd, "infra");
-  if (!fs.existsSync(infraDir)) {
+  const infraDir = path.join(process.cwd(), "infra");
+  if (!session.fileExists(infraDir) && !fs.existsSync(infraDir)) {
     console.log("ℹ️  infra directory not found. Skipping Cosmos DB container generation.");
     return;
   }
-
-  // Generate container Bicep file
-  const containersDir = path.join(infraDir, "containers");
-  const containerFileName = `${modelKebab}-container.bicep`;
-  const containerFilePath = path.join(containersDir, containerFileName);
-
-  const bicepContent = `@description('Cosmos DB account name')
-param cosmosAccountName string
-
-@description('Database name')
-param databaseName string
-
-@description('Container name')
-param containerName string = '${modelPascal}s'
-
-@description('Partition key path')
-param partitionKeyPath string = '${modelInfo.partitionKey}'
-
-// Reference existing Cosmos DB account
-resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' existing = {
-  name: cosmosAccountName
-}
-
-// Reference existing database
-resource database 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-11-15' existing = {
-  parent: cosmosAccount
-  name: databaseName
-}
-
-// Container for ${modelPascal}
-resource container 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-11-15' = {
-  parent: database
-  name: containerName
-  properties: {
-    resource: {
-      id: containerName
-      partitionKey: {
-        paths: [
-          partitionKeyPath
-        ]
-        kind: 'Hash'
-      }
-      indexingPolicy: {
-        automatic: true
-        indexingMode: 'consistent'
-        includedPaths: [
-          {
-            path: '/*'
-          }
-        ]
-        excludedPaths: [
-          {
-            path: '/_etag/?'
-          }
-        ]
-      }
-    }
-  }
-}
-
-output containerName string = container.name
-`;
-
-  // Write Bicep file (overwrite if exists)
-  session.writeFile(containerFilePath, bicepContent, { ownership: "managed", generator: SCAFFOLD_GENERATOR, sourceModel: modelInfo.name });
-  console.log(`✅ Created: ${containerFilePath}`);
-
-  // Update main.bicep to include this container module
-  await updateMainBicepWithContainer(modelKebab, modelPascal, session);
-}
-
-/**
- * Update main.bicep to include new container module
- */
-async function updateMainBicepWithContainer(modelKebab: string, modelPascal: string, session: FileOperationSession): Promise<void> {
-  const cwd = process.cwd();
-  const mainBicepPath = path.join(cwd, "infra", "main.bicep");
-
-  if (!session.fileExists(mainBicepPath)) {
-    console.log("ℹ️  main.bicep not found. Please manually add the container module.");
-    return;
-  }
-
-  let mainBicepContent = session.readFile(mainBicepPath);
-
-  // Check if container module already exists
-  const containerModuleName = `${modelPascal.charAt(0).toLowerCase()}${modelPascal.slice(1)}Container`;
-  if (mainBicepContent.includes(`module ${containerModuleName}`)) {
-    console.log(`ℹ️  Container module '${containerModuleName}' already exists in main.bicep`);
-    return;
-  }
-
-  // Find the position to insert the container module (after cosmosDb modules)
-  // Look for the end of both cosmosDb modules (FreeTier and Serverless)
-  const cosmosModulePattern = /module cosmosDbServerless ['"]modules\/cosmosdb-serverless\.bicep['"] = if \(cosmosDbMode == 'serverless'\) \{[\s\S]*?\n\}/;
-  const cosmosModuleMatch = mainBicepContent.match(cosmosModulePattern);
-  
-  if (!cosmosModuleMatch) {
-    console.log("⚠️  Could not find Cosmos DB Serverless module in main.bicep. Please manually add the container module:");
-    console.log(`\nmodule ${containerModuleName} 'containers/${modelKebab}-container.bicep' = {
-  name: '${modelKebab}-container'
-  params: {
-    cosmosAccountName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.accountName : cosmosDbServerless.outputs.accountName
-    databaseName: databaseName
-    cosmosDbMode: cosmosDbMode
-  }
-  dependsOn: [
-    cosmosDbFreeTier
-    cosmosDbServerless
-  ]
-}\n`);
-    return;
-  }
-
-  // Find the end of the cosmosDbServerless module
-  const insertPosition = cosmosModuleMatch.index! + cosmosModuleMatch[0].length;
-
-  // Create the container module declaration
-  const containerModule = `
-
-// ${modelPascal} Container
-module ${containerModuleName} 'containers/${modelKebab}-container.bicep' = {
-  name: '${modelKebab}-container'
-  params: {
-    cosmosAccountName: cosmosDbMode == 'freetier' ? cosmosDbFreeTier.outputs.accountName : cosmosDbServerless.outputs.accountName
-    databaseName: '\${projectName}Database'
-  }
-}`;
-
-  // Insert the module
-  mainBicepContent = 
-    mainBicepContent.slice(0, insertPosition) +
-    containerModule +
-    mainBicepContent.slice(insertPosition);
-
-  session.writeFile(mainBicepPath, mainBicepContent, { ownership: "extension-point", generator: SCAFFOLD_GENERATOR });
-  console.log(`✅ Added container module to main.bicep`);
+  const migration = generateModelContainerMigration(modelInfo, session);
+  console.log(`✅ Created migration ${migration.version}: ${migration.template}`);
 }
 
 /**

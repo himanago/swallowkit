@@ -36,12 +36,11 @@ Choose CI/CD provider during initialization:
 ### 2. Provision Azure Resources
 
 ```bash
-npx swallowkit provision --resource-group my-app-rg
+npx swallowkit provision --resource-group my-app-rg \
+  --location japaneast --swa-location eastasia
 ```
 
-The command then prompts you to choose:
-- Primary location for Functions and Cosmos DB
-- Static Web App location
+If regions are omitted, the command prompts for them. On the first run it verifies that the resource group does not exist, deploys `infra/main.bicep`, and records migration baseline 0 in a resource-group tag. The plan and Azure commands are displayed for approval before anything is applied.
 
 This creates using Bicep templates:
 - Azure Static Web Apps
@@ -49,23 +48,7 @@ This creates using Bicep templates:
 - Azure Cosmos DB (the Free Tier or Serverless option selected during initialization)
 - Managed Identity (secure service connections)
 
-After provisioning completes, the terminal shows resource information followed by the CI/CD secrets/variables in this format:
-
-```
-📝 Next Steps:
-  1. Configure CI/CD secrets/variables:
-
-     [AZURE_STATIC_WEB_APPS_API_TOKEN]
-       <token-value>
-
-     [AZURE_FUNCTIONAPP_NAME]
-       <Function App name>
-
-     [AZURE_FUNCTIONAPP_PUBLISH_PROFILE]
-       <profile-xml>
-```
-
-> **Important**: Copy these values — you will need them in step 4. If the CLI cannot retrieve the token or publish profile automatically, it prints the `az` command to run manually instead.
+In non-interactive environments, pass `--location`, `--swa-location`, and `--approve`. Obtain CI/CD secrets with the Azure CLI commands later in this guide.
 
 ### 3. Push Code
 
@@ -88,12 +71,12 @@ The initial push triggers a CI/CD run that cannot succeed without secrets. Cance
 - **GitHub Actions**: Go to the Actions tab → click the running workflow → Cancel workflow
 - **Azure Pipelines**: Go to Pipelines → click the running pipeline → Cancel
 
-#### Step 4-2: Register the secrets / variables displayed by `provision`
+#### Step 4-2: Retrieve and register secrets / variables with Azure CLI
 
 ##### For GitHub Actions
 
 1. Go to your GitHub repository → Settings → Secrets and variables → Actions
-2. Add the following secrets using the values displayed after provisioning:
+2. Add the following secrets using values retrieved with Azure CLI:
   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
   - `AZURE_FUNCTIONAPP_NAME`
   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
@@ -102,7 +85,7 @@ The initial push triggers a CI/CD run that cannot succeed without secrets. Cance
 
 1. Azure DevOps → Pipelines → Library → Variable groups
 2. Create group named `azure-deployment`
-3. Add the following variables using the values displayed after provisioning:
+3. Add the following variables using values retrieved with Azure CLI:
   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
   - `AZURE_FUNCTIONAPP_NAME`
   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
@@ -233,38 +216,50 @@ az functionapp config appsettings set \
 
 ## Customizing Infrastructure
 
-### Editing Bicep Files
+### Incremental Infrastructure Migrations
 
 ```
 infra/
 ├── main.bicep               # Main orchestration
 ├── main.parameters.json     # Parameters
-└── modules/
-    ├── staticwebapp.bicep   # SWA resource
-    ├── functions.bicep      # Functions + Storage
-    └── cosmosdb.bicep       # Cosmos DB + RBAC
+├── modules/                 # Baseline resources
+└── migrations/
+    ├── manifest.json        # Versions and checksums
+    └── 0001-add-search/     # Standalone Bicep for added resources
 ```
 
-### Applying Changes
+Scaffolding a model generates its new Cosmos DB container as a migration. Create migrations for other resources explicitly:
 
 ```bash
-# After editing Bicep files
-npx swallowkit provision --resource-group my-app-rg
+npx swallowkit create-migration add-search
+# Edit infra/migrations/0001-add-search/main.bicep
+npx swallowkit provision -g my-app-rg --location japaneast --swa-location eastasia
 ```
 
-### Common Customizations
+`provision` compares the resource-group version/checksum tag with the local manifest and applies only pending migrations in ascending order. The tag advances after each successful migration, so a failure can be recovered by planning and applying again. Never edit an applied migration; add a corrective migration instead.
 
-**Change Cosmos DB to provisioned:**
+### Projects Created by Older SwallowKit Versions
 
-```bicep
-// infra/modules/cosmosdb.bicep
-resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' = {
-  properties: {
-    // serverless → provisioned
-    capabilities: []
-  }
-}
+```bash
+npx swallowkit migrations init --legacy-baseline
+npx swallowkit provision -g my-app-rg \
+  --location japaneast --swa-location eastasia \
+  --adopt-existing --baseline 0 --what-if
 ```
+
+The first command only records the current `infra/` directory as baseline 0; it does not contact Azure. Adoption also does not deploy `main.bicep`: after review it adds only the migration-state tag. Adoption stops when what-if contains Create/Delete changes so undeployed changes can be moved into migrations. Modify changes are warnings, allowing you to review portal-managed values such as Function App settings.
+
+### Explicit Baseline Reconciliation
+
+Use `--reconcile --what-if` only when baseline resources intentionally need a full update:
+
+```bash
+npx swallowkit provision -g my-app-rg \
+  --location japaneast --swa-location eastasia \
+  --reconcile --what-if
+```
+
+Reconcile redeploys all of `main.bicep` and may reset template-managed properties such as Function App settings. Normal `provision` never falls back to reconcile automatically.
 
 ## Troubleshooting
 

@@ -6,6 +6,8 @@ import * as path from "path";
 import { Command } from "commander";
 import { initCommand, devCommand, devSeedsCommand, scaffoldCommand, createModelCommand } from "./commands";
 import { provisionCommand } from "./commands/provision";
+import { createMigrationCommand } from "./commands/create-migration";
+import { migrationsCommand } from "./commands/migrations";
 import { addConnectorCommand } from "./commands/add-connector";
 import { addAuthCommand } from "./commands/add-auth";
 import { planScaffoldOperation } from "../core/operations/scaffold-plan";
@@ -133,6 +135,8 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
   program.addCommand(devSeedsCommand);
 
   program.addCommand(provisionCommand);
+  program.addCommand(migrationsCommand);
+  program.addCommand(createMigrationCommand);
 
   program
     .command("create-model <names...>")

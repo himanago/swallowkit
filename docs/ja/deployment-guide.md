@@ -36,12 +36,11 @@ cd my-app
 ### 2. Azure リソースのプロビジョニング
 
 ```bash
-npx swallowkit provision --resource-group my-app-rg
+npx swallowkit provision --resource-group my-app-rg \
+  --location japaneast --swa-location eastasia
 ```
 
-このコマンドを実行すると、次を対話式に選択します:
-- Functions / Cosmos DB 用のプライマリリージョン
-- Static Web App のリージョン
+リージョンを省略した場合は対話式に選択します。初回実行では Resource Group が存在しないことを確認して `infra/main.bicep` をデプロイし、migration baseline 0 を Resource Group タグへ記録します。実行前には plan と Azure コマンドが表示され、承認が必要です。
 
 このコマンドは Bicep テンプレートを使用して以下を作成します:
 - Azure Static Web Apps
@@ -49,23 +48,7 @@ npx swallowkit provision --resource-group my-app-rg
 - Azure Cosmos DB（初期化時に選択した Free Tier または Serverless）
 - マネージド ID（サービス間の安全な接続）
 
-プロビジョニング完了後、ターミナルにはリソース情報に続いて、CI/CD 用の secrets/variables が次のように表示されます：
-
-```
-📝 Next Steps:
-  1. Configure CI/CD secrets/variables:
-
-     [AZURE_STATIC_WEB_APPS_API_TOKEN]
-       <トークン値>
-
-     [AZURE_FUNCTIONAPP_NAME]
-       <Function App 名>
-
-     [AZURE_FUNCTIONAPP_PUBLISH_PROFILE]
-       <プロファイル XML>
-```
-
-> **重要**: これらの値をコピーしておいてください。ステップ 4 で使用します。なお、CLI がトークンや publish profile の取得に失敗した場合は、代わりに手動取得用の `az` コマンドが表示されます。
+非対話環境では `--location`、`--swa-location`、`--approve` を明示してください。CI/CD の secrets は後述の Azure CLI コマンドで取得します。
 
 ### 3. コードのプッシュ
 
@@ -88,12 +71,12 @@ git push origin main
 - **GitHub Actions**: Actions タブ → 実行中のワークフローをクリック → Cancel workflow
 - **Azure Pipelines**: Pipelines → 実行中のパイプラインをクリック → Cancel
 
-#### ステップ 4-2: `provision` で表示された secrets / variables を登録
+#### ステップ 4-2: Azure CLI で secrets / variables を取得して登録
 
 ##### GitHub Actions の場合
 
 1. GitHub リポジトリの Settings → Secrets and variables → Actions
-2. プロビジョニング時に表示された値を使って以下のシークレットを追加：
+2. Azure CLI で取得した値を使って以下のシークレットを追加：
   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
   - `AZURE_FUNCTIONAPP_NAME`
   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
@@ -102,7 +85,7 @@ git push origin main
 
 1. Azure DevOps → Pipelines → Library → Variable groups
 2. `azure-deployment` という名前のグループを作成
-3. プロビジョニング時に表示された値を使って以下を追加：
+3. Azure CLI で取得した値を使って以下を追加：
   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
   - `AZURE_FUNCTIONAPP_NAME`
   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
@@ -233,38 +216,50 @@ az functionapp config appsettings set \
 
 ## インフラストラクチャのカスタマイズ
 
-### Bicep ファイルの編集
+### 差分 Infrastructure Migration
 
 ```
 infra/
 ├── main.bicep               # メインオーケストレーション
 ├── main.parameters.json     # パラメータ
-└── modules/
-    ├── staticwebapp.bicep   # SWA リソース
-    ├── functions.bicep      # Functions + Storage
-    └── cosmosdb.bicep       # Cosmos DB + RBAC
+├── modules/                 # baseline リソース
+└── migrations/
+    ├── manifest.json        # version と checksum
+    └── 0001-add-search/     # 追加リソース用の独立 Bicep
 ```
 
-### 変更の適用
+モデルを scaffold すると、新しい Cosmos DB コンテナーは migration として生成されます。任意の追加リソースは次のコマンドで作成します。
 
 ```bash
-# Bicep ファイルを編集後
-npx swallowkit provision --resource-group my-app-rg
+npx swallowkit create-migration add-search
+# infra/migrations/0001-add-search/main.bicep を編集
+npx swallowkit provision -g my-app-rg --location japaneast --swa-location eastasia
 ```
 
-### 一般的なカスタマイズ
+`provision` は Resource Group タグの version/checksum とローカル manifest を比較し、未適用 migration だけを昇順に実行します。各 migration の成功後にタグを進めるため、失敗時は同じコマンドを再計画・再実行できます。適用済み migration は編集せず、修正用の新しい migration を追加してください。
 
-**Cosmos DB を有料プランに変更:**
+### 旧バージョンで作成したプロジェクト
 
-```bicep
-// infra/modules/cosmosdb.bicep
-resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' = {
-  properties: {
-    // serverless → provisioned
-    capabilities: []
-  }
-}
+```bash
+npx swallowkit migrations init --legacy-baseline
+npx swallowkit provision -g my-app-rg \
+  --location japaneast --swa-location eastasia \
+  --adopt-existing --baseline 0 --what-if
 ```
+
+最初のコマンドは現在の `infra/` を baseline 0 として記録するだけで、Azure を変更しません。adoption も `main.bicep` をデプロイせず、確認後に状態タグだけを追加します。what-if に Create/Delete が含まれる場合は、未デプロイ変更を migration へ切り出すまで停止します。Modify は警告として表示されるため、Portal で追加した Functions 設定などを確認してください。
+
+### Baseline の明示的な再適用
+
+既存 baseline リソースを変更する必要がある場合だけ `--reconcile --what-if` を使います。
+
+```bash
+npx swallowkit provision -g my-app-rg \
+  --location japaneast --swa-location eastasia \
+  --reconcile --what-if
+```
+
+reconcile は `main.bicep` 全体を再デプロイし、Functions の app settings など template 管理プロパティを戻す可能性があります。通常の `provision` が自動的に reconcile へ切り替わることはありません。
 
 ## トラブルシューティング
 
