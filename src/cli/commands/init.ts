@@ -26,6 +26,7 @@ import {
   buildPythonCodegenRequirementsSource,
 } from "../../core/scaffold/native-schema-generator";
 import { DEFAULT_AZURE_PYTHON_VERSION } from "../../utils/python-uv";
+import { buildHomePage } from "../../core/project/home-page";
 
 interface InitOptions {
   name: string;
@@ -344,7 +345,7 @@ export async function initCommand(options: InitOptions) {
     const azureConfig = await promptAzureConfig(options);
 
     if (frontend === "react") {
-      createReactProject(projectDir, options.name);
+      createReactProject(projectDir, options.name, pm);
     } else {
       await createNextJsProject(options.name, pm);
       await upgradeNextJs(projectDir, options.nextVersion || 'latest', pm);
@@ -711,7 +712,7 @@ export function buildCSharpFunctionsProjectSource(): string {
     <None Remove="generated\\**\\bin\\**;generated\\**\\obj\\**" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.47.0" />
+    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.63.2" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Azure.Identity" Version="1.17.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
@@ -778,11 +779,27 @@ function getSwallowKitPackageMetadata(): { name: string; version: string } {
   };
 }
 
-export function buildGeneratedProjectDevDependencies(): Record<string, string> {
+export function buildGeneratedProjectDevDependencies(frontend: FrontendFramework = "nextjs"): Record<string, string> {
   const { name, version } = getSwallowKitPackageMetadata();
   return {
     [name]: version,
+    ...(frontend === "nextjs" ? { "@tailwindcss/postcss": "^4.0.0" } : {}),
   };
+}
+
+export function ensureNextTailwindPostcssConfig(projectDir: string): void {
+  if (["postcss.config.mjs", "postcss.config.js", "postcss.config.cjs", "postcss.config.json"]
+    .some(file => fs.existsSync(path.join(projectDir, file)))) {
+    return;
+  }
+
+  // New create-next-app templates can configure Tailwind for Turbopack only.
+  fs.writeFileSync(path.join(projectDir, "postcss.config.mjs"), `export default {
+  plugins: {
+    "@tailwindcss/postcss": {},
+  },
+};
+`);
 }
 
 export function buildSwallowKitMcpProjectConfigSource(pm: PackageManager = 'pnpm'): string {
@@ -831,7 +848,7 @@ async function addSwallowKitFiles(
   };
   packageJson.devDependencies = {
     ...packageJson.devDependencies,
-    ...buildGeneratedProjectDevDependencies(),
+    ...buildGeneratedProjectDevDependencies(frontend),
   };
 
   packageJson.scripts = {
@@ -864,6 +881,8 @@ async function addSwallowKitFiles(
   }
   
   fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+
+  if (frontend === "nextjs") ensureNextTailwindPostcssConfig(projectDir);
 
   // Create pnpm-workspace.yaml for local pnpm development when needed.
   if (wsConfig.type === 'file') {
@@ -1631,117 +1650,8 @@ export async function POST(request: NextRequest) {
 
 async function createHomePage(projectDir: string, pm: PackageManager = 'pnpm') {
   console.log('📦 Creating home page...\n');
-  
-  const pmCmd = getCommands(pm);
-  
-  const pageContent = `'use client'
 
-export const dynamic = 'force-dynamic';
-
-import { useState } from 'react';
-import { scaffoldConfig } from '@/lib/scaffold-config';
-
-export default function Home() {
-  const [greetingStatus, setGreetingStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [message, setMessage] = useState('');
-
-  const testConnection = async () => {
-    setGreetingStatus('loading');
-    try {
-      const response = await fetch('/api/greet?name=SwallowKit');
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || \`Server error: \${response.status}\`);
-      }
-      setMessage(data.message);
-      setGreetingStatus('success');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Failed to connect to Azure Functions');
-      setGreetingStatus('error');
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-gray-900 dark:to-gray-800">
-      <div className="container mx-auto px-4 py-12">
-        <header className="text-center mb-16">
-          <h1 className="text-5xl font-bold text-gray-800 dark:text-white mb-4">
-            Welcome to SwallowKit
-          </h1>
-          <p className="text-xl text-gray-600 dark:text-gray-400">
-            Next.js on Azure Static Web Apps + Functions + Cosmos DB — Zod schema sharing
-          </p>
-        </header>
-
-        {/* Connection Test */}
-        <section className="max-w-2xl mx-auto mb-12">
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-8 border border-gray-200 dark:border-gray-700">
-            <h2 className="text-2xl font-semibold mb-4 text-gray-900 dark:text-gray-100">
-              Test BFF → Functions Connection
-            </h2>
-            <button
-              onClick={testConnection}
-              disabled={greetingStatus === 'loading'}
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition-colors"
-            >
-              {greetingStatus === 'loading' ? 'Testing...' : 'Test Connection'}
-            </button>
-            {greetingStatus === 'success' && (
-              <div className="mt-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-                <p className="text-green-800 dark:text-green-200 font-medium">✅ Connection successful!</p>
-                <p className="text-green-700 dark:text-green-300 text-sm mt-1">{message}</p>
-              </div>
-            )}
-            {greetingStatus === 'error' && (
-              <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                <p className="text-red-800 dark:text-red-200 font-medium">❌ Connection failed</p>
-                <p className="text-red-700 dark:text-red-300 text-sm mt-1">{message}</p>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Scaffolded Models Menu */}
-        {scaffoldConfig.models.length > 0 ? (
-          <section className="max-w-6xl mx-auto">
-            <h2 className="text-3xl font-bold mb-8 text-gray-900 dark:text-gray-100">Your Models</h2>
-            <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-              {scaffoldConfig.models.map((model) => (
-                <a
-                  key={model.name}
-                  href={model.path}
-                  className="block p-8 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-lg hover:border-blue-400 dark:hover:border-blue-600 transition-all"
-                >
-                  <h3 className="text-2xl font-semibold mb-2 text-gray-900 dark:text-gray-100">{model.label}</h3>
-                  <p className="text-gray-600 dark:text-gray-400">Manage {model.label.toLowerCase()}</p>
-                </a>
-              ))}
-            </div>
-          </section>
-        ) : (
-          <section className="max-w-2xl mx-auto text-center">
-            <div className="bg-white dark:bg-gray-800 rounded-xl p-12 border border-gray-200 dark:border-gray-700">
-              <h2 className="text-2xl font-semibold mb-4 text-gray-900 dark:text-gray-100">Get Started</h2>
-              <p className="text-gray-600 dark:text-gray-400 mb-6">
-                Create your first model with Zod and generate CRUD operations automatically.
-              </p>
-              <code className="block bg-gray-100 dark:bg-gray-900 p-4 rounded text-left text-sm">
-                ${pmCmd.exec} swallowkit scaffold shared/models/your-model.ts
-              </code>
-            </div>
-          </section>
-        )}
-
-        <footer className="mt-16 text-center text-gray-600 dark:text-gray-400 text-sm">
-          <p>Built with SwallowKit</p>
-        </footer>
-      </div>
-    </div>
-  );
-}
-`;
-  
-  fs.writeFileSync(path.join(projectDir, 'app', 'page.tsx'), pageContent);
+  fs.writeFileSync(path.join(projectDir, 'app', 'page.tsx'), buildHomePage("nextjs", pm));
 
   console.log('✅ Home page created\n');
   

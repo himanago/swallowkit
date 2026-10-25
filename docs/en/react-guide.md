@@ -5,6 +5,14 @@ SSR or React Server Components. SwallowKit generates a React + TypeScript SPA
 with Vite, React Router, and Tailwind CSS, while keeping the same independent
 Azure Functions backend, shared Zod schemas, connectors, and authorization.
 
+The home page uses the same presentation template as Next.js: the gradient
+background, connection-test card and states, model cards, empty state, and
+footer. CRUD and login pages also share their UI templates, with React Router
+handling navigation. Global colors, body typography, and system light/dark
+mode follow the Next.js defaults; React does not require the Next.js runtime.
+These defaults apply to newly initialized projects and do not overwrite
+customized pages or styles in existing applications.
+
 ## Initialize
 
 The init wizard offers **Next.js** and **React**. For unattended initialization:

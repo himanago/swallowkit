@@ -167,6 +167,13 @@ try {
     }
     await cli(['machine', 'inspect', 'project']);
     await run(manager, ['run', 'build'], project);
+    const assets = path.join(project, frontend === 'react' ? 'dist' : '.next/static');
+    const css = fs.readdirSync(assets, { recursive: true })
+      .filter(file => file.endsWith('.css'))
+      .map(file => fs.readFileSync(path.join(assets, file), 'utf8'))
+      .join('\n');
+    assert.match(css, /\.text-5xl\b/, 'The home heading Tailwind utility must be built');
+    assert.match(css, /\.rounded-xl\b/, 'The shared card Tailwind utility must be built');
     await run(localCommand, [...local, 'tsc', '--noEmit'], project);
     const contractTest = path.join(project, 'consumer-contract.test.cjs');
     fs.writeFileSync(contractTest, `

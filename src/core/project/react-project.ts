@@ -3,6 +3,7 @@ import * as path from "path";
 import { BackendLanguage } from "../../types";
 import { buildReactDevWatchIgnoredSource } from "../../utils/react-dev";
 import { DEFAULT_AZURE_PYTHON_VERSION } from "../../utils/python-uv";
+import { buildHomePage } from "./home-page";
 import {
   PackageManager,
   getCommands,
@@ -47,7 +48,8 @@ export function buildReactSwaConfig() {
 
 export function createReactProject(
   projectDir: string,
-  projectName: string
+  projectName: string,
+  pm: PackageManager = "pnpm"
 ): void {
   write(
     projectDir,
@@ -132,9 +134,9 @@ export default defineConfig({
     projectDir,
     "index.html",
     `<!doctype html>
-<html lang="en">
+<html lang="en" class="h-full antialiased">
   <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>SwallowKit</title></head>
-  <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
+  <body class="min-h-full flex flex-col"><div id="root" class="flex flex-1 flex-col"></div><script type="module" src="/src/main.tsx"></script></body>
 </html>
 `
   );
@@ -175,31 +177,34 @@ export default function App() {
   write(
     projectDir,
     "src\\Home.tsx",
-    `import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { scaffoldConfig } from '@/lib/scaffold-config';
-
-export default function Home() {
-  const [message, setMessage] = useState('');
-  async function testConnection() {
-    try {
-      const response = await fetch('/api/greet?name=SwallowKit');
-      if (!response.ok) throw new Error('BFF request failed (' + response.status + ')');
-      const data = await response.json();
-      setMessage(data.message);
-    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
-  }
-  return <main className="container mx-auto p-8">
-    <h1 className="text-3xl font-bold mb-4">SwallowKit + React</h1>
-    <p>React SPA → SWA managed Functions BFF → standalone Functions → Cosmos DB</p>
-    <button className="my-4 bg-blue-600 text-white rounded px-4 py-2" onClick={testConnection}>Test backend connection</button>
-    <p role="status">{message}</p>
-    <nav>{scaffoldConfig.models.map(model => <p key={model.name}><Link to={model.path}>{model.label}</Link></p>)}</nav>
-  </main>;
-}
-`
+    buildHomePage("react", pm)
   );
-  write(projectDir, "src\\style.css", '@import "tailwindcss";\n');
+  write(projectDir, "src\\style.css", `@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: Arial, Helvetica, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+`);
   write(
     projectDir,
     "lib\\scaffold-config.ts",

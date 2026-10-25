@@ -28,6 +28,16 @@ This normally starts both servers:
 
 When `auth.provider` is `swa`, it also starts the SWA authentication emulator at http://localhost:4280. Use port 4280 for authenticated UI testing. If SWA CLI is not installed, `swallowkit dev` prints the project-local installation command and exits before starting any servers.
 
+### Next.js styling
+
+SwallowKit uses webpack for Next.js development and builds. New projects
+explicitly include `@tailwindcss/postcss` and a PostCSS configuration, even
+when the current `create-next-app` template configures Tailwind only for
+Turbopack. Existing PostCSS configuration files are preserved.
+If an existing project has Tailwind classes but no styled output, install
+`@tailwindcss/postcss` as a dev dependency and enable it in your PostCSS
+configuration; a Turbopack-only CSS loader does not run with webpack.
+
 ### Parallel development with Git worktrees
 
 When `swallowkit dev` runs in a Git linked worktree, it automatically isolates that worktree's local Cosmos DB data. All worktrees share the same Cosmos DB Emulator process, but linked worktrees append an eight-character hash of the canonical worktree root path to the configured database name. For example, `MyAppDatabase` becomes `MyAppDatabase_a31f92c4`.
@@ -78,6 +88,13 @@ Azure Functions isolated worker (.NET 10) starts with `dotnet run`, which builds
 React/Vite excludes standalone `functions/`, managed `bff/`, `.uv/`, `.swallowkit/`, and compiled `shared/dist/` from file watching, including when starting existing projects through `swallowkit dev`. Your Vite configuration and other ignore rules are retained, and frontend files and shared model sources remain watched.
 
 Requires .NET 10 SDK and Azure Functions Core Tools 4.6.0 or later.
+
+New C# projects use Cosmos SDK 3.63.2, including fixes for binary query
+responses. In existing generated projects using 3.47.0, update the
+`Microsoft.Azure.Cosmos` reference in `functions/*.csproj` to 3.63.2 and run
+`dotnet restore`. This fixes the `Unknown JsonNodeType: Unknown` exception
+when reading query results, including list endpoints and lookups with a
+custom partition key; resetting the emulator or deleting data is unnecessary.
 
 ## Dev seeds
 

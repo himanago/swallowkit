@@ -28,6 +28,16 @@ pnpm exec swallowkit dev
 
 `auth.provider`が`swa`の場合は、SWA認証エミュレーターも http://localhost:4280 で起動します。認証付き画面には4280番ポートからアクセスしてください。SWA CLIが未導入の場合、`swallowkit dev`はプロジェクトに追加するコマンドを表示して、サーバー起動前に終了します。
 
+### Next.js のスタイル
+
+SwallowKit は Next.js の開発・ビルドに webpack を使います。
+現在の `create-next-app` が Tailwind を Turbopack 専用に設定する場合にも対応するため、
+新規プロジェクトには `@tailwindcss/postcss` と PostCSS 設定を明示的に追加します。
+既存の PostCSS 設定ファイルは保持します。
+既存プロジェクトで Tailwind のクラスがあるのにスタイルが反映されない場合は、
+`@tailwindcss/postcss` を開発依存に追加し、PostCSS 設定で有効にしてください。
+Turbopack 専用の CSS ローダーは webpack では動きません。
+
 ### Git worktree を使った並列開発
 
 Git linked worktree 内で `swallowkit dev` を実行すると、その worktree のローカル Cosmos DB データは自動的に分離されます。Cosmos DB Emulator のプロセス自体は全 worktree で共有しますが、linked worktree では正規化した worktree root path の hash（8文字）が database name に付与されます。たとえば `MyAppDatabase` は `MyAppDatabase_a31f92c4` になります。
@@ -78,6 +88,12 @@ Azure Functions isolated worker（.NET 10）は `dotnet run` でビルドし、�
 React/Vite は独立 `functions/`、マネージド `bff/`、`.uv/`、`.swallowkit/`、ビルド済み `shared/dist/` を監視しません。既存プロジェクトを `swallowkit dev` で起動する場合にも適用します。利用者の Vite 設定や追加の除外指定は保持し、フロントエンドと共有モデルのソースは引き続き監視します。
 
 .NET 10 SDK と Azure Functions Core Tools 4.6.0 以上が必要です。
+
+新規 C# プロジェクトは、バイナリ形式のクエリ応答に関する修正を含む Cosmos SDK 3.63.2 を使います。
+既存の生成済みプロジェクトで 3.47.0 を使っている場合は、
+`functions/*.csproj` の `Microsoft.Azure.Cosmos` 参照を 3.63.2 に更新し、`dotnet restore` を実行してください。
+一覧取得や独自パーティションキーでの検索時に発生する `Unknown JsonNodeType: Unknown` 例外への対処です。
+Emulator のリセットやデータ削除は不要です。
 
 ## Dev seeds
 

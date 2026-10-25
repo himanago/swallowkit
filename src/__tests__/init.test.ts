@@ -16,6 +16,7 @@ import {
   getAzureFunctionsPipeline,
   getGitHubFunctionsWorkflow,
   injectSwallowKitNextConfig,
+  ensureNextTailwindPostcssConfig,
   parseIgnoredBuilds,
   buildCosmosDbFreeTierBicepSource,
   buildFunctionsHostKeyBicepExpression,
@@ -109,6 +110,13 @@ export default nextConfig;
     expect(source).toContain('<None Remove="generated\\**\\bin\\**;generated\\**\\obj\\**" />');
   });
 
+  it("uses a current Cosmos SDK with binary query response fixes", () => {
+    const source = buildCSharpFunctionsProjectSource();
+
+    expect(source).toContain('<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.63.2" />');
+    expect(source).not.toContain('Version="3.47.0"');
+  });
+
   it("builds swallowkit.config.js without a local swallowkit package type import", () => {
     const source = buildSwallowKitConfigSource("typescript");
 
@@ -155,8 +163,42 @@ export default nextConfig;
 
     expect(devDependencies).toEqual({
       swallowkit: expect.stringMatching(/.+/),
+      "@tailwindcss/postcss": "^4.0.0",
     });
   });
+
+  it("does not add the Next.js PostCSS plugin to React projects", () => {
+    expect(buildGeneratedProjectDevDependencies("react")).not.toHaveProperty("@tailwindcss/postcss");
+  });
+
+  it("configures Tailwind for webpack even when create-next-app only configured Turbopack", () => {
+    const project = fs.mkdtempSync(path.join(process.cwd(), ".tmp-postcss-"));
+    try {
+      ensureNextTailwindPostcssConfig(project);
+      const config = path.join(project, "postcss.config.mjs");
+      expect(fs.readFileSync(config, "utf8")).toContain('"@tailwindcss/postcss": {}');
+      fs.writeFileSync(config, "export default { plugins: { custom: {} } };");
+      ensureNextTailwindPostcssConfig(project);
+      expect(fs.readFileSync(config, "utf8")).toBe("export default { plugins: { custom: {} } };");
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["postcss.config.js", "postcss.config.cjs", "postcss.config.json"])(
+    "preserves an existing %s",
+    file => {
+      const project = fs.mkdtempSync(path.join(process.cwd(), ".tmp-postcss-"));
+      try {
+        fs.writeFileSync(path.join(project, file), "{}");
+        ensureNextTailwindPostcssConfig(project);
+        expect(fs.existsSync(path.join(project, "postcss.config.mjs"))).toBe(false);
+        expect(fs.readFileSync(path.join(project, file), "utf8")).toBe("{}");
+      } finally {
+        fs.rmSync(project, { recursive: true, force: true });
+      }
+    }
+  );
 
   it("builds a project-scoped MCP config that resolves the configured swallowkit-mcp version", () => {
     const source = buildSwallowKitMcpProjectConfigSource();
