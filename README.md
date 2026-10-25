@@ -182,6 +182,20 @@ To check the pipeline without publishing, run **Publish to npm** manually on
 the release commit with **dry-run** enabled, before pushing the version tag.
 The summary reports the selected version and npm tag without claiming a publish.
 
+Consumer release gates run on separate runners for pnpm 11, pnpm 12, and npm.
+Their generated applications and package caches do not accumulate on the publish
+runner; publication still requires every gate, the build, and the tests to pass.
+Consumer logs and dependency audits are uploaded even when a gate fails.
+
+If a release failed before npm publication and the fix only changes the release
+workflow, do not move or recreate its Git tag. After merging the workflow fix,
+run **Publish to npm** from `main`, set **release-tag** to the existing tag
+(for example, `v2.0.0-alpha.1`), and enable **dry-run** first. The workflow resolves
+that tag once and checks out the same commit for every gate and for publication.
+After a successful dry run, repeat with **dry-run** disabled to publish.
+GitHub's **Re-run jobs** uses the old workflow revision and will not pick up the fix.
+If the package itself needs changes, create a new version and tag instead.
+
 Try the exact alpha with `npx swallowkit@2.0.0-alpha.1 init my-app --frontend react`,
 or use `npx swallowkit@alpha ...` / `npx swallowkit@beta ...` for the respective
 channel. Plain `npx swallowkit ...` continues to use `latest`.

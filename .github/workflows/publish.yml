@@ -11,21 +11,92 @@ on:
         required: false
         default: false
         type: boolean
+      release-tag:
+        description: 'Existing release tag to retry (leave empty to use the selected ref)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
-  id-token: write  # Required for npm provenance
 
 jobs:
-  publish:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.tag.outputs.commit }}
+      version: ${{ steps.tag.outputs.version }}
+      dist_tag: ${{ steps.tag.outputs.dist_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release-tag && format('refs/tags/{0}', inputs.release-tag) || github.sha }}
 
       - name: Validate release version and determine npm tag
         id: tag
-        run: node scripts/release-metadata.cjs
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
+        run: |
+          node scripts/release-metadata.cjs
+          if [ -n "$RELEASE_TAG" ] && [ "$RELEASE_TAG" != "v$(node -p "require('./package.json').version")" ]; then
+            echo "::error::Release tag must match package.json version"
+            exit 1
+          fi
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  consumer-compatibility:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { manager: pnpm, version: '11.0.0' }
+          - { manager: pnpm, version: '12' }
+          - { manager: npm, version: bundled }
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Packed consumer release gate
+        run: node scripts/consumer-smoke.mjs ${{ matrix.manager }} ${{ matrix.version }} typescript
+
+      - name: Upload consumer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-consumer-${{ matrix.manager }}-${{ matrix.version }}
+          path: |
+            /tmp/swallowkit-consumer-*/*.log
+            /tmp/swallowkit-consumer-*/dependency-audit.json
+
+  publish:
+    needs: [prepare, consumer-compatibility]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for npm provenance
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -48,31 +119,25 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Packed consumer release gate
-        run: |
-          node scripts/consumer-smoke.mjs pnpm 11.0.0 typescript
-          node scripts/consumer-smoke.mjs pnpm 12 typescript
-          node scripts/consumer-smoke.mjs npm bundled typescript
-
       - name: Publish (dry run)
         if: ${{ inputs.dry-run == true }}
         run: npm publish --tag "$NPM_DIST_TAG" --access public --dry-run
         env:
-          NPM_DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
+          NPM_DIST_TAG: ${{ needs.prepare.outputs.dist_tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish
         if: ${{ inputs.dry-run != true }}
         run: npm publish --tag "$NPM_DIST_TAG" --provenance --access public
         env:
-          NPM_DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
+          NPM_DIST_TAG: ${{ needs.prepare.outputs.dist_tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Summary
         env:
           DRY_RUN: ${{ inputs.dry-run || false }}
-          RELEASE_VERSION: ${{ steps.tag.outputs.version }}
-          NPM_DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          NPM_DIST_TAG: ${{ needs.prepare.outputs.dist_tag }}
         run: |
           if [ "$DRY_RUN" = "true" ]; then
             echo "## 📦 npm publish dry run (not published)" >> "$GITHUB_STEP_SUMMARY"
