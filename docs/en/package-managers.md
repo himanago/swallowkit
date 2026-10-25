@@ -16,7 +16,7 @@ Run project commands after `cd my-app`. The project pins SwallowKit to the versi
 
 `init --package-manager npm|pnpm` overrides detection. Otherwise the invocation's user agent wins: `npx` selects npm even if pnpm is installed. When launched directly without a user agent, available pnpm is preferred, then npm. Existing-project commands consult project metadata and lockfiles.
 
-The root install includes `shared/` and, for TypeScript backends, `functions/`. Commit only the selected lockfile. pnpm projects have `pnpm-workspace.yaml`; npm projects have npm workspaces and `package-lock.json`. Functions CI uses the selected manager and frozen root installation. SWA is an exception: its npm/Oryx deployment tooling requires an npm-compatible CI checkout, described below. Generated `devEngines.packageManager` uses a supported range, with pnpm recording its selected version in the lockfile; patch versions are not hardcoded. See the [pnpm 11 release specification](https://github.com/pnpm/pnpm.io/blob/main/blog/releases/11.0.md).
+The root install includes `shared/` and, for TypeScript backends, `functions/`. Commit only the selected lockfile. pnpm projects have `pnpm-workspace.yaml`; npm projects have npm workspaces and `package-lock.json`. Functions CI uses the selected manager and frozen root installation. Next.js SWA deployment is an exception: its npm/Oryx tooling requires an npm-compatible CI checkout, described below. React SWA deployment uses prebuilt artifacts instead. Generated `devEngines.packageManager` uses a supported range, with pnpm recording its selected version in the lockfile; patch versions are not hardcoded. See the [pnpm 11 release specification](https://github.com/pnpm/pnpm.io/blob/main/blog/releases/11.0.md).
 
 MCP intentionally resolves `swallowkit@latest` using the selected package manager. `.mcp.json` uses pnpm's package/dlx launcher or npm's `npx --yes --package` launcher. This keeps MCP information current independently of the project CLI. An uncached version requires network access; beta updates can differ from the local CLI. For offline/reproducible sessions, set `SWALLOWKIT_MCP_VERSION` in `.mcp.json` to the desired version and cache it beforehand, or use the local machine CLI. Neither npm projects nor their MCP launcher require pnpm.
 
@@ -26,7 +26,11 @@ Azure Functions Core Tools v4 and the backend runtime are separate development p
 
 Starting the SwallowKit CLI does not require approval for an `esbuild` build script. If `init` from an older release reports `ERR_PNPM_IGNORED_BUILDS` for `esbuild`, update SwallowKit and retry.
 
-Generated applications explicitly **deny**, rather than approve, two unnecessary scripts in their project-local `allowBuilds`: `protobufjs` (a version-scheme advisory from Application Insights dependencies) and `unrs-resolver` (a native-binding fallback installer; supported platforms receive the optional prebuilt package). This grants no script execution. Unknown future dependencies still require review; no wildcard approval, global configuration, release-age exemption, or trust-policy exemption is generated.
+Generated applications explicitly **deny**, rather than approve, unnecessary scripts in their project-local `allowBuilds`: `keytar` (SWA CLI's native credential store, not needed by `swa start`), `protobufjs` (a version-scheme advisory from Application Insights dependencies), and `unrs-resolver` (a native-binding fallback installer; supported platforms receive the optional prebuilt package). This grants no script execution. React projects additionally approve `esbuild`, which their Vite/BFF builds require. Unknown future dependencies still require review; no wildcard approval, global configuration, release-age exemption, or trust-policy exemption is generated.
+
+If `2.0.0-alpha.1` React initialization fails with `ERR_PNPM_IGNORED_BUILDS: keytar@7.9.0`, use a release containing this fix and retry `init`. Failed initialization removes the newly created project directory. In an existing pnpm project, add `keytar: false` under the existing `allowBuilds` mapping in `pnpm-workspace.yaml`, preserving other entries, then run `pnpm install`. This records a denial; it does not install the native credential-store binary or weaken pnpm's checks.
+
+The generated development workflow uses `swa start`, and CI deploys through the SWA action, not `swa login`. If you separately use `swa login` and need OS keychain persistence, review `keytar` and its native installer first, then explicitly change that project's entry to `keytar: true` and run `pnpm rebuild keytar`. Alternatively, `swa login --no-use-keychain` avoids persistent credential storage. Do not apply either change globally.
 
 If installation reports another package, locate it with `pnpm why <package>`, inspect its installed `package.json` and script, and determine whether it is needed for your app/platform. Only approve a reviewed dependency locally if its build is actually required; dependency scripts execute code with your user's permissions. Do not approve every package or disable security controls to finish `init`.
 
@@ -35,7 +39,9 @@ pnpm also applies release-age and trust policies to `dlx`/`create`, including po
 
 ## SWA deployment from pnpm projects
 
-Continue using pnpm locally. The generated SWA workflow converts files only in the CI checkout to use npm in Azure's build environment. You do not need to change your local `package.json` or `pnpm-lock.yaml`. Functions CI uses the selected package manager.
+For React, CI builds the SPA and bundles the managed BFF with the selected package manager, then deploys those artifacts with `skip_app_build` and `skip_api_build`. It does not use Oryx or convert the project to npm.
+
+For Next.js, continue using pnpm locally. The generated SWA workflow converts files only in the CI checkout to use npm in Azure's build environment. You do not need to change your local `package.json` or `pnpm-lock.yaml`. Functions CI uses the selected package manager.
 
 The workflow constrains `engines.node` to `>=22.14.0 <23` in the CI checkout for SWA. The `actions/setup-node` setting selects the GitHub runner's runtime separately from SWA's runtime. See [Azure's build configuration](https://learn.microsoft.com/en-us/azure/static-web-apps/build-configuration#custom-build-commands).
 

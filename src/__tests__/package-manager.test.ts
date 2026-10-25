@@ -141,6 +141,21 @@ describe("getWorkspaceConfig", () => {
       expect(config.value).toEqual(["packages/*", "apps/*"]);
     }
   });
+
+  it.each([
+    ["shared", "functions"],
+    ["shared", "functions", "bff"],
+    ["shared", "bff"],
+  ])("denies SWA CLI keytar builds without approving unknown scripts (%j)", (...workspaces) => {
+    const config = getWorkspaceConfig("pnpm", workspaces);
+    expect(config.type).toBe("file");
+    if (config.type === "file") {
+      expect(config.content).toBe(
+        `packages:\n${workspaces.map((workspace) => `  - ${workspace}`).join("\n")}\n` +
+        "allowBuilds:\n  keytar: false\n  protobufjs: false\n  unrs-resolver: false\n"
+      );
+    }
+  });
 });
 
 describe("getCiSetupStep", () => {

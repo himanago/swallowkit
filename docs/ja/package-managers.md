@@ -16,7 +16,7 @@ Node.js 22.14 以上、pnpm 11／12 または npm 10 以上を使います。SWA
 
 `init --package-manager npm|pnpm` が最優先です。未指定なら起動元の user agent を使うため、pnpm がインストール済みでも `npx` から起動すれば npm を選びます。user agent のない直接起動では利用可能な pnpm、次に npm を選びます。既存プロジェクトの操作は metadata と lockfile を参照します。
 
-root の install で `shared/`、TypeScript backend なら `functions/` も導入します。選択した lockfile だけをコミットしてください。pnpm は `pnpm-workspace.yaml`、npm は npm workspaces と `package-lock.json` を使います。Functions の CI は選択した manager で root の frozen install を実行します。SWA は内部の npm/Oryx に合わせ、CI の checkout だけ npm 用に変換する例外です（後述）。`devEngines.packageManager` は対応範囲を指定し、pnpm は選択した版を lockfile に保存します。patch 固定を生成しません。[pnpm 11 の仕様](https://github.com/pnpm/pnpm.io/blob/main/blog/releases/11.0.md)も参照してください。
+root の install で `shared/`、TypeScript backend なら `functions/` も導入します。選択した lockfile だけをコミットしてください。pnpm は `pnpm-workspace.yaml`、npm は npm workspaces と `package-lock.json` を使います。Functions の CI は選択した manager で root の frozen install を実行します。Next.js の SWA デプロイは内部の npm/Oryx に合わせ、CI の checkout だけ npm 用に変換する例外です（後述）。React の SWA デプロイはビルド済みの成果物を使います。`devEngines.packageManager` は対応範囲を指定し、pnpm は選択した版を lockfile に保存します。patch 固定を生成しません。[pnpm 11 の仕様](https://github.com/pnpm/pnpm.io/blob/main/blog/releases/11.0.md)も参照してください。
 
 MCP は最新情報を使うため、選択した manager で意図的に `swallowkit@latest` を解決します。`.mcp.json` は pnpm の package/dlx または npm の `npx --yes --package` を使います。通常のローカル CLI とは独立して更新されるため、beta のバージョン差が生じる可能性があります。未キャッシュの版にはネットワークが必要です。オフライン・再現性が必要な場合は `.mcp.json` 内の `SWALLOWKIT_MCP_VERSION` を指定して事前にキャッシュするか、ローカル machine CLI を使います。npm project の MCP に pnpm は不要です。
 
@@ -26,7 +26,11 @@ Azure Functions Core Tools v4 と各 backend runtime は別途必要な開発環
 
 SwallowKit CLI の起動に `esbuild` の build script 承認は不要です。旧版の `init` で `ERR_PNPM_IGNORED_BUILDS` が `esbuild` を示す場合は、SwallowKit を更新してから再実行してください。
 
-生成アプリの project-local `allowBuilds` は、不要な `protobufjs`（Application Insights 経由のバージョン指定に関する通知）と `unrs-resolver`（native binding の fallback installer。対応 platform では optional な配布済み binary を利用）の script を明示的に **拒否** します。実行許可は与えません。未知の依存は引き続きレビュー対象です。wildcard、global 許可、release age・trust policy の例外は生成しません。
+生成アプリの project-local `allowBuilds` は、不要な `keytar`（SWA CLI のネイティブ資格情報ストア。`swa start` では不要）、`protobufjs`（Application Insights 経由のバージョン指定に関する通知）、`unrs-resolver`（native binding の fallback installer。対応 platform では optional な配布済み binary を利用）の script を明示的に **拒否** します。これらの実行許可は与えません。React 構成では、Vite／BFF のビルドに必要な `esbuild` だけを別途許可します。未知の依存は引き続きレビュー対象です。wildcard、global 許可、release age・trust policy の例外は生成しません。
+
+`2.0.0-alpha.1` の React 初期化で `ERR_PNPM_IGNORED_BUILDS: keytar@7.9.0` が出た場合は、この修正を含むバージョンで `init` をやり直してください。初期化に失敗すると、新しく作成したプロジェクトディレクトリは削除されます。既存の pnpm プロジェクトでは、`pnpm-workspace.yaml` の既存の `allowBuilds` に `keytar: false` を追加し、他の設定を残して `pnpm install` を実行します。これは実行の拒否を記録する設定であり、資格情報ストアのネイティブバイナリを導入したり、pnpm の検査を緩めたりするものではありません。
+
+生成する開発フローは `swa start` を使い、CI のデプロイは `swa login` ではなく SWA action で行います。別途 `swa login` を使い、OS のキーチェーンへの資格情報保存が必要な場合だけ、`keytar` とそのネイティブ installer を確認したうえで、そのプロジェクトの設定を `keytar: true` に変更し、`pnpm rebuild keytar` を実行してください。永続保存を使わない場合は `swa login --no-use-keychain` を利用できます。いずれもグローバル設定は変更しないでください。
 
 別の package が表示されたら `pnpm why <package>` とその `package.json`／script を確認し、アプリや platform に本当に必要か判断してください。必要な場合だけ内容をレビューし project-local に許可します。script は利用者の権限でコードを実行します。init を通すための一括承認や security controls の無効化は不要です。
 
@@ -35,7 +39,9 @@ pnpm の `dlx`／`create` にも、親 project を含む release-age・trust pol
 
 ## pnpm プロジェクトの SWA デプロイ
 
-ローカル開発では pnpm を使います。SWA の生成ワークフローは、Azure のビルド環境に合わせて CI 内のファイルだけを npm 用に変換します。ローカルの `package.json` や `pnpm-lock.yaml` を変更する必要はありません。Functions の CI は選択したパッケージマネージャーを使います。
+React 構成では、選択したパッケージマネージャーで SPA とマネージド BFF をビルドし、`skip_app_build` と `skip_api_build` を指定して成果物をデプロイします。Oryx は使わず、npm 用の変換も行いません。
+
+Next.js 構成のローカル開発では pnpm を使います。SWA の生成ワークフローは、Azure のビルド環境に合わせて CI 内のファイルだけを npm 用に変換します。ローカルの `package.json` や `pnpm-lock.yaml` を変更する必要はありません。Functions の CI は選択したパッケージマネージャーを使います。
 
 SWA の Node.js は、CI 内の `package.json` の `engines.node` で `>=22.14.0 <23` に制限します。`actions/setup-node` の指定は GitHub runner 用で、SWA 内の Node.js 選択とは別です。[Azure のビルド設定](https://learn.microsoft.com/en-us/azure/static-web-apps/build-configuration#custom-build-commands)を参照してください。
 
