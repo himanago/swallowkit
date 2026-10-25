@@ -41,6 +41,7 @@ export default nextConfig;
 
     expect(updated).toContain("output: 'standalone'");
     expect(updated).toContain("cacheComponents: false");
+    expect(updated).not.toContain("partialPrefetching");
     expect(updated).toContain("agentRules: false");
     expect(updated).toContain("transpilePackages: ['@sample-app/shared']");
     expect(updated).toContain("serverExternalPackages: ['applicationinsights', 'diagnostic-channel-publishers']");
@@ -68,6 +69,7 @@ module.exports = nextConfig;
     const original = `import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   cacheComponents: ${enabled},
+  partialPrefetching: true,
   reactCompiler: true,
 };
 export default nextConfig;
@@ -75,6 +77,8 @@ export default nextConfig;
     const updated = injectSwallowKitNextConfig(original, "sample-app");
     expect(updated).toContain("cacheComponents: false");
     expect(updated).not.toContain("cacheComponents: true");
+    expect(updated).toContain("partialPrefetching: false");
+    expect(updated.match(/\bpartialPrefetching\s*:/g)).toHaveLength(1);
     expect(updated.match(/\bcacheComponents\s*:/g)).toHaveLength(1);
     expect(updated).toContain("reactCompiler: true");
     expect(updated).toContain("output: 'standalone'");

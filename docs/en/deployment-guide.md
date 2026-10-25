@@ -8,7 +8,8 @@ Next.js/Oryx examples below.
 
 Next.js projects explicitly set `cacheComponents: false` in `next.config.ts`.
 Generated pages use dynamic route settings, which are incompatible with Cache
-Components. Preserve this setting when upgrading Next.js in an existing project.
+Components. Init also disables `partialPrefetching` when present because it depends
+on Cache Components. Preserve these settings when upgrading an existing project.
 
 See [package manager commands and troubleshooting](./package-managers.md) for pnpm 11/12 and npm usage.
 

@@ -156,8 +156,11 @@ try {
       assert(!swa.includes('api_location: functions'));
     } else {
       const nextConfigPath = path.join(project, fs.existsSync(path.join(project, 'next.config.ts')) ? 'next.config.ts' : 'next.config.js');
-      assert.match(fs.readFileSync(nextConfigPath, 'utf8'), /\bcacheComponents\s*:\s*false\b/,
+      const nextConfig = fs.readFileSync(nextConfigPath, 'utf8');
+      assert.match(nextConfig, /\bcacheComponents\s*:\s*false\b/,
         'Generated dynamic routes require Cache Components to be disabled');
+      assert.doesNotMatch(nextConfig, /\bpartialPrefetching\s*:\s*true\b/,
+        'Partial Prefetching requires Cache Components and must also be disabled');
     }
     await cli(['machine', 'inspect', 'project']);
     await run(manager, ['run', 'build'], project);

@@ -2,7 +2,8 @@
 
 Next.js プロジェクトでは `next.config.ts` に `cacheComponents: false` を設定します。
 生成ページの動的ルート設定は Cache Components と併用できません。
-既存プロジェクトの Next.js を更新する場合も、この設定を維持してください。
+Cache Components に依存する `partialPrefetching` も、設定があれば無効化します。
+既存プロジェクトの Next.js を更新する場合も、これらの設定を維持してください。
 
 **React:** 生成ワークフローはビルド済みの `dist/` と `bff/` を SWA に配置し、
 `skip_app_build` / `skip_api_build` を指定します。独立 `functions/` は別途デプロイし、

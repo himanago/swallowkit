@@ -667,7 +667,7 @@ export function parseIgnoredBuilds(output: string): string[] {
 }
 
 export function injectSwallowKitNextConfig(nextConfigContent: string, projectName: string): string {
-  const compatibleConfig = nextConfigContent.replace(/(\bcacheComponents\s*:\s*)true\b/g, '$1false');
+  const compatibleConfig = nextConfigContent.replace(/(\b(?:cacheComponents|partialPrefetching)\s*:\s*)true\b/g, '$1false');
   const cacheComponentsSetting = /\bcacheComponents\s*:/.test(compatibleConfig)
     ? ''
     : '  cacheComponents: false,\n';
