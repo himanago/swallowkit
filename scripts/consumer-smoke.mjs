@@ -201,7 +201,7 @@ test('compiled shared model validates data through the installed workspace', () 
     const port = portProbe.address().port;
     await new Promise(resolve => portProbe.close(resolve));
     console.log('> project-local swallowkit dev --no-functions --no-swa (HTTP smoke)');
-    const dev = spawn(localCommand, [...local, 'swallowkit', 'dev', '--no-functions', '--no-swa', '--port', String(port)], {
+    const dev = spawn(localCommand, [...local, 'swallowkit', 'dev', '--no-functions', '--no-swa', '--host', '127.0.0.1', '--port', String(port)], {
       cwd: project, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let devOutput = '';
