@@ -154,6 +154,10 @@ try {
       const swa = fs.readFileSync(path.join(project, '.github', 'workflows', 'deploy-swa.yml'), 'utf8');
       assert(swa.includes('api_location: bff'));
       assert(!swa.includes('api_location: functions'));
+    } else {
+      const nextConfigPath = path.join(project, fs.existsSync(path.join(project, 'next.config.ts')) ? 'next.config.ts' : 'next.config.js');
+      assert.match(fs.readFileSync(nextConfigPath, 'utf8'), /\bcacheComponents\s*:\s*false\b/,
+        'Generated dynamic routes require Cache Components to be disabled');
     }
     await cli(['machine', 'inspect', 'project']);
     await run(manager, ['run', 'build'], project);

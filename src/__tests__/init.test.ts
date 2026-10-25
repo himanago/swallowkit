@@ -40,6 +40,7 @@ export default nextConfig;
     const updated = injectSwallowKitNextConfig(original, "sample-app");
 
     expect(updated).toContain("output: 'standalone'");
+    expect(updated).toContain("cacheComponents: false");
     expect(updated).toContain("agentRules: false");
     expect(updated).toContain("transpilePackages: ['@sample-app/shared']");
     expect(updated).toContain("serverExternalPackages: ['applicationinsights', 'diagnostic-channel-publishers']");
@@ -60,6 +61,23 @@ module.exports = nextConfig;
     expect(updated).toContain("transpilePackages: ['@sample-app/shared']");
     expect(updated).toContain("agentRules: false");
     expect(updated).toContain("module.exports = nextConfig;");
+    expect(updated).toContain("cacheComponents: false");
+  });
+
+  it.each([true, false])("disables create-next-app Cache Components without duplicate keys (initially %s)", (enabled) => {
+    const original = `import type { NextConfig } from 'next';
+const nextConfig: NextConfig = {
+  cacheComponents: ${enabled},
+  reactCompiler: true,
+};
+export default nextConfig;
+`;
+    const updated = injectSwallowKitNextConfig(original, "sample-app");
+    expect(updated).toContain("cacheComponents: false");
+    expect(updated).not.toContain("cacheComponents: true");
+    expect(updated.match(/\bcacheComponents\s*:/g)).toHaveLength(1);
+    expect(updated).toContain("reactCompiler: true");
+    expect(updated).toContain("output: 'standalone'");
   });
 
   it("generates a C# Program.cs compatible with the current worker packages", () => {

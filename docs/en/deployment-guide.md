@@ -6,6 +6,10 @@ never link it to SWA or use it as `api_location`.
 See [React deployment](./react-guide.md#build-verify-deploy) before using the
 Next.js/Oryx examples below.
 
+Next.js projects explicitly set `cacheComponents: false` in `next.config.ts`.
+Generated pages use dynamic route settings, which are incompatible with Cache
+Components. Preserve this setting when upgrading Next.js in an existing project.
+
 See [package manager commands and troubleshooting](./package-managers.md) for pnpm 11/12 and npm usage.
 
 Provision Azure resources and configure CI/CD for a SwallowKit project. After completing this guide, your application will be running on Azure Static Web Apps with an Azure Functions backend and Cosmos DB.

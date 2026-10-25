@@ -667,9 +667,13 @@ export function parseIgnoredBuilds(output: string): string[] {
 }
 
 export function injectSwallowKitNextConfig(nextConfigContent: string, projectName: string): string {
-  return nextConfigContent.replace(
+  const compatibleConfig = nextConfigContent.replace(/(\bcacheComponents\s*:\s*)true\b/g, '$1false');
+  const cacheComponentsSetting = /\bcacheComponents\s*:/.test(compatibleConfig)
+    ? ''
+    : '  cacheComponents: false,\n';
+  return compatibleConfig.replace(
     /(const\s+nextConfig[:\s]*(?::\s*NextConfig\s*)?=\s*\{)(\s*\/\*[^*]*\*\/)?/,
-    `$1\n  output: 'standalone',\n  agentRules: false, // SwallowKit owns the canonical root AGENTS.md contract\n  transpilePackages: ['@${projectName}/shared'],\n  serverExternalPackages: ['applicationinsights', 'diagnostic-channel-publishers'],$2`
+    `$1\n  output: 'standalone',\n${cacheComponentsSetting}  agentRules: false, // SwallowKit owns the canonical root AGENTS.md contract\n  transpilePackages: ['@${projectName}/shared'],\n  serverExternalPackages: ['applicationinsights', 'diagnostic-channel-publishers'],$2`
   );
 }
 
