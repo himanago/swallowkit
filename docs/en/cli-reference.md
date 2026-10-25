@@ -4,6 +4,9 @@ See [package manager commands and troubleshooting](./package-managers.md) for pn
 
 All SwallowKit CLI commands and their options.
 
+React uses the same commands with a managed Functions BFF. See the [React guide](./react-guide.md);
+the detailed `app/` and Next.js API route examples below describe the Next.js variant.
+
 ::: tip Package manager
 Bootstrap: `pnpm dlx swallowkit init my-app` or `npx swallowkit init my-app`. Inside the project: `pnpm exec swallowkit …` or `npx swallowkit …` uses the installed CLI. MCP independently resolves `latest`.
 :::
@@ -153,6 +156,7 @@ pnpm dlx swallowkit init [project-name] [options]
 |--------|-------------|--------|---------|
 | `--template <template>` | Template to use | `default` | `default` |
 | `--package-manager <manager>` | Select the project package manager | `npm`, `pnpm` | invocation |
+| `--frontend <framework>` | Frontend framework | `nextjs`, `react` | prompt; `nextjs` without a TTY |
 | `--next-version <version>` | Next.js version | e.g. `16.0.7`, `latest` | `latest` |
 | `--cicd <provider>` | CI/CD provider | `github`, `azure`, `skip` | *(prompt)* |
 | `--backend-language <language>` | Azure Functions backend language | `typescript`, `csharp`, `python` | *(prompt)* |
@@ -162,7 +166,7 @@ pnpm dlx swallowkit init [project-name] [options]
 
 ### Interactive vs Non-Interactive Mode
 
-By default, `init` asks interactive prompts for CI/CD, Azure Functions backend language, Static Web Apps plan, Cosmos DB mode, and network settings.
+By default, `init` asks interactive prompts for frontend framework, CI/CD, Azure Functions backend language, Static Web Apps plan, Cosmos DB mode, and network settings.
 
 Free supports the toolkit's base configuration. Choose Standard when you need an SLA, custom authentication providers, function-based custom role assignment, a private endpoint for Static Web Apps itself, or higher quotas. The Functions/Cosmos DB VNet created by `--vnet outbound` is independent of the SWA plan.
 
@@ -812,7 +816,7 @@ npx swallowkit dev --mock-connectors
 
 ## swallowkit dev
 
-Start development servers (Next.js + Azure Functions).
+Start development servers: Next.js + standalone Functions, or React/Vite + managed BFF + standalone Functions + SWA.
 
 ### Usage
 
@@ -826,8 +830,9 @@ pnpm dlx swallowkit dev [options]
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--port <port>` | `-p` | Next.js port | `3000` |
+| `--port <port>` | `-p` | Frontend port (Next.js or Vite) | `3000` |
 | `--functions-port <port>` | | Azure Functions port | `7071` |
+| `--bff-port <port>` | | React managed BFF Functions port | `7073` |
 | `--host <host>` | | Host name | `localhost` |
 | `--open` | `-o` | Auto-open browser | `false` |
 | `--no-functions` | | Skip Functions | `false` |
@@ -986,7 +991,7 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--functions-dir <dir>` | Azure Functions directory | `functions` |
-| `--api-dir <dir>` | Next.js API routes directory | `app/api` |
+| `--api-dir <dir>` | BFF directory | `app/api` (Next.js), `bff` (React) |
 | `--api-only` | Skip UI components only. Functions, BFF routes, OpenAPI, and native schema assets are still updated. | `false` |
 | `--dry-run` | Show planned file changes and conflicts without writing anything | `false` |
 

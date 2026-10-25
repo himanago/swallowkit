@@ -6,6 +6,7 @@
 export type ServerFnMode = "auto" | "force-server" | "force-client";
 
 export type BackendLanguage = "typescript" | "csharp" | "python";
+export type FrontendFramework = "nextjs" | "react";
 
 // useServerFn のオプション
 export interface UseServerFnOptions {
@@ -146,6 +147,9 @@ export interface AuthPrincipal {
 
 // CLI設定の型
 export interface SwallowKitConfig {
+  frontend?: {
+    framework?: FrontendFramework;
+  };
   database?: {
     connectionString?: string;
     databaseName?: string;

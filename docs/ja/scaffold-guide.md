@@ -1,5 +1,11 @@
 # Scaffold ガイド
 
+同じ scaffold / plan / apply コマンドで React にも対応します。
+マネージド BFF は `bff/src/{model}/index.ts` と `bff/{model}/function.json`、
+React Router のページは `src/pages/{model}/` に生成します。
+バックエンドとスキーマは従来と同じです。[React ガイド](./react-guide.md)も参照してください。
+以下の `app/` パスは Next.js の例です。
+
 Zod スキーマから CRUD 操作を生成します。このコマンドは Azure Functions バックエンドハンドラー、Next.js BFF API ルート、React UI ページ、Cosmos DB インフラを、1 つのスキーマファイルから型付きで生成します。
 
 C# または Python バックエンドでは、OpenAPI ドキュメントの出力とネイティブスキーマ資産の生成も行います。

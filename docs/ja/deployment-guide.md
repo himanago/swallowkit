@@ -1,5 +1,10 @@
 # Azure へのデプロイ
 
+**React:** 生成ワークフローはビルド済みの `dist/` と `bff/` を SWA に配置し、
+`skip_app_build` / `skip_api_build` を指定します。独立 `functions/` は別途デプロイし、
+SWA にリンクしたり `api_location` に指定したりしません。
+以下の Next.js / Oryx の例とは異なるため、[React のデプロイ](./react-guide.md#ビルド・検証・デプロイ)を参照してください。
+
 pnpm 11/12 と npm の使い分けは[コマンドとトラブルシューティング](./package-managers.md)を参照してください。
 
 SwallowKit プロジェクトの Azure リソースをプロビジョニングし、CI/CD を設定します。このガイドを完了すると、Azure Static Web Apps 上で Azure Functions バックエンドと Cosmos DB を使ったアプリケーションが動作する状態になります。

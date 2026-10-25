@@ -7,11 +7,11 @@
 
 [English](./README.md) | 日本語
 
-Next.js と Azure のための、スキーマ駆動アプリケーション開発ツールキットです。
+Next.js または React を使って Azure 上にアプリを構築する、スキーマ駆動開発ツールキットです。
 
 SwallowKit は、共有された Zod スキーマを中心にして、保守しやすいフルスタックアプリケーションを Azure 上に構築するための scaffolding ツールです。1 つのスキーマ定義から、フロントエンドフォーム、BFF ルート、Azure Functions バックエンド、OpenAPI、インフラ定義、AI エージェント向けのプロジェクトメタデータなどを生成できます。
 
-フロントエンド、バックエンド、データベース、バリデーション、API 契約、デプロイ構成がばらばらになりがちな Next.js + Azure アプリケーション開発を、明示的な構成で整理することを目的としています。
+フロントエンド、バックエンド、データベース、バリデーション、API 契約、デプロイ構成がばらばらになりがちな Next.js / React + Azure アプリケーション開発を、明示的な構成で整理することを目的としています。
 
 ## 🎯 なぜ SwallowKit か
 
@@ -35,7 +35,7 @@ AI はアプリケーションコードをすばやく生成できます。フ�
 ## ✨ 主な機能
 
 - **Zod スキーマを中心にした型定義** とバリデーション共有
-- **Next.js、BFF ルート、Azure Functions、UI コンポーネントの CRUD scaffolding**
+- **Next.js / React、BFF ルート、Azure Functions、UI コンポーネントの CRUD scaffolding**
 - **Bicep による Azure 向けインフラ定義**
 - **複数言語の Azure Functions バックエンド対応**（TypeScript、C#、Python）
 - **ローカル開発支援** とシードデータ
@@ -46,7 +46,7 @@ AI はアプリケーションコードをすばやく生成できます。フ�
 
 SwallowKit は、次のような構成のアプリケーションを主な対象にしています。
 
-- Next.js
+- Next.js、または React + Vite + React Router
 - Azure Static Web Apps
 - Azure Functions
 - Azure Cosmos DB
@@ -58,11 +58,11 @@ SwallowKit は、次のような構成のアプリケーションを主な対象
 ```
 ブラウザー
   |
-Next.js フロントエンド
+Next.js / React フロントエンド（SWA）
   |
-Next.js BFF ルート
+Next.js API Routes / SWA マネージド Functions BFF
   |
-Azure Functions API
+独立 Azure Functions API（SWA にはリンクしない）
   |
 Azure Cosmos DB
 ```
@@ -76,6 +76,7 @@ BFF レイヤーを置くことで、フロントエンドをシンプルに保�
 詳しい使い方はドキュメントサイトを参照してください（[English](https://himanago.github.io/swallowkit/en/) もあります）。
 
 - **[はじめる](https://himanago.github.io/swallowkit/ja/getting-started)** - 最初のプロジェクトセットアップ
+- **[React フロントエンド](docs/ja/react-guide.md)** - React SPA、マネージド BFF、開発とデプロイ
 - **[基本概念](https://himanago.github.io/swallowkit/ja/concepts)** - スキーマ中心のアーキテクチャ
 - **[Scaffold ガイド](https://himanago.github.io/swallowkit/ja/scaffold-guide)** - CRUD コード生成
 - **[ローカル開発](https://himanago.github.io/swallowkit/ja/dev-guide)** - Dev サーバー、seeds、モックコネクタ
@@ -93,6 +94,11 @@ BFF レイヤーを置くことで、フロントエンドをシンプルに保�
 npx swallowkit init my-app
 cd my-app
 ```
+
+対話プロンプトで Next.js / React を選択するか、`--frontend react` を指定します。
+React では静的フロントエンドと HTTP 専用のマネージド Functions BFF を SWA に配置します。
+独立 Functions は別途配置し、**SWA にはリンクしません**。
+フロントエンド指定のない既存設定は Next.js のままです。
 
 pnpm 11/12 は `pnpm dlx swallowkit init my-app` で作成し、以後 project 内で `pnpm exec swallowkit …` を使います。`npx` は npm を選択し、`--package-manager npm|pnpm` で明示指定できます。Node.js 22.14 以上が必要です。MCP は選択した manager で意図的に `latest` を参照します。[コマンド・workspace・security の詳細](docs/ja/package-managers.md)を参照してください。
 
@@ -145,6 +151,40 @@ SwallowKit は、AI コーディングエージェントがプロジェクト構
 ├── lib/                  # BFF ヘルパーと scaffold 設定
 └── .swallowkit/          # SwallowKit プロジェクトメタデータ
 ```
+
+## リリース公開（メンテナー向け）
+
+`v<version>` 形式の Git タグを push すると、`.github/workflows/publish.yml` が
+ビルド、テスト、パッケージ化した consumer の検証を経て公開します。
+Git タグ、`package.json`、`package-lock.json` の両方の version が一致している必要があります。
+
+| バージョンの例 | npm dist-tag |
+| --- | --- |
+| `2.0.0-alpha.1` | `alpha` |
+| `2.0.0-beta.1` | `beta` |
+| `2.0.0-rc.1` などその他のプレリリース | `next` |
+| `2.0.0` | `latest` |
+
+リリース対象の変更をコミットした後、次のようにアルファ版を準備・公開します。
+
+```sh
+npm version 2.0.0-alpha.1
+git push origin HEAD
+git push origin v2.0.0-alpha.1
+```
+
+`npm version` は両方の manifest を更新し、バージョン更新のコミットとタグを作成します。
+以降は `2.0.0-alpha.2`、`2.0.0-beta.1`、`2.0.0` など、公開するバージョンを指定します。
+プレリリースで `latest` は更新されません。
+公開には引き続きリポジトリの `NPM_TOKEN` シークレットが必要です。
+
+公開せずにパイプラインを確認する場合は、バージョンタグを push する前に、
+リリース対象のコミットで **Publish to npm** を手動実行し、**dry-run** を有効にしてください。
+サマリーにはバージョンと npm タグが表示され、公開済みとは表示されません。
+
+特定のアルファ版は `npx swallowkit@2.0.0-alpha.1 init my-app --frontend react` で試せます。
+`npx swallowkit@alpha ...` / `npx swallowkit@beta ...` は各チャネルの最新版を使います。
+通常の `npx swallowkit ...` は引き続き `latest` を使います。
 
 ## 🔗 ステータス
 

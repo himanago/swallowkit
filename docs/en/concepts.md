@@ -1,5 +1,10 @@
 # Core concepts
 
+SwallowKit supports Next.js and React frontends. React uses a Vite SPA and SWA
+managed Functions as the BFF; the independent Functions backend is never linked
+to SWA. See the [React architecture and workflow](./react-guide.md).
+The Next.js-specific paths below describe the default variant.
+
 This page explains SwallowKit's design decisions and the responsibilities of each layer.
 
 ## Schema as the source of truth

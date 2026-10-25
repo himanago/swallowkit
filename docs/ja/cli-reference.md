@@ -1,5 +1,9 @@
 # CLI リファレンス
 
+React でも同じコマンドを使い、BFF はマネージド Functions に生成します。
+詳しくは [React ガイド](./react-guide.md)を参照してください。
+以下の `app/` や Next.js API Routes の詳細例は Next.js 構成のものです。
+
 pnpm 11/12 と npm の使い分けは[コマンドとトラブルシューティング](./package-managers.md)を参照してください。
 
 SwallowKit CLI の全コマンドとオプションです。
@@ -153,6 +157,7 @@ pnpm dlx swallowkit init [project-name] [options]
 |----------|------|-----|----------|
 | `--template <template>` | 使用テンプレート | `default` | `default` |
 | `--package-manager <manager>` | パッケージマネージャーを明示指定 | `npm`, `pnpm` | 起動元 |
+| `--frontend <framework>` | フロントエンド | `nextjs`, `react` | 対話で選択。非対話時は `nextjs` |
 | `--next-version <version>` | Next.js バージョン | 例: `16.0.7`, `latest` | `latest` |
 | `--cicd <provider>` | CI/CD プロバイダー | `github`, `azure`, `skip` | *（プロンプト）* |
 | `--backend-language <language>` | Azure Functions のバックエンド言語 | `typescript`, `csharp`, `python` | *（プロンプト）* |
@@ -162,7 +167,7 @@ pnpm dlx swallowkit init [project-name] [options]
 
 ### 対話モードと非対話モード
 
-デフォルトでは、`init` は CI/CD、Azure Functions のバックエンド言語、Static Web Apps プラン、Cosmos DB モード、ネットワーク設定を対話プロンプトで質問します。
+デフォルトでは、`init` はフロントエンド、CI/CD、Azure Functions のバックエンド言語、Static Web Apps プラン、Cosmos DB モード、ネットワーク設定を対話プロンプトで質問します。
 
 Free はこのツールの基本構成で利用できます。Standard は SLA、カスタム認証プロバイダー、Functions によるカスタムロール付与、Static Web Apps 自体の Private Endpoint、Free より大きいクォータが必要な場合に選択してください。`--vnet outbound` が作成する Functions/Cosmos DB 用 VNet は、SWA プランとは独立しています。
 
@@ -921,7 +926,7 @@ npx swallowkit dev --mock-connectors
 
 ## swallowkit dev
 
-開発サーバーを起動します（Next.js + Azure Functions）。
+開発サーバーを起動します。Next.js + 独立 Functions、または React/Vite + マネージド BFF + 独立 Functions + SWA の構成です。
 
 ### 使用法
 
@@ -935,8 +940,9 @@ pnpm dlx swallowkit dev [options]
 
 | オプション | 短縮 | 説明 | デフォルト |
 |----------|------|------|----------|
-| `--port <port>` | `-p` | Next.js ポート | `3000` |
+| `--port <port>` | `-p` | フロントエンド（Next.js / Vite）ポート | `3000` |
 | `--functions-port <port>` | | Azure Functions ポート | `7071` |
+| `--bff-port <port>` | | React マネージド BFF Functions ポート | `7073` |
 | `--host <host>` | | ホスト名 | `localhost` |
 | `--open` | `-o` | ブラウザを自動的に開く | `false` |
 | `--no-functions` | | Functions をスキップ | `false` |
@@ -1095,7 +1101,7 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 | オプション | 説明 | デフォルト |
 | --- | --- | --- |
 | `--functions-dir <dir>` | Azure Functions ディレクトリ | `functions` |
-| `--api-dir <dir>` | Next.js API routes ディレクトリ | `app/api` |
+| `--api-dir <dir>` | BFF ディレクトリ | Next.js: `app/api`、React: `bff` |
 | `--api-only` | UI コンポーネントのみをスキップします。Functions、BFF ルート、OpenAPI、ネイティブスキーマ資産は更新されます。 | `false` |
 | `--dry-run` | 書き込まずに変更予定のファイル一覧と競合を表示します | `false` |
 

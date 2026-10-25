@@ -179,7 +179,7 @@ describe("coding-agent documentation synchronization", () => {
     }
 
     expect(englishGuide).toContain("complete English templates");
-    expect(englishGuide).toContain("not\nabridged excerpts");
+    expect(englishGuide).toMatch(/not\r?\nabridged excerpts/);
     expect(japaneseGuide).toContain("抜粋ではありません");
   });
 

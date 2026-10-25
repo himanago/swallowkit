@@ -4,7 +4,10 @@ See [package manager commands and troubleshooting](./package-managers.md) for pn
 
 This page walks you through creating a SwallowKit project and generating your first CRUD flow.
 
-By the end, you will have a running Next.js application with typed BFF routes, Azure Functions backend handlers, and React UI components — all generated from a single Zod schema.
+By the end, you will have a Next.js or React application with typed BFF routes, Azure Functions backend handlers, and UI components — all generated from a single Zod schema.
+
+Choose React for a Vite SPA with a SWA managed Functions BFF. The [React guide](./react-guide.md)
+covers its generated paths, authentication, local development and deployment. The path examples below use Next.js unless stated otherwise.
 
 ## Prerequisites
 
@@ -29,25 +32,27 @@ cd my-app
 ```
 :::
 
-The command runs `create-next-app` internally and then adds SwallowKit's project structure on top.
+For Next.js, the command runs `create-next-app`. For React, it generates a Vite + React Router SPA and a separate managed Functions BFF.
 
 Interactive prompts ask for:
 
 | Option | Values | Default |
 |--------|--------|---------|
+| Frontend | `nextjs`, `react` | `nextjs` (non-interactive default) |
 | CI/CD provider | `github`, `azure`, `skip` | (prompted) |
 | Backend language | `typescript`, `csharp`, `python` | (prompted) |
 | Cosmos DB mode | `freetier`, `serverless` | (prompted) |
 | Network | `outbound`, `none` | (prompted) |
+| SWA plan | `free`, `standard` | (prompted) |
 
 To skip prompts, pass flags directly:
 
 ::: code-group
 ```bash [npm]
-npx swallowkit init my-app --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none
+npx swallowkit init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
 ```
 ```bash [pnpm]
-pnpm dlx swallowkit init my-app --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none
+pnpm dlx swallowkit init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
 ```
 :::
 
@@ -104,6 +109,9 @@ This generates:
 
 For C# backends, the Functions file is `functions/Crud/TodoCrudFunctions.cs`. For Python, it is `functions/blueprints/todo.py`.
 
+React instead generates `bff/src/todo/index.ts`, `bff/todo/function.json`,
+and pages/forms/route registrations under `src/pages/todo/`.
+
 ## 4. Start the development server
 
 ::: code-group
@@ -120,6 +128,10 @@ This starts:
 - Azure Functions at http://localhost:7071
 
 Open http://localhost:3000/todo to see the generated UI.
+
+**For React**, dev also starts the managed BFF (7073) and SWA CLI (4280).
+Open **http://localhost:4280/todo** so `/api` requests pass through the managed BFF.
+Standalone Functions stay on 7071 and are never linked to SWA.
 
 ## 5. Verify the result
 

@@ -27,6 +27,13 @@ export interface CapabilityAuthProvider {
 export interface CapabilitiesContract {
   contractVersion: number;
   swallowkitVersion: string;
+  frontends: {
+    supported: string[];
+    default: string;
+    configuration: string;
+    reactArchitecture: string;
+    development: string;
+  };
   modelDeclarations: CapabilityModelDeclaration[];
   authentication: {
     correctWorkflow: string[];
@@ -64,6 +71,13 @@ export function inspectCapabilities(): CapabilitiesContract {
   return {
     contractVersion: 1,
     swallowkitVersion: getSwallowKitVersion(),
+    frontends: {
+      supported: ["nextjs", "react"],
+      default: "nextjs",
+      configuration: "init --frontend nextjs|react; stored as frontend.framework in swallowkit.config.js. Missing settings preserve Next.js.",
+      reactArchitecture: "React/Vite SPA on SWA -> HTTP-only SWA managed Functions BFF (bff/) -> standalone Functions (functions/). Never link standalone Functions to SWA. Backend keys stay server-side.",
+      development: "React dev runs Vite:3000, BFF:7073, Functions:7071 and SWA CLI:4280; use the SWA port for same-origin APIs and authentication. Build/verify include BFF typechecking.",
+    },
     modelDeclarations: [
       {
         name: "schema",

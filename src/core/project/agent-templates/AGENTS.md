@@ -393,9 +393,9 @@ This is a full-stack application deployed on Azure with a TypeScript
 frontend/BFF and an Azure Functions backend in {{backendLanguageLabel}}.
 
 ```text
-Frontend (React / Next.js App Router)
+Frontend ({{frontendLabel}})
   ↓
-BFF (Next.js API Routes)
+BFF ({{bffLabel}})
   ↓
 Azure Functions
   ↓
@@ -404,7 +404,7 @@ Azure Cosmos DB
 
 ### Core architecture rules
 
-1. Next.js API routes are a BFF/proxy layer. Do not place application business
+1. {{bffLabel}} are a BFF/proxy layer. Do not place application business
    logic or direct database access there.
 2. Zod schemas under `shared/models/` are the application model source of truth.
 3. Do not duplicate model definitions across layers.
@@ -415,6 +415,11 @@ Azure Cosmos DB
    markers and boundaries.
 7. Production access to Azure resources must follow the generated security
    architecture; do not introduce hard-coded credentials or connection strings.
+8. Never link standalone Functions to SWA. The same-origin BFF calls the
+   independent backend with server-side BACKEND_FUNCTIONS_BASE_URL and
+   BACKEND_FUNCTIONS_KEY. Never expose these values in browser bundles or VITE_*.
+   Managed Functions use HTTP triggers only; database access, non-HTTP triggers,
+   managed identity, and private networking belong to the standalone backend.
 
 ### Backend-specific rules
 
@@ -427,16 +432,13 @@ values for these fields.
 
 ```text
 {{projectName}}/
-├── app/                    # Next.js App Router
-│   ├── api/                # BFF routes
-│   └── {model}/            # generated/custom UI
+{{frontendStructure}}
 ├── functions/              # Azure Functions backend
 {{functionsStructureLine}}
 ├── shared/
 │   ├── models/             # Zod source-of-truth models
 │   └── index.ts
-├── lib/
-│   └── api/
+├── lib/                    # auth, navigation, and shared application utilities
 ├── components/
 ├── infra/                  # Bicep infrastructure
 ├── .swallowkit/            # SwallowKit project metadata and runbooks
@@ -470,12 +472,25 @@ same generated structure.
 {{pm}} install
 {{runCmd}} swallowkit dev
 {{pm}} run build
-{{pm}} run lint
+{{pm}} run --if-present lint
 {{runCmd}} swallowkit machine verify project
 ```
 
 Always invoke SwallowKit using the package-runner convention generated for this
 project. Do not arbitrarily mix package-manager invocation styles.
+
+{{devGuidance}}
+
+Check for an already-running Cosmos DB Emulator before database tests. If it is
+unavailable, report that prerequisite; do not start/restart it or change global
+tools, TLS trust, or machine settings without explicit permission. Test against
+an isolated database and ports, never reset user data, and stop only processes
+you started. `dev --seed-env` replaces data, so inspect its target first.
+
+Build and run `verify project`, then exercise UI, CRUD, error/validation paths,
+and configured authentication through the same-origin BFF. A passing typecheck
+or server readiness probe alone is not an end-to-end verification. Report
+unverified cloud deployment or unavailable local prerequisites explicitly.
 
 ## Final Rules
 

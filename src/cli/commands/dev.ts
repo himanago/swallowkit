@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as http from 'http';
 import * as https from 'https';
 import * as path from 'path';
@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as net from 'net';
 import { CosmosClient, PartitionKeyKind } from '@azure/cosmos';
-import { ensureSwallowKitProject, getBackendLanguage, getAuthConfig, normalizeAuthConfig } from '../../core/config';
+import { ensureSwallowKitProject, getBackendLanguage, getFrontendFramework, getAuthConfig, normalizeAuthConfig } from '../../core/config';
 import { ModelInfo } from '../../core/scaffold/model-parser';
 import {
   applyDevSeedEnvironment,
@@ -32,6 +32,7 @@ import { ConnectorMockServer } from '../../core/mock/connector-mock-server';
 export interface DevOptions {
   port?: string;
   functionsPort?: string;
+  bffPort?: string;
   host?: string;
   open?: boolean;
   verbose?: boolean;
@@ -125,7 +126,7 @@ export function buildFunctionsBaseUrl(host: string | undefined, functionsPort: s
   return `http://${host || 'localhost'}:${functionsPort}`;
 }
 
-export function buildSwaStartArgs(host: string | undefined, nextPort: string, swaPort: string): string[] {
+export function buildSwaStartArgs(host: string | undefined, nextPort: string, swaPort: string, bffPort?: string): string[] {
   return [
     'start',
     `http://${host || 'localhost'}:${nextPort}`,
@@ -133,7 +134,13 @@ export function buildSwaStartArgs(host: string | undefined, nextPort: string, sw
     '.',
     '--port',
     swaPort,
+    ...(bffPort ? ['--api-devserver-url', buildFunctionsBaseUrl(host, bffPort)] : []),
   ];
+}
+
+export function buildReactDevArgs(pm: string, port: string, host = 'localhost'): string[] {
+  const args = ['vite', '--port', port, '--host', host, '--strictPort'];
+  return pm === 'pnpm' ? ['exec', ...args] : args;
 }
 
 export function getSwaCliInstallCommand(pm: string): string {
@@ -522,23 +529,48 @@ async function checkCosmosDBEmulator(): Promise<boolean> {
   });
 }
 
+export async function assertDevPortAvailable(port: number, host: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', error => reject(new Error(`Development port ${port} on ${host} is unavailable: ${error.message}`)));
+    server.listen({ port, host, exclusive: true }, () => server.close(error => error ? reject(error) : resolve()));
+  });
+}
+
+function stopDevProcesses(processes: ChildProcess[]): void {
+  const active = processes.filter(child => child.pid && !child.killed);
+  if (process.platform === 'win32' && active.length) {
+    // Windows shell termination alone leaves Vite, Core Tools, and SWA running.
+    const ids = active.map(child => child.pid).join(',');
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `$all = @(Get-CimInstance Win32_Process); function Stop-OwnedTree([int]$id) { foreach ($child in ($all | Where-Object ParentProcessId -eq $id)) { Stop-OwnedTree $child.ProcessId }; Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }; foreach ($id in @(${ids})) { Stop-OwnedTree $id }`,
+    ], { windowsHide: true, encoding: 'utf8' });
+    if (result.error || result.status !== 0) {
+      console.error('❌ Could not stop all development subprocesses:', result.error?.message || result.stderr);
+    }
+  } else {
+    for (const child of active) child.kill();
+  }
+}
+
 export function buildDevCommand(
   runDevEnvironment: (options: DevOptions) => Promise<void> = startDevEnvironment,
   verifyProject: (commandName: string, projectRoot?: string) => void = ensureSwallowKitProject
 ): Command {
   return new Command()
     .name('dev')
-    .description('Start SwallowKit development server (Cosmos DB + Next.js + Azure Functions)')
-    .option('-p, --port <port>', 'Next.js port', '3000')
+    .description('Start SwallowKit frontend, BFF, and standalone Azure Functions')
+    .option('-p, --port <port>', 'Frontend dev server port', '3000')
     .option('-f, --functions-port <port>', 'Azure Functions port', '7071')
+    .option('--bff-port <port>', 'React managed BFF Functions port', '7073')
     .option('--host <host>', 'Host name', 'localhost')
     .option('--open', 'Open browser automatically', false)
     .option('--verbose', 'Show verbose logs', false)
     .option('--no-functions', 'Skip Azure Functions startup')
     .option('--seed-env <environment>', 'Replace Cosmos DB Emulator data from dev-seeds/<environment> before startup')
     .option('--mock-connectors', 'Start mock server for connector models (serves Zod-generated data)', false)
-    .option('--swa-port <port>', 'SWA authentication emulator port', '4280')
-    .option('--no-swa', 'Skip the SWA authentication emulator')
+    .option('--swa-port <port>', 'SWA routing/authentication emulator port', '4280')
+    .option('--no-swa', 'Skip SWA routing/authentication emulation (React direct access has no same-origin API)')
     .action(async (options: ParsedDevActionOptions) => {
       const normalizedOptions = normalizeParsedDevOptions(options);
 
@@ -656,19 +688,24 @@ async function startDevEnvironment(options: DevOptions) {
   const port = options.port || '3000';
   const functionsPort = options.functionsPort || '7071';
   const swaPort = options.swaPort || '4280';
+  const bffPort = options.bffPort || '7073';
   
   // Detect package manager from project lockfile
   const pm = detectFromProject();
   const pmCmd = getCommands(pm);
   const backendLanguage = getBackendLanguage();
+  const react = getFrontendFramework() === 'react';
+  const frontendLabel = react ? 'React/Vite' : 'Next.js';
   const authConfig = getAuthConfig();
   const normalizedAuth = normalizeAuthConfig(authConfig);
-  const useSwaEmulator = Boolean(normalizedAuth && Object.values(normalizedAuth.schemes).some(scheme => scheme.provider === 'swa')) && !options.noSwa;
+  const authSchemes = Object.values(normalizedAuth?.schemes ?? {});
+  const swaScheme = authSchemes.find(scheme => scheme.provider === 'swa');
+  const useSwaEmulator = (react || Boolean(swaScheme)) && !options.noSwa;
   const swaCommand = useSwaEmulator ? await resolveSwaCliCommand(process.cwd()) : null;
 
   if (useSwaEmulator && !swaCommand) {
     const installCommand = getSwaCliInstallCommand(pm);
-    console.error('❌ SWA authentication requires Azure Static Web Apps CLI for local development.');
+    console.error('❌ SWA routing/authentication requires Azure Static Web Apps CLI for local development.');
     console.error('   Install it in this project and retry:');
     console.error(`\n   ${installCommand}\n`);
     process.exitCode = 1;
@@ -707,15 +744,22 @@ async function startDevEnvironment(options: DevOptions) {
     if (mockServer) {
       await mockServer.stop();
     }
-    processes.forEach((proc) => {
-      if (proc && !proc.killed) {
-        proc.kill();
-      }
-    });
+    stopDevProcesses(processes);
     process.exit(0);
   });
 
   try {
+    if (react) {
+      const ports = [port, bffPort, ...(!options.noFunctions ? [functionsPort] : []), ...(useSwaEmulator ? [swaPort] : []), ...(options.mockConnectors ? [String(Number(functionsPort) + 1)] : [])];
+      if (ports.some(value => !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65535) || new Set(ports).size !== ports.length) {
+        throw new Error('Frontend, BFF, standalone Functions, mock, and SWA ports must be valid and distinct');
+      }
+      for (const value of ports) await assertDevPortAvailable(Number(value), options.host || 'localhost');
+      const coreToolsVersion = await resolveInstalledCoreToolsVersion();
+      if (!coreToolsVersion || compareVersionNumbers(coreToolsVersion, '4.0.0') < 0) {
+        throw new Error('React BFF requires Azure Functions Core Tools v4. Install it explicitly before running dev.');
+      }
+    }
     // 1. Check for Next.js project
     const packageJsonPath = path.join(process.cwd(), 'package.json');
     const nextConfigPathJs = path.join(process.cwd(), 'next.config.js');
@@ -724,11 +768,11 @@ async function startDevEnvironment(options: DevOptions) {
     
     if (!fs.existsSync(packageJsonPath)) {
       console.log('❌ package.json not found.');
-      console.log('💡 Please run this command in the root directory of a Next.js project.');
+      console.log('💡 Please run this command in the root directory of a SwallowKit project.');
       process.exit(1);
     }
 
-    if (!fs.existsSync(nextConfigPathJs) && !fs.existsSync(nextConfigPathTs) && !fs.existsSync(nextConfigPathMjs)) {
+    if (!react && !fs.existsSync(nextConfigPathJs) && !fs.existsSync(nextConfigPathTs) && !fs.existsSync(nextConfigPathMjs)) {
       console.log('⚠️  next.config file not found. Is this a Next.js project?');
     }
 
@@ -963,14 +1007,14 @@ async function startDevEnvironment(options: DevOptions) {
       );
     } else if (!hasFunctions) {
       console.log('');
-      console.log('ℹ️  functions/ directory not found. Starting Next.js only.');
+      console.log(`ℹ️  functions/ directory not found. Starting ${frontendLabel}${react ? ' and managed BFF' : ''} only.`);
     } else if (options.noFunctions) {
       console.log('');
       console.log('ℹ️  --no-functions specified. Skipping Azure Functions.');
     }
 
     console.log('');
-    console.log('🚀 Starting Next.js development server...');
+    console.log(`🚀 Starting ${frontendLabel} development server...`);
 
     // Mock connector server — start proxy if --mock-connectors is enabled
     let bffTargetPort = functionsPort;
@@ -1039,7 +1083,7 @@ async function startDevEnvironment(options: DevOptions) {
     }
 
     // 5. Start Next.js development server
-    const nextArgs = buildNextDevArgs(pm, port);
+    const nextArgs = react ? buildReactDevArgs(pm, port, options.host) : buildNextDevArgs(pm, port);
     
     // Ensure .env.local points to bffTargetPort so Next.js reads the correct backend URL.
     // When --mock-connectors is active, bffTargetPort = mock port (7072); otherwise = Functions port (7071).
@@ -1067,6 +1111,25 @@ async function startDevEnvironment(options: DevOptions) {
       FUNCTIONS_BASE_URL: bffTargetUrl,
     };
 
+    if (react) {
+      await runCommand(pm, ['run', 'build'], path.join(process.cwd(), 'shared'), 'Shared schema build');
+      const bffDir = path.join(process.cwd(), 'bff');
+      await runCommand(pm, ['run', 'build'], bffDir, 'Managed BFF build');
+      const bffProcess = spawn('func', buildFunctionsStartArgs(bffPort), {
+        cwd: bffDir, shell: true, stdio: 'inherit', env: nextEnv,
+      });
+      processes.push(bffProcess);
+      bffProcess.on('error', error => console.error('❌ Managed BFF startup error:', error.message));
+      bffProcess.on('close', code => {
+        console.error(`⏹️ Managed BFF exited (exit code: ${code})`);
+        stopDevProcesses(processes);
+        process.exit(code || 1);
+      });
+      if (!await waitForHttpServerReady(buildFunctionsBaseUrl(options.host, bffPort))) {
+        throw new Error(`Managed BFF did not become ready on port ${bffPort}`);
+      }
+    }
+
     const nextProcess = spawn(pm === 'pnpm' ? 'pnpm' : 'npx', nextArgs, {
       cwd: process.cwd(),
       shell: true,
@@ -1077,23 +1140,19 @@ async function startDevEnvironment(options: DevOptions) {
     processes.push(nextProcess);
 
     nextProcess.on('error', (error) => {
-      console.error('❌ Next.js startup error:', error.message);
+      console.error(`❌ ${frontendLabel} startup error:`, error.message);
       process.exit(1);
     });
 
     nextProcess.on('close', (code) => {
       if (code !== 0) {
-        console.log(`\n⏹️  Next.js exited (exit code: ${code})`);
+        console.log(`\n⏹️  ${frontendLabel} exited (exit code: ${code})`);
       }
-      // Exit all processes when Next.js exits
+      // Exit all owned processes when the frontend exits.
       if (mockServer) {
         mockServer.stop().catch(() => {});
       }
-      processes.forEach((proc) => {
-        if (proc && !proc.killed) {
-          proc.kill();
-        }
-      });
+      stopDevProcesses(processes);
       process.exit(code || 0);
     });
 
@@ -1110,14 +1169,14 @@ async function startDevEnvironment(options: DevOptions) {
     let swaReady = false;
     if (useSwaEmulator && swaCommand) {
       const nextUrl = `http://${options.host || 'localhost'}:${port}`;
-      console.log(`⏳ Waiting for Next.js before starting the SWA emulator at ${nextUrl}...`);
+      console.log(`⏳ Waiting for ${frontendLabel} before starting the SWA emulator at ${nextUrl}...`);
       const nextReady = await waitForHttpServerReady(nextUrl);
       if (!nextReady) {
-        throw new Error(`Next.js did not become ready at ${nextUrl}`);
+        throw new Error(`${frontendLabel} did not become ready at ${nextUrl}`);
       }
 
-      console.log(`🔐 Starting SWA authentication emulator (port: ${swaPort})...`);
-      const swaProcess = spawn(swaCommand, buildSwaStartArgs(options.host, port, swaPort), {
+      console.log(`🔐 Starting SWA routing/authentication emulator (port: ${swaPort})...`);
+      const swaProcess = spawn(swaCommand, buildSwaStartArgs(options.host, port, swaPort, react ? bffPort : undefined), {
         cwd: process.cwd(),
         shell: true,
         stdio: 'inherit',
@@ -1131,7 +1190,7 @@ async function startDevEnvironment(options: DevOptions) {
       const swaUrl = `http://${options.host || 'localhost'}:${swaPort}`;
       swaReady = await waitForHttpServerReady(swaUrl);
       if (!swaReady) {
-        throw new Error(`SWA authentication emulator did not become ready at ${swaUrl}`);
+        throw new Error(`SWA routing/authentication emulator did not become ready at ${swaUrl}`);
       }
     }
 
@@ -1140,18 +1199,25 @@ async function startDevEnvironment(options: DevOptions) {
     console.log('');
     if (useSwaEmulator) {
       const swaUrl = `http://${options.host || 'localhost'}:${swaPort}`;
-      console.log('🔐 SWA authenticated app:');
+      console.log('🔐 SWA app (same-origin frontend and BFF):');
       console.log(`   ${swaUrl}`);
       console.log('');
-      console.log('🔑 Local sign-in:');
-      console.log(`   ${swaUrl}/.auth/login/aad`);
-      console.log('   Enter any username and select Login.');
-      console.log('   The "authenticated" role is added automatically.');
-      console.log('');
-      console.log('📱 Next.js direct access (authentication is not emulated):');
+      if (swaScheme) {
+        const provider = swaScheme.swa?.allowedProviders?.[0] || 'aad';
+        console.log('🔑 Local SWA sign-in:');
+        console.log(`   ${swaUrl}/.auth/login/${provider}`);
+        console.log('   Enter any username and select Login.');
+        console.log('   The "authenticated" role is added automatically.');
+        console.log('');
+      }
+      if (authSchemes.some(scheme => scheme.provider === 'custom-jwt')) {
+        console.log(`🔑 Application sign-in: ${swaUrl}/login`);
+        console.log('');
+      }
+      console.log(`📱 ${frontendLabel} direct access (SWA routing/authentication is not emulated):`);
       console.log(`   http://${options.host || 'localhost'}:${port}`);
     } else {
-      console.log(`📱 Next.js: http://${options.host || 'localhost'}:${port}`);
+      console.log(`📱 ${frontendLabel}: http://${options.host || 'localhost'}:${port}`);
     }
     if (hasFunctions && !options.noFunctions) {
       console.log(`${functionsReady ? '⚡ Azure Functions' : '⏳ Azure Functions (starting)'}: ${functionsBaseUrl}`);
@@ -1161,7 +1227,7 @@ async function startDevEnvironment(options: DevOptions) {
     }
     console.log('');
     if (hasFunctions && !options.noFunctions && functionsReady) {
-      console.log('💡 Azure Functions and Next.js BFF are connected');
+      console.log(`💡 Azure Functions and ${react ? 'managed Functions' : 'Next.js'} BFF are connected`);
     } else if (hasFunctions && !options.noFunctions) {
       console.log('💡 Azure Functions is still warming up; BFF routes can fail until the backend responds.');
     }
@@ -1171,6 +1237,7 @@ async function startDevEnvironment(options: DevOptions) {
     if (swaReady) {
       console.log('💡 Open the app through the SWA port when testing authenticated pages and CRUD APIs.');
     }
+    if (react) console.log(`🔀 Managed BFF: ${buildFunctionsBaseUrl(options.host, bffPort)} (not the standalone Functions endpoint)`);
     console.log('');
 
     if (options.open) {
@@ -1189,11 +1256,7 @@ async function startDevEnvironment(options: DevOptions) {
 
   } catch (error) {
     console.error('❌ Failed to start development environment:', error instanceof Error ? error.message : error);
-    processes.forEach((proc) => {
-      if (proc && !proc.killed) {
-        proc.kill();
-      }
-    });
+    stopDevProcesses(processes);
     process.exit(1);
   }
 }

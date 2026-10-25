@@ -411,11 +411,13 @@ describe("SWA npm compatibility with pnpm projects", () => {
         scripts: { prestart: "pnpm run build" },
       });
       const env = { ...process.env, npm_config_cache: path.join(dir, "cache") };
+      const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+      const npmOptions = { cwd: dir, env, encoding: "utf8" as const, shell: process.platform === "win32" };
       // setup-node's npm cache lookup is an npm command too, before any install.
-      const cacheBefore = spawnSync("npm", ["config", "get", "cache"], { cwd: dir, env, encoding: "utf8" });
+      const cacheBefore = spawnSync(npmCommand, ["config", "get", "cache"], npmOptions);
       expect(cacheBefore.status).not.toBe(0);
       expect(cacheBefore.stderr).toContain("EBADDEVENGINES");
-      const before = spawnSync("npm", ["run", "probe"], { cwd: dir, env, encoding: "utf8" });
+      const before = spawnSync(npmCommand, ["run", "probe"], npmOptions);
       expect(before.status).not.toBe(0);
       expect(before.stderr).toContain("EBADDEVENGINES");
 
@@ -430,7 +432,7 @@ describe("SWA npm compatibility with pnpm projects", () => {
       }
       const runtimeCommand = workflow.match(/node -e "const fs=require\('fs'\);const p=JSON.parse[^\n]+/);
       expect(runtimeCommand).not.toBeNull();
-      execFileSync("bash", ["-c", runtimeCommand![0]], { cwd: dir });
+      execFileSync(process.execPath, ["-e", runtimeCommand![0].slice('node -e "'.length, -1)], { cwd: dir });
       const match = workflow.match(/node <<'NODE'\n([\s\S]*?)\n\s+NODE/);
       expect(match).not.toBeNull();
       execFileSync(process.execPath, ["-e", match![1]], { cwd: dir });
@@ -441,9 +443,9 @@ describe("SWA npm compatibility with pnpm projects", () => {
       expect(normalized.devEngines.runtime.version).toBe(">=22.14.0");
       expect(normalized.workspaces).toEqual(hasFunctions ? ["shared", "functions"] : ["shared"]);
       expect(normalized.dependencies["@sample/shared"]).toBe("file:shared");
-      const cacheAfter = execFileSync("npm", ["config", "get", "cache"], { cwd: dir, env, encoding: "utf8" });
+      const cacheAfter = execFileSync(npmCommand, ["config", "get", "cache"], npmOptions);
       expect(cacheAfter.trim()).toBe(env.npm_config_cache);
-      const after = execFileSync("npm", ["run", "probe"], { cwd: dir, env, encoding: "utf8" });
+      const after = execFileSync(npmCommand, ["run", "probe"], npmOptions);
       expect(after).toContain("npm/");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

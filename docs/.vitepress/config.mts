@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress';
 export default defineConfig({
   title: 'SwallowKit',
   description:
-    'Schema-driven application scaffolding for Next.js and Azure',
+    'Schema-driven application scaffolding for Next.js or React on Azure',
   base: '/swallowkit/',
   lastUpdated: true,
   cleanUrls: true,
@@ -49,7 +49,7 @@ export default defineConfig({
       lang: 'en',
       title: 'SwallowKit',
       description:
-        'Schema-driven application scaffolding for Next.js and Azure',
+        'Schema-driven application scaffolding for Next.js or React on Azure',
       themeConfig: {
         nav: [
           { text: 'Getting Started', link: '/en/getting-started' },
@@ -78,6 +78,7 @@ export default defineConfig({
               text: 'Guides',
               items: [
                 { text: 'Scaffold (CRUD generation)', link: '/en/scaffold-guide' },
+                { text: 'React frontend', link: '/en/react-guide' },
                 { text: 'Local development', link: '/en/dev-guide' },
                 { text: 'Deploy to Azure', link: '/en/deployment-guide' },
                 { text: 'AI / MCP integration', link: '/en/ai-mcp-guide' },
@@ -102,7 +103,7 @@ export default defineConfig({
       lang: 'ja',
       title: 'SwallowKit',
       description:
-        'Next.js と Azure のためのスキーマ駆動アプリケーション scaffolding',
+        'Next.js / React と Azure のためのスキーマ駆動アプリケーション scaffolding',
       themeConfig: {
         nav: [
           { text: 'はじめる', link: '/ja/getting-started' },
@@ -131,6 +132,7 @@ export default defineConfig({
               text: 'ガイド',
               items: [
                 { text: 'Scaffold（CRUD 生成）', link: '/ja/scaffold-guide' },
+                { text: 'React フロントエンド', link: '/ja/react-guide' },
                 { text: 'ローカル開発', link: '/ja/dev-guide' },
                 { text: 'Azure へのデプロイ', link: '/ja/deployment-guide' },
                 { text: 'AI / MCP 統合', link: '/ja/ai-mcp-guide' },

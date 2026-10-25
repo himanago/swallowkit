@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
-import { BackendLanguage } from "../types";
+import { BackendLanguage, FrontendFramework } from "../types";
 
 /**
  * Supported package managers
@@ -214,7 +214,10 @@ export function getAzurePipelinesSetup(pm: PackageManager): string {
 /**
  * Build script for generated package.json (depends on workspace command syntax)
  */
-export function getBuildScript(pm: PackageManager): string {
+export function getBuildScript(pm: PackageManager, frontend: FrontendFramework = "nextjs"): string {
+  if (frontend === "react") {
+    return `${getCommands(pm).runFilter("shared")} build && tsc --noEmit && vite build && node -e "require('fs').copyFileSync('staticwebapp.config.json','dist/staticwebapp.config.json')" && ${getCommands(pm).runFilter("bff")} build`;
+  }
   const copyStandaloneAssets = `node -e "const fs=require('fs');fs.mkdirSync('.next/standalone/.next',{recursive:true});if(fs.existsSync('.next/static'))fs.cpSync('.next/static','.next/standalone/.next/static',{recursive:true});if(fs.existsSync('public'))fs.cpSync('public','.next/standalone/public',{recursive:true});"`;
 
   if (pm === "pnpm") {

@@ -2,7 +2,8 @@
 import * as path from "path";
 import { spawn, execSync } from "child_process";
 import prompts from "prompts";
-import { BackendLanguage } from "../../types";
+import { BackendLanguage, FrontendFramework } from "../../types";
+import { buildReactReadme, buildReactSwaConfig, createReactBffProject, createReactProject, buildReactGitHubSwaWorkflow, buildReactAzureSwaPipeline } from "../../core/project/react-project";
 import {
   type PackageManager,
   detectFromUserAgent,
@@ -29,6 +30,7 @@ import { getProjectLocalUvPaths } from "../../utils/python-uv";
 interface InitOptions {
   name: string;
   template: string;
+  frontend?: FrontendFramework;
   nextVersion?: string;
   cicd?: CiCdProvider;
   backendLanguage?: BackendLanguage;
@@ -257,6 +259,9 @@ const VALID_VNET: VNetOption[] = ['none', 'outbound'];
 const VALID_SWA_PLAN: StaticWebAppPlan[] = ['free', 'standard'];
 
 function validateInitFlags(options: InitOptions): void {
+  if (options.frontend && !["nextjs", "react"].includes(options.frontend)) {
+    throw new Error("Invalid --frontend: expected nextjs or react");
+  }
   if (options.packageManager && !['npm', 'pnpm'].includes(options.packageManager)) {
     throw new Error('Invalid --package-manager: expected npm or pnpm');
   }
@@ -322,17 +327,28 @@ export async function initCommand(options: InitOptions) {
       }
     }
 
+    // Preserve existing non-interactive invocations while offering a frontend choice in the wizard.
+    const frontend: FrontendFramework = options.frontend ?? (interactive
+      ? (await prompts({
+          type: "select", name: "frontend", message: "Frontend framework:",
+          choices: [{ title: "Next.js (App Router)", value: "nextjs" }, { title: "React (Vite SPA + SWA managed Functions BFF)", value: "react" }],
+          initial: 0,
+        })).frontend || "nextjs"
+      : "nextjs");
+    options = { ...options, frontend };
+
     // Use flag values if provided, otherwise prompt interactively
     const cicdProvider: CiCdProvider = options.cicd || await promptCiCd();
     const backendLanguage: BackendLanguage = options.backendLanguage || await promptBackendLanguage();
 
     const azureConfig = await promptAzureConfig(options);
 
-    // Create Next.js project with create-next-app
-    await createNextJsProject(options.name, pm);
-
-    // Upgrade Next.js to specified version (or latest) to avoid cached old versions
-    await upgradeNextJs(projectDir, options.nextVersion || 'latest', pm);
+    if (frontend === "react") {
+      createReactProject(projectDir, options.name);
+    } else {
+      await createNextJsProject(options.name, pm);
+      await upgradeNextJs(projectDir, options.nextVersion || 'latest', pm);
+    }
 
     // Add SwallowKit specific files
     await addSwallowKitFiles(projectDir, options, cicdProvider, azureConfig, pm, backendLanguage);
@@ -342,9 +358,9 @@ export async function initCommand(options: InitOptions) {
     
     // Create CI/CD files based on choice
     if (cicdProvider === 'github') {
-      await createGitHubActionsWorkflows(projectDir, azureConfig, pm, backendLanguage);
+      await createGitHubActionsWorkflows(projectDir, azureConfig, pm, backendLanguage, frontend);
     } else if (cicdProvider === 'azure') {
-      await createAzurePipelines(projectDir, pm, backendLanguage);
+      await createAzurePipelines(projectDir, pm, backendLanguage, frontend);
     }
 
     await syncProjectManifest(projectDir);
@@ -704,8 +720,11 @@ export function buildCSharpFunctionsProjectSource(): string {
 `;
 }
 
-export function buildSwallowKitConfigSource(backendLanguage: BackendLanguage): string {
+export function buildSwallowKitConfigSource(backendLanguage: BackendLanguage, frontend: FrontendFramework = "nextjs"): string {
   return `module.exports = {
+  frontend: {
+    framework: '${frontend}',
+  },
   backend: {
     language: '${backendLanguage}',
   },
@@ -723,10 +742,10 @@ export function buildSwallowKitConfigSource(backendLanguage: BackendLanguage): s
 export function buildGeneratedProjectDependencies(
   projectName: string,
   pm: PackageManager = 'pnpm',
+  frontend: FrontendFramework = "nextjs",
 ): Record<string, string> {
   return {
-    '@azure/cosmos': '^4.0.0',
-    'applicationinsights': '^3.3.0',
+    ...(frontend === "nextjs" ? { '@azure/cosmos': '^4.0.0', 'applicationinsights': '^3.3.0' } : {}),
     'zod': '^4.0.0',
     [`@${projectName}/shared`]: pm === 'pnpm' ? 'workspace:*' : 'file:shared',
   };
@@ -795,6 +814,7 @@ async function addSwallowKitFiles(
   console.log('📦 Adding SwallowKit files...\n');
   
   const projectName = options.name;
+  const frontend = options.frontend ?? "nextjs";
 
   // 1. Update package.json to add runtime dependencies for generated projects
   const packageJsonPath = path.join(projectDir, 'package.json');
@@ -803,7 +823,7 @@ async function addSwallowKitFiles(
   // Root BFF/auth code imports Zod directly; declare it as well as the shared package.
   packageJson.dependencies = {
     ...packageJson.dependencies,
-    ...buildGeneratedProjectDependencies(projectName, pm),
+    ...buildGeneratedProjectDependencies(projectName, pm, frontend),
   };
   packageJson.devDependencies = {
     ...packageJson.devDependencies,
@@ -812,8 +832,12 @@ async function addSwallowKitFiles(
 
   packageJson.scripts = {
     ...packageJson.scripts,
-    'build': getBuildScript(pm),
-    'start': 'next start',
+    'build': getBuildScript(pm, frontend),
+    'start': frontend === "react" ? "vite preview" : 'next start',
+    ...(frontend === "react" ? {
+      typecheck: `tsc --noEmit && ${getCommands(pm).exec} tsc --noEmit -p bff`,
+      "bff:start": `${getCommands(pm).runFilter("bff")} start`,
+    } : {}),
     'functions:start': getFunctionsStartScript(pm, backendLanguage),
   };
 
@@ -827,7 +851,7 @@ async function addSwallowKitFiles(
   delete packageJson.packageManager;
 
   // Keep package.json workspaces for npm-based CI/CD even when local development uses pnpm.
-  const workspacePackages = usesNodeFunctionsProject(backendLanguage) ? ['shared', 'functions'] : ['shared'];
+  const workspacePackages = [...(usesNodeFunctionsProject(backendLanguage) ? ['shared', 'functions'] : ['shared']), ...(frontend === "react" ? ["bff"] : [])];
   const wsConfig = getWorkspaceConfig(pm, workspacePackages);
   packageJson.workspaces = workspacePackages;
 
@@ -839,7 +863,7 @@ async function addSwallowKitFiles(
 
   // Create pnpm-workspace.yaml for local pnpm development when needed.
   if (wsConfig.type === 'file') {
-    fs.writeFileSync(path.join(projectDir, wsConfig.filename), wsConfig.content);
+    fs.writeFileSync(path.join(projectDir, wsConfig.filename), wsConfig.content + (frontend === "react" ? "  esbuild: true\n" : ""));
   }
 
   // Don't install yet — wait until all workspace packages (shared, functions) are created
@@ -878,12 +902,13 @@ async function addSwallowKitFiles(
   }
 
   // 3. Create SwallowKit config
-  const swallowkitConfig = buildSwallowKitConfigSource(backendLanguage);
+  const swallowkitConfig = buildSwallowKitConfigSource(backendLanguage, frontend);
   fs.writeFileSync(path.join(projectDir, 'swallowkit.config.js'), swallowkitConfig);
 
   // 4. Create shared workspace package for Zod models (Single Source of Truth)
   await createSharedPackage(projectDir, projectName);
 
+  if (frontend === "nextjs") {
   // Create lib directory for Next.js-specific utilities
   const libDir = path.join(projectDir, 'lib');
 
@@ -1003,6 +1028,7 @@ export const api = {
 };
 `;
   fs.writeFileSync(path.join(apiLibDir, 'backend.ts'), backendUtilContent);
+  }
 
   // 5. Create components directory
   const componentsDir = path.join(projectDir, 'components');
@@ -1091,7 +1117,7 @@ export async function register() {
   }
 }
 `;
-  fs.writeFileSync(path.join(projectDir, 'instrumentation.ts'), instrumentationContent);
+  if (frontend === "nextjs") fs.writeFileSync(path.join(projectDir, 'instrumentation.ts'), instrumentationContent);
 
   // 8. Create .env.local for local development
   const envLocalContent = [
@@ -1124,17 +1150,19 @@ export async function register() {
   };
   fs.writeFileSync(
     path.join(projectDir, 'staticwebapp.config.json'),
-    JSON.stringify(swaConfig, null, 2)
+    JSON.stringify(frontend === "react" ? buildReactSwaConfig() : swaConfig, null, 2)
   );
 
   // 14. Create Azure Functions project
   await createAzureFunctionsProject(projectDir, pm, backendLanguage);
 
   // 15. Create BFF API route to call Azure Functions
-  await createBffApiRoute(projectDir);
-
-  // 16. Create home page
-  await createHomePage(projectDir, pm);
+  if (frontend === "react") {
+    createReactBffProject(projectDir, projectName, pm);
+  } else {
+    await createBffApiRoute(projectDir);
+    await createHomePage(projectDir, pm);
+  }
 
   // 17. Install all workspace dependencies (root + shared + functions)
   console.log('📦 Installing workspace dependencies...\n');
@@ -1143,10 +1171,14 @@ export async function register() {
   console.log('✅ Project structure created\n');
 
   // 18. Create README.md
-  createReadme(projectDir, projectName, cicdChoice, azureConfig, pm, backendLanguage);
+  if (frontend === "react") {
+    fs.writeFileSync(path.join(projectDir, "README.md"), buildReactReadme(projectName, pm, backendLanguage));
+  } else {
+    createReadme(projectDir, projectName, cicdChoice, azureConfig, pm, backendLanguage);
+  }
 
   // 19. Create AI agent instruction files (AGENTS.md, CLAUDE.md, .github/copilot-instructions.md, etc.)
-  createAiAgentFiles(projectDir, projectName, backendLanguage, pm);
+  createAiAgentFiles(projectDir, projectName, backendLanguage, pm, frontend);
 }
 
 async function createSharedPackage(projectDir: string, projectName: string) {
@@ -1978,7 +2010,8 @@ function createAiAgentFiles(
   projectDir: string,
   projectName: string,
   backendLanguage: BackendLanguage,
-  pm: PackageManager
+  pm: PackageManager,
+  frontend: FrontendFramework = "nextjs"
 ) {
   console.log('🤖 Creating AI agent instruction files...\n');
   const runCmd = getCommands(pm).exec;
@@ -1987,6 +2020,7 @@ function createAiAgentFiles(
     projectName,
     backendLanguage,
     packageManager: pm,
+    frontend,
   });
   console.log('  ✅ AGENTS.md (canonical project contract)');
   console.log('  ✅ CLAUDE.md (Claude Code adapter)');
@@ -3133,7 +3167,8 @@ export function getSwaNodeVersionCommand(): string {
   return `node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.engines={...p.engines,node:'>=22.14.0 <23'};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+String.fromCharCode(10));"`;
 }
 
-export function buildAzureSwaPipeline(pm: PackageManager, projectPm: PackageManager = pm): string {
+export function buildAzureSwaPipeline(pm: PackageManager, projectPm: PackageManager = pm, frontend: FrontendFramework = "nextjs"): string {
+  if (frontend === "react") return buildReactAzureSwaPipeline(projectPm);
   // SWA/Oryx also invokes npm internally; normalize only the disposable CI checkout.
   pm = 'npm';
   const pmCmd = getCommands(pm);
@@ -3321,7 +3356,8 @@ async function createGitHubActionsWorkflows(
   projectDir: string,
   azureConfig: AzureConfig,
   pm: PackageManager,
-  backendLanguage: BackendLanguage
+  backendLanguage: BackendLanguage,
+  frontend: FrontendFramework = "nextjs"
 ) {
   console.log('📦 Creating GitHub Actions workflows...\n');
   const workflowsDir = path.join(projectDir, '.github', 'workflows');
@@ -3329,7 +3365,7 @@ async function createGitHubActionsWorkflows(
 
   const actionsPm: PackageManager = pm;
 
-  const swaWorkflow = buildGitHubSwaWorkflow(actionsPm, pm);
+  const swaWorkflow = buildGitHubSwaWorkflow(actionsPm, pm, frontend);
   fs.writeFileSync(path.join(workflowsDir, 'deploy-swa.yml'), swaWorkflow);
 
   // deploy-functions.yml
@@ -3339,7 +3375,8 @@ async function createGitHubActionsWorkflows(
   console.log('✅ GitHub Actions workflows created\n');
 }
 
-export function buildGitHubSwaWorkflow(pm: PackageManager, projectPm: PackageManager = pm): string {
+export function buildGitHubSwaWorkflow(pm: PackageManager, projectPm: PackageManager = pm, frontend: FrontendFramework = "nextjs"): string {
+  if (frontend === "react") return buildReactGitHubSwaWorkflow(projectPm);
   // SWA/Oryx also invokes npm internally; normalize only the disposable CI checkout.
   pm = 'npm';
   const npmWorkspaceNormalizationStep = getGitHubNpmWorkspaceNormalizationStep(pm, projectPm);
@@ -3417,7 +3454,7 @@ ${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}` : ''}
 `;
 }
 
-async function createAzurePipelines(projectDir: string, pm: PackageManager, backendLanguage: BackendLanguage) {
+async function createAzurePipelines(projectDir: string, pm: PackageManager, backendLanguage: BackendLanguage, frontend: FrontendFramework = "nextjs") {
   console.log('📦 Creating Azure Pipelines...\n');
 
   const pipelinesPm: PackageManager = pm;
@@ -3425,7 +3462,7 @@ async function createAzurePipelines(projectDir: string, pm: PackageManager, back
   fs.mkdirSync(pipelinesDir, { recursive: true });
 
   // swa.yml
-  const swaPipeline = buildAzureSwaPipeline(pipelinesPm, pm);
+  const swaPipeline = buildAzureSwaPipeline(pipelinesPm, pm, frontend);
   fs.writeFileSync(path.join(pipelinesDir, 'swa.yml'), swaPipeline);
   
   // functions.yml
@@ -3434,4 +3471,3 @@ async function createAzurePipelines(projectDir: string, pm: PackageManager, back
 
   console.log('✅ Azure Pipelines created\n');
 }
-
