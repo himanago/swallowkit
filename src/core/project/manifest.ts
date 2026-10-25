@@ -1,8 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
-import { getBackendLanguage, getFullConfig, normalizeAuthConfig, validateConfig } from "../config";
+import { getBackendLanguage, getFrontendFramework, getFullConfig, normalizeAuthConfig, validateConfig } from "../config";
 import { getAllModels, toCamelCase, toKebabCase } from "../scaffold/model-parser";
-import { AuthConfig, BackendLanguage, ConnectorDefinition, ModelAuthPolicy, ModelConnectorConfig } from "../../types";
+import { AuthConfig, BackendLanguage, FrontendFramework, ConnectorDefinition, ModelAuthPolicy, ModelConnectorConfig } from "../../types";
 import { captureConsoleMessages, withWorkingDirectory } from "../operations/runtime";
 
 const CONFIG_CANDIDATES = [
@@ -69,6 +69,7 @@ export interface ProjectManifestArtifacts {
 
 export interface ProjectManifestArchitecture {
   pattern: string;
+  frontendFramework?: FrontendFramework;
   backendLanguage: BackendLanguage;
   layerBoundaries: string[];
   hasSharedWorkspace: boolean;
@@ -81,6 +82,7 @@ export interface ProjectManifest {
   generatedAt: string;
   configPath: string | null;
   backendLanguage: BackendLanguage;
+  frontendFramework?: FrontendFramework;
   configValidation: {
     valid: boolean;
     errors: string[];
@@ -115,7 +117,10 @@ function relativeProjectPath(projectRoot: string, targetPath: string): string {
   return path.relative(projectRoot, targetPath).replace(/\\/g, "/");
 }
 
-function buildModules(projectRoot: string): ProjectManifestModule[] {
+function buildModules(projectRoot: string, frontend: FrontendFramework): ProjectManifestModule[] {
+  const bffRoot = frontend === "react" ? "bff" : "app/api";
+  const uiRoot = frontend === "react" ? "src" : "app";
+  const authRoot = frontend === "react" ? "bff/src/auth" : "app/api/auth";
   const candidates: ProjectManifestModule[] = [
     {
       name: "shared-models",
@@ -126,8 +131,8 @@ function buildModules(projectRoot: string): ProjectManifestModule[] {
     {
       name: "bff",
       kind: "bff",
-      rootPath: "app/api",
-      exists: fs.existsSync(path.join(projectRoot, "app", "api")),
+      rootPath: bffRoot,
+      exists: fs.existsSync(path.join(projectRoot, bffRoot)),
     },
     {
       name: "functions",
@@ -138,8 +143,8 @@ function buildModules(projectRoot: string): ProjectManifestModule[] {
     {
       name: "ui",
       kind: "ui",
-      rootPath: "app",
-      exists: fs.existsSync(path.join(projectRoot, "app")),
+      rootPath: uiRoot,
+      exists: fs.existsSync(path.join(projectRoot, uiRoot)),
     },
     {
       name: "infrastructure",
@@ -150,21 +155,21 @@ function buildModules(projectRoot: string): ProjectManifestModule[] {
     {
       name: "auth",
       kind: "auth",
-      rootPath: "app/api/auth",
-      exists: fs.existsSync(path.join(projectRoot, "app", "api", "auth")),
+      rootPath: authRoot,
+      exists: fs.existsSync(path.join(projectRoot, authRoot)),
     },
   ];
 
   return candidates;
 }
 
-function buildArtifacts(projectRoot: string): ProjectManifestArtifacts {
+function buildArtifacts(projectRoot: string, frontend: FrontendFramework): ProjectManifestArtifacts {
   const openApiDir = path.join(projectRoot, "functions", "openapi");
   const generatedDir = path.join(projectRoot, "functions", "generated");
 
   return {
-    callFunctionHelperPath: "lib/api/call-function.ts",
-    callFunctionHelperExists: fs.existsSync(path.join(projectRoot, "lib", "api", "call-function.ts")),
+    callFunctionHelperPath: frontend === "react" ? "bff/src/lib/call-function.ts" : "lib/api/call-function.ts",
+    callFunctionHelperExists: fs.existsSync(path.join(projectRoot, ...(frontend === "react" ? ["bff", "src", "lib", "call-function.ts"] : ["lib", "api", "call-function.ts"]))),
     openApiSpecs: fs.existsSync(openApiDir)
       ? fs.readdirSync(openApiDir)
           .filter((entry) => entry.endsWith(".json"))
@@ -178,8 +183,8 @@ function buildArtifacts(projectRoot: string): ProjectManifestArtifacts {
       : [],
     proxyPath: "proxy.ts",
     proxyExists: fs.existsSync(path.join(projectRoot, "proxy.ts")),
-    loginPagePath: "app/login/page.tsx",
-    loginPageExists: fs.existsSync(path.join(projectRoot, "app", "login", "page.tsx")),
+    loginPagePath: frontend === "react" ? "src/pages/login.tsx" : "app/login/page.tsx",
+    loginPageExists: fs.existsSync(path.join(projectRoot, ...(frontend === "react" ? ["src", "pages", "login.tsx"] : ["app", "login", "page.tsx"]))),
     authContextPath: "lib/auth/auth-context.tsx",
     authContextExists: fs.existsSync(path.join(projectRoot, "lib", "auth", "auth-context.tsx")),
   };
@@ -188,7 +193,8 @@ function buildArtifacts(projectRoot: string): ProjectManifestArtifacts {
 function buildEntityRoutes(
   projectRoot: string,
   backendLanguage: BackendLanguage,
-  entity: ProjectManifestEntity
+  entity: ProjectManifestEntity,
+  frontend: FrontendFramework
 ): ProjectManifestRoute[] {
   const modelCamel = toCamelCase(entity.name);
   const modelKebab = toKebabCase(entity.name);
@@ -229,8 +235,10 @@ function buildEntityRoutes(
       entityName: entity.name,
       methods: listMethods,
       publicPath: `/api/${modelCamel}`,
-      filePath: `app/api/${modelCamel}/route.ts`,
-      exists: fs.existsSync(path.join(projectRoot, "app", "api", modelCamel, "route.ts")),
+      filePath: frontend === "react" ? `bff/src/${modelCamel}/index.ts` : `app/api/${modelCamel}/route.ts`,
+      exists: frontend === "react"
+        ? fs.existsSync(path.join(projectRoot, "bff", "src", modelCamel, "index.ts")) && fs.existsSync(path.join(projectRoot, "bff", modelCamel, "function.json"))
+        : fs.existsSync(path.join(projectRoot, "app", "api", modelCamel, "route.ts")),
     },
     {
       name: `${entity.name}-bff-detail`,
@@ -239,8 +247,10 @@ function buildEntityRoutes(
       entityName: entity.name,
       methods: detailMethods,
       publicPath: `/api/${modelCamel}/{id}`,
-      filePath: `app/api/${modelCamel}/[id]/route.ts`,
-      exists: fs.existsSync(path.join(projectRoot, "app", "api", modelCamel, "[id]", "route.ts")),
+      filePath: frontend === "react" ? `bff/src/${modelCamel}/index.ts` : `app/api/${modelCamel}/[id]/route.ts`,
+      exists: frontend === "react"
+        ? fs.existsSync(path.join(projectRoot, "bff", "src", modelCamel, "index.ts")) && fs.existsSync(path.join(projectRoot, "bff", modelCamel, "function.json"))
+        : fs.existsSync(path.join(projectRoot, "app", "api", modelCamel, "[id]", "route.ts")),
     },
     {
       name: `${entity.name}-functions`,
@@ -255,7 +265,18 @@ function buildEntityRoutes(
   ];
 }
 
-function buildSystemRoutes(projectRoot: string): ProjectManifestRoute[] {
+function buildSystemRoutes(projectRoot: string, frontend: FrontendFramework, auth?: AuthConfig): ProjectManifestRoute[] {
+  if (frontend === "react") {
+    const providers = Object.values(normalizeAuthConfig(auth)?.schemes ?? {}).map(scheme => scheme.provider);
+    return ["login", "logout", "me"].map(action => ({
+      name: `auth-${action}`, kind: "system", surface: "bff",
+      methods: [action === "me" ? "GET" : "POST"], publicPath: `/api/auth/${action}`,
+      filePath: "bff/src/auth/index.ts",
+      exists: (providers.includes("custom-jwt") || (action === "me" && providers.includes("external-token"))) &&
+        fs.existsSync(path.join(projectRoot, "bff", "src", "auth", "index.ts")) &&
+        fs.existsSync(path.join(projectRoot, "bff", "auth", "function.json")),
+    }));
+  }
   return [
     {
       name: "auth-login",
@@ -296,6 +317,7 @@ export async function buildProjectManifest(projectRoot: string = process.cwd()):
   return withWorkingDirectory(projectRoot, async () => {
     const configPath = resolveConfigPath(projectRoot);
     const backendLanguage = getBackendLanguage(configPath || undefined);
+    const frontendFramework = getFrontendFramework(configPath || undefined);
     const config = getFullConfig(configPath || undefined);
     const configValidation = validateConfig(config);
     const { result: entities, messages } = await captureConsoleMessages(async () => {
@@ -327,8 +349,8 @@ export async function buildProjectManifest(projectRoot: string = process.cwd()):
     );
 
     const routes = [
-      ...entities.flatMap((entity) => buildEntityRoutes(projectRoot, backendLanguage, entity)),
-      ...buildSystemRoutes(projectRoot),
+      ...entities.flatMap((entity) => buildEntityRoutes(projectRoot, backendLanguage, entity, frontendFramework)),
+      ...buildSystemRoutes(projectRoot, frontendFramework, config.auth),
     ].sort((left, right) => left.name.localeCompare(right.name));
 
     const manifest: ProjectManifest = {
@@ -336,6 +358,7 @@ export async function buildProjectManifest(projectRoot: string = process.cwd()):
       generatedAt: new Date().toISOString(),
       configPath,
       backendLanguage,
+      frontendFramework,
       configValidation,
       connectors: Object.entries(config.connectors || {})
         .map(([name, definition]) => ({ name, definition }))
@@ -343,16 +366,18 @@ export async function buildProjectManifest(projectRoot: string = process.cwd()):
       auth: normalizeAuthConfig(config.auth) || null,
       entities: entities.sort((left, right) => left.name.localeCompare(right.name)),
       routes,
-      modules: buildModules(projectRoot),
-      artifacts: buildArtifacts(projectRoot),
+      modules: buildModules(projectRoot, frontendFramework),
+      artifacts: buildArtifacts(projectRoot, frontendFramework),
       architecture: {
-        pattern: "Next.js BFF + Azure Functions + shared Zod models",
+        pattern: frontendFramework === "react" ? "React SPA + SWA managed Functions BFF + standalone Azure Functions + shared Zod models" : "Next.js BFF + Azure Functions + shared Zod models",
+        frontendFramework,
         backendLanguage,
         layerBoundaries: [
           "shared/models -> schema source of truth",
-          "app/api -> BFF layer only",
+          `${frontendFramework === "react" ? "bff" : "app/api"} -> BFF layer only`,
           "functions -> backend logic and data access",
-          "app -> UI and pages",
+          `${frontendFramework === "react" ? "src" : "app"} -> UI and pages`,
+          "SWA and standalone Functions are not linked; backend credentials stay in the BFF",
         ],
         hasSharedWorkspace: fs.existsSync(path.join(projectRoot, "shared", "package.json")),
         hasConnectors: Object.keys(config.connectors || {}).length > 0,

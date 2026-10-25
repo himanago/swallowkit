@@ -388,9 +388,9 @@ runtime が Agent Skills をサポートする場合、タスクに合う Skill 
 Azure に deploy される full-stack application です。
 
 ```text
-Frontend (React / Next.js App Router)
+Frontend ({{frontendLabel}})
   ↓
-BFF (Next.js API Routes)
+BFF ({{bffLabel}})
   ↓
 Azure Functions
   ↓
@@ -399,7 +399,7 @@ Azure Cosmos DB
 
 ### Core architecture rules
 
-1. Next.js API route は BFF/proxy layer です。application business logic や direct database
+1. {{bffLabel}} は BFF/proxy layer です。application business logic や direct database
    access を置いてはなりません。
 2. `shared/models/` の Zod schema が application model の source of truth です。
 3. model definition を layer 間で重複させてはなりません。
@@ -410,6 +410,10 @@ Azure Cosmos DB
    boundary を尊重してください。
 7. production の Azure resource access は generated security architecture に従わなければ
    なりません。hard-coded credential または connection string を導入してはなりません。
+8. 独立 Functions を SWA にリンクしてはなりません。同一オリジンの BFF が
+   BACKEND_FUNCTIONS_BASE_URL / BACKEND_FUNCTIONS_KEY をサーバー側で使います。
+   ブラウザーバンドルや VITE_* に公開しないでください。マネージド Functions は
+   HTTP 専用です。DB、非 HTTP トリガー、マネージド ID、閉域網は独立バックエンドの責務です。
 
 ### Backend-specific rules
 
@@ -423,16 +427,13 @@ backend が `id`、`createdAt`、`updatedAt` を所有します。client-sent va
 
 ```text
 {{projectName}}/
-├── app/                    # Next.js App Router
-│   ├── api/                # BFF routes
-│   └── {model}/            # generated/custom UI
+{{frontendStructure}}
 ├── functions/              # Azure Functions backend
 {{functionsStructureLine}}
 ├── shared/
 │   ├── models/             # Zod source-of-truth models
 │   └── index.ts
-├── lib/
-│   └── api/
+├── lib/                    # auth, navigation, and shared application utilities
 ├── components/
 ├── infra/                  # Bicep infrastructure
 ├── .swallowkit/            # SwallowKit project metadata and runbooks
@@ -467,12 +468,24 @@ backend が `id`、`createdAt`、`updatedAt` を所有します。client-sent va
 {{pm}} install
 {{runCmd}} swallowkit dev
 {{pm}} run build
-{{pm}} run lint
+{{pm}} run --if-present lint
 {{runCmd}} swallowkit machine verify project
 ```
 
 この project 向けに生成された package-runner convention で SwallowKit を呼び出してください。
 package-manager invocation style を勝手に混在させてはなりません。
+
+{{devGuidance}}
+
+DB の検証前に、既存の Cosmos DB Emulator が利用できるか確認してください。
+利用できなければ報告し、明示的な許可なく起動・再起動、グローバルツール、
+TLS 信頼設定、PC の設定変更を行ってはなりません。分離した DB とポートを使い、
+利用者のデータを初期化せず、自分が起動したプロセスだけを停止してください。
+`dev --seed-env` はデータを置換するため、実行先を先に確認します。
+
+build / verify project に加え、同一オリジンの BFF 経由で UI、CRUD、
+入力検証・エラー、設定済みの認証を確認してください。型検査やサーバー起動確認だけでは
+E2E 検証になりません。クラウド未検証や利用できないローカル前提条件は明示します。
 
 <!-- source-section: Final Rules -->
 ## 最終ルール

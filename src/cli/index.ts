@@ -24,6 +24,7 @@ const DEV_OPTION_ARITY = new Map<string, 0 | 1>([
   ["--port", 1],
   ["-f", 1],
   ["--functions-port", 1],
+  ["--bff-port", 1],
   ["--host", 1],
   ["--seed-env", 1],
   ["-o", 0],
@@ -102,7 +103,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
 
   program
     .name("swallowkit")
-    .description("Next.js framework optimized for Azure deployment - Automatically splits SSR into individual Azure Functions")
+    .description("Schema-driven React and Next.js applications on Azure Static Web Apps and Functions")
     .version(CLI_VERSION);
 
   // Register commands
@@ -110,6 +111,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
     .command("init [project-name]")
     .description("Initialize a new SwallowKit project")
     .option("--template <template>", "Template to use", "default")
+    .option("--frontend <framework>", "Frontend framework: nextjs | react (defaults to nextjs in non-interactive mode)")
     .option("--next-version <version>", "Next.js version to install (e.g., 16.0.7, latest)", "latest")
     .option("--package-manager <manager>", "Package manager: npm | pnpm (defaults to invocation context)")
     .option("--cicd <provider>", "CI/CD provider: github | azure | skip")
@@ -121,6 +123,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
       initCommand({
         name: projectName || "swallowkit-app",
         template: options.template,
+        frontend: options.frontend,
         nextVersion: options.nextVersion,
         packageManager: options.packageManager,
         cicd: options.cicd,
@@ -153,9 +156,9 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
 
   program
     .command("scaffold <model>")
-    .description("Generate CRUD code for Azure Functions and Next.js BFF from Zod models")
+    .description("Generate CRUD code for Azure Functions, BFF, and the selected frontend from Zod models")
     .option("--functions-dir <dir>", "Azure Functions directory", "functions")
-    .option("--api-dir <dir>", "Next.js API routes directory", "app/api")
+    .option("--api-dir <dir>", "BFF routes directory (Next.js: app/api; React: bff)")
     .option("--api-only", "Skip UI components; still update Functions, BFF routes, OpenAPI, and native schema assets", false)
     .option("--dry-run", "Show planned file changes without writing anything", false)
     .action(async (model, options) => {

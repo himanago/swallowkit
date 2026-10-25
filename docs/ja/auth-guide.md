@@ -1,5 +1,11 @@
 # 認証
 
+React も全プロバイダーと名前付きスキームに対応します。マネージド BFF はリクエストごとに
+SWA principal / bearer token を転送し、custom-jwt は `/api/auth/{action}` と
+HttpOnly Cookie を使います。認可は独立 Functions が担当します。
+Next.js の proxy / API Routes は生成しません。
+パスと SWA ポートの使い方は [React の認証](./react-guide.md#認証とコネクタ)を参照してください。
+
 SwallowKit プロジェクトにユーザー認証とロールベース認可を追加します。外部 RDB を使うカスタム JWT と Static Web Apps 組み込み認証に対応しています。
 
 現時点の実装状況は次のとおりです：

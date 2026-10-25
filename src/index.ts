@@ -1,5 +1,5 @@
 /**
- * SwallowKit - Next.js framework optimized for Azure deployment
+ * SwallowKit - React and Next.js application scaffolding for Azure
  * Main exports
  */
 
@@ -9,6 +9,7 @@ export type {
   UseServerFnResult,
   ServerFnMode,
   BackendLanguage,
+  FrontendFramework,
   SwallowKitConfig,
 } from "./types";
 
@@ -17,6 +18,7 @@ export {
   loadConfig,
   generateConfig,
   getBackendLanguage,
+  getFrontendFramework,
   getFullConfig,
   validateConfig,
 } from "./core/config";

@@ -1,5 +1,9 @@
 # 基本概念
 
+Next.js と React の両構成に対応します。React は Vite SPA と SWA マネージド Functions BFF を使い、
+独立 Functions は SWA にリンクしません。[React の構成と手順](./react-guide.md)も参照してください。
+以下の Next.js 固有のパスは既定構成の例です。
+
 このページでは、SwallowKit の設計方針と各レイヤーの責任範囲を説明します。
 
 ## スキーマが唯一のソース

@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "SwallowKit"
   text: "Schema-driven scaffolding"
-  tagline: "Keep your Next.js frontend, BFF, Azure Functions backend, and infrastructure aligned through shared Zod schemas."
+  tagline: "Keep your Next.js or React frontend, BFF, Azure Functions backend, and infrastructure aligned through shared Zod schemas."
   image:
     src: /logo.png
     alt: SwallowKit
@@ -23,7 +23,7 @@ features:
   - title: Shared schema and contracts
     details: Define each domain model once as a Zod schema. SwallowKit uses it to generate TypeScript types, validation, BFF routes, backend handlers, and API contracts — so they stay consistent as the application grows.
   - title: Full-stack CRUD scaffolding
-    details: "Run <code>swallowkit scaffold</code> to generate Azure Functions, Next.js BFF API routes, and React UI components from a single schema file. The generated code is readable and editable."
+    details: "Generate Azure Functions, Next.js API routes or a SWA managed Functions BFF, and React UI from one schema. Choose Next.js or a React + Vite SPA at init."
   - title: Azure infrastructure and deployment
     details: Bicep templates, CI/CD workflows (GitHub Actions or Azure Pipelines), and Azure resource provisioning are generated alongside application code. Static Web Apps, Functions, and Cosmos DB are configured with Managed Identity.
   - title: AI-agent-friendly structure

@@ -7,11 +7,11 @@
 
 English | [日本語](./README.ja.md)
 
-Schema-driven application scaffolding for Next.js and Azure.
+Schema-driven application scaffolding for Next.js or React on Azure.
 
 SwallowKit helps you build maintainable full-stack applications on Azure by using shared Zod schemas as the source of truth. From one schema definition, it can generate frontend forms, BFF routes, Azure Functions backends, OpenAPI contracts, infrastructure templates, and AI-agent-friendly project metadata.
 
-It is designed for developers who want to build Next.js applications on Azure without letting the frontend, backend, database model, validation rules, and deployment configuration drift apart.
+It is designed for developers who want to build Next.js or React applications on Azure without letting the frontend, backend, database model, validation rules, and deployment configuration drift apart.
 
 ## 🎯 Why SwallowKit?
 
@@ -35,7 +35,7 @@ As the application grows, these layers often drift apart. SwallowKit reduces tha
 ## ✨ What it gives you
 
 - **Shared Zod schemas** as the source of truth
-- **CRUD scaffolding** for Next.js, BFF routes, Azure Functions, and UI components
+- **CRUD scaffolding** for Next.js or React, BFF routes, Azure Functions, and UI components
 - **Azure-ready infrastructure** using Bicep
 - **Multi-language Azure Functions** backends (TypeScript, C#, Python)
 - **Local development helpers** and seed data
@@ -46,7 +46,7 @@ As the application grows, these layers often drift apart. SwallowKit reduces tha
 
 SwallowKit is optimized for applications built with:
 
-- Next.js
+- Next.js, or React + Vite + React Router
 - Azure Static Web Apps
 - Azure Functions
 - Azure Cosmos DB
@@ -58,11 +58,11 @@ The default architecture follows a BFF pattern:
 ```
 Browser
   |
-Next.js frontend
+Next.js or React frontend (SWA)
   |
-Next.js BFF routes
+Next.js API routes or SWA managed Functions BFF
   |
-Azure Functions API
+Independent Azure Functions API (not linked to SWA)
   |
 Azure Cosmos DB
 ```
@@ -76,6 +76,7 @@ The BFF layer keeps frontend code simple while allowing backend services, authen
 Visit the **[SwallowKit Documentation](https://himanago.github.io/swallowkit/)** for the full docs (also available in [日本語](https://himanago.github.io/swallowkit/ja/)).
 
 - **[Getting Started](https://himanago.github.io/swallowkit/en/getting-started)** - First project setup
+- **[React frontend](docs/en/react-guide.md)** - React SPA, managed Functions BFF, development and deployment
 - **[Core Concepts](https://himanago.github.io/swallowkit/en/concepts)** - Schema-centric architecture
 - **[Scaffold Guide](https://himanago.github.io/swallowkit/en/scaffold-guide)** - CRUD code generation
 - **[Local Development](https://himanago.github.io/swallowkit/en/dev-guide)** - Dev server, seeds, mock connectors
@@ -93,6 +94,11 @@ Create a new project:
 npx swallowkit init my-app
 cd my-app
 ```
+
+Choose Next.js or React in the wizard, or pass `--frontend react`.
+React deploys static assets and an HTTP-only managed Functions BFF to SWA;
+the standalone Functions backend remains separate and **is never linked to SWA**.
+Existing configurations without a frontend setting retain Next.js.
 
 For pnpm 11/12: bootstrap with `pnpm dlx swallowkit init my-app`, then use `pnpm exec swallowkit …` inside the project. `npx` selects npm; `--package-manager npm|pnpm` overrides detection. Node.js 22.14+ is required. MCP intentionally uses `latest` with the selected package manager. See [commands, workspace setup, and security troubleshooting](docs/en/package-managers.md).
 
@@ -145,6 +151,40 @@ The goal is to make AI-assisted development safer by giving agents explicit arch
 ├── lib/                  # BFF helpers and scaffold config
 └── .swallowkit/          # SwallowKit project metadata
 ```
+
+## Publishing releases (maintainers)
+
+Pushing a `v<version>` Git tag runs `.github/workflows/publish.yml`, including
+the build, tests, and packed-consumer release gate. The tag, `package.json`,
+and both version fields in `package-lock.json` must match.
+
+| Version example | npm dist-tag |
+| --- | --- |
+| `2.0.0-alpha.1` | `alpha` |
+| `2.0.0-beta.1` | `beta` |
+| `2.0.0-rc.1` or other prereleases | `next` |
+| `2.0.0` | `latest` |
+
+After committing the release changes, prepare and publish an alpha with:
+
+```sh
+npm version 2.0.0-alpha.1
+git push origin HEAD
+git push origin v2.0.0-alpha.1
+```
+
+`npm version` updates both manifests and creates the version commit and tag.
+For subsequent releases, use an explicit version such as `2.0.0-alpha.2`,
+`2.0.0-beta.1`, or `2.0.0`. Prereleases never update `latest`.
+The workflow still requires the repository's `NPM_TOKEN` secret.
+
+To check the pipeline without publishing, run **Publish to npm** manually on
+the release commit with **dry-run** enabled, before pushing the version tag.
+The summary reports the selected version and npm tag without claiming a publish.
+
+Try the exact alpha with `npx swallowkit@2.0.0-alpha.1 init my-app --frontend react`,
+or use `npx swallowkit@alpha ...` / `npx swallowkit@beta ...` for the respective
+channel. Plain `npx swallowkit ...` continues to use `latest`.
 
 ## 🔗 Status
 

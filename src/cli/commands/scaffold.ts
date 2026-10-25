@@ -1,13 +1,15 @@
 /**
  * SwallowKit Scaffold コマンド
- * Zod モデルから Azure Functions と Next.js BFF の CRUD コードを生成
+ * Zod モデルから Azure Functions、BFF、選択したフロントエンドの CRUD を生成
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import { spawnSync } from "child_process";
-import { getBackendLanguage, getConnectorDefinition, getAuthConfig, getFullConfig, getNormalizedAuthConfig, ensureSwallowKitProject, normalizeAuthConfig, validateConfig } from "../../core/config";
-import { ModelInfo, parseModelFile, toKebabCase, toPascalCase, toCamelCase } from "../../core/scaffold/model-parser";
+import { getBackendLanguage, getFrontendFramework, getConnectorDefinition, getAuthConfig, getFullConfig, getNormalizedAuthConfig, ensureSwallowKitProject, normalizeAuthConfig, validateConfig } from "../../core/config";
+import { generateManagedFunctionConfig, generateReactBffHelper, generateReactBffRoute } from "../../core/scaffold/react-bff-generator";
+import { adaptReactPage, generateReactModelRoutes } from "../../core/scaffold/react-ui-generator";
+import { ModelInfo, parseModelFile, toKebabCase, toCamelCase } from "../../core/scaffold/model-parser";
 import { MachineCommandError } from "../../machine/errors";
 import {
   generateCSharpAzureFunctionsCRUD,
@@ -58,7 +60,7 @@ const SCAFFOLD_GENERATOR = "scaffold";
 interface ScaffoldOptions {
   model: string; // モデルファイルのパス（例: "lib/models/todo.ts" or "todo"）
   functionsDir?: string; // Azure Functions のディレクトリ（デフォルト: "functions"）
-  apiDir?: string; // Next.js API routes のディレクトリ（デフォルト: "app/api"）
+  apiDir?: string; // BFF directory (Next.js: app/api, React: bff)
   apiOnly?: boolean; // true の場合、UI を生成しない（デフォルト: false）
   expectedSchemaAnalysis?: SchemaAnalysisSnapshot;
 }
@@ -131,6 +133,8 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     console.log(`✅ Model parsed: ${modelInfo.name} (${modelInfo.schemaName})`);
 
     const backendLanguage = getBackendLanguage();
+    const frontend = getFrontendFramework();
+    const apiDir = options.apiDir || (frontend === "react" ? "bff" : "app/api");
     console.log(`🧠 Backend language: ${backendLanguage}`);
     
     // コネクタモデルかどうかを判定
@@ -182,7 +186,7 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     }
 
     // 5. Generate BFF callFunction helper
-    await generateCallFunctionHelper(session);
+    await generateCallFunctionHelper(session, apiDir);
 
     // 6. Generate Azure Functions code
     if (isConnectorModel) {
@@ -197,9 +201,10 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
       }
     }
 
-    // 7. Generate Next.js BFF API Routes
-    const apiDir = options.apiDir || "app/api";
-    if (isConnectorModel) {
+    // 7. Generate framework-specific BFF routes (the standalone backend is unchanged).
+    if (frontend === "react") {
+      generateManagedBffRoutes(modelInfo, apiDir, sharedPackageName, session);
+    } else if (isConnectorModel) {
       await generateConnectorBFFRoutesFiles(modelInfo, apiDir, sharedPackageName, session);
     } else {
       await generateBFFRoutes(modelInfo, apiDir, sharedPackageName, session);
@@ -237,14 +242,14 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     console.log("\n📝 Next steps:");
     console.log(`  1. Review generated files in ${describeFunctionsOutputPath(functionsDir, backendLanguage)} and ${apiDir}/`);
     if (!options.apiOnly) {
-      console.log(`  2. Check the generated UI pages in app/${toKebabCase(modelInfo.name)}/`);
+      console.log(`  2. Check the generated UI pages in ${frontend === "react" ? "src/pages" : "app"}/${toKebabCase(modelInfo.name)}/`);
       console.log("  3. Navigate to the model from the homepage menu");
     }
     if (backendLanguage !== "typescript") {
       console.log(`  ${options.apiOnly ? "2" : "4"}. Review generated OpenAPI export and native schema assets in ${functionsDir}/openapi/ and ${functionsDir}/generated/`);
     }
     console.log(
-      `  ${options.apiOnly ? (backendLanguage === "typescript" ? "2" : "3") : (backendLanguage === "typescript" ? "4" : "5")}. Ensure BACKEND_FUNCTIONS_BASE_URL is set in your .env.local file`
+      `  ${options.apiOnly ? (backendLanguage === "typescript" ? "2" : "3") : (backendLanguage === "typescript" ? "4" : "5")}. Ensure BACKEND_FUNCTIONS_BASE_URL is set in ${frontend === "react" ? `${apiDir}/local.settings.json` : "your .env.local file"}`
     );
     console.log(
       `  ${options.apiOnly ? (backendLanguage === "typescript" ? "3" : "4") : (backendLanguage === "typescript" ? "5" : "6")}. Configure CosmosDBConnection in functions/local.settings.json`
@@ -258,7 +263,7 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
 }
 
 function applyExternalTokenFetchToGeneratedUi(modelInfo: ModelInfo, session: FileOperationSession, importPath = '@/lib/auth/authenticated-fetch'): void {
-  const uiPrefix = `app/${toKebabCase(modelInfo.name)}/`;
+  const uiPrefix = `${getFrontendFramework() === "react" ? "src/pages" : "app"}/${toKebabCase(modelInfo.name)}/`;
   for (const operation of session.operations) {
     if (!operation.path.startsWith(uiPrefix) || !operation.path.endsWith('.tsx') || operation.action === 'delete') continue;
     let content = session.readFile(operation.absolutePath);
@@ -384,10 +389,17 @@ function readSharedPackageName(): string {
 /**
  * Generate BFF callFunction helper (lib/api/call-function.ts)
  */
-async function generateCallFunctionHelper(session: FileOperationSession): Promise<void> {
+async function generateCallFunctionHelper(session: FileOperationSession, apiDir: string): Promise<void> {
   console.log("\n📦 Generating BFF callFunction helper...");
 
   const cwd = process.cwd();
+  if (getFrontendFramework() === "react") {
+    const projectName = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")).name;
+    session.writeFile(path.join(cwd, apiDir, "src", "lib", "call-function.ts"), generateReactBffHelper(projectName, getAuthConfig()), {
+      ownership: "managed", generator: SCAFFOLD_GENERATOR,
+    });
+    return;
+  }
 
   const helperDir = path.join(cwd, "lib", "api");
   const helperPath = path.join(helperDir, "call-function.ts");
@@ -800,6 +812,13 @@ function updatePythonFunctionRegistrations(functionAppPath: string, registration
 /**
  * Next.js BFF API Routes を生成
  */
+function generateManagedBffRoutes(modelInfo: ModelInfo, apiDir: string, sharedPackageName: string, session: FileOperationSession): void {
+  const name = toCamelCase(modelInfo.name);
+  const meta = { ownership: "managed" as const, generator: SCAFFOLD_GENERATOR, sourceModel: modelInfo.name };
+  session.writeFile(path.join(process.cwd(), apiDir, "src", name, "index.ts"), generateReactBffRoute(modelInfo, sharedPackageName), meta);
+  session.writeFile(path.join(process.cwd(), apiDir, name, "function.json"), generateManagedFunctionConfig(`${name}/{id?}`, ["GET", "POST", "PUT", "DELETE"], name), meta);
+}
+
 async function generateBFFRoutes(
   modelInfo: any,
   apiDir: string,
@@ -867,9 +886,10 @@ export async function generateUIComponents(modelInfo: ModelInfo, sharedPackageNa
   const modelKebab = toKebabCase(modelInfo.name);
   const modelName = modelInfo.name;
   const cwd = process.cwd();
+  const react = getFrontendFramework() === "react";
 
   // Create directory structure: app/[model]/
-  const modelDir = path.join(cwd, "app", modelKebab);
+  const modelDir = path.join(cwd, react ? path.join("src", "pages") : "app", modelKebab);
   const componentsDir = path.join(modelDir, "_components");
   const newDir = path.join(modelDir, "new");
   const idDir = path.join(modelDir, "[id]");
@@ -884,14 +904,16 @@ export async function generateUIComponents(modelInfo: ModelInfo, sharedPackageNa
   const authLayout = generateAuthLayout(modelInfo, authOptions);
 
   const meta = { ownership: "managed" as const, generator: SCAFFOLD_GENERATOR, sourceModel: modelInfo.name };
-  session.writeFile(path.join(modelDir, "page.tsx"), listPage, meta);
-  session.writeFile(path.join(idDir, "page.tsx"), detailPage, meta);
-  session.writeFile(path.join(componentsDir, `${modelName}Form.tsx`), formComponent, meta);
-  session.writeFile(path.join(newDir, "page.tsx"), newPage, meta);
-  session.writeFile(path.join(editDir, "page.tsx"), editPage, meta);
+  const adapt = react ? adaptReactPage : (source: string) => source;
+  session.writeFile(path.join(modelDir, "page.tsx"), adapt(listPage), meta);
+  session.writeFile(path.join(idDir, "page.tsx"), adapt(detailPage), meta);
+  session.writeFile(path.join(componentsDir, `${modelName}Form.tsx`), adapt(formComponent), meta);
+  session.writeFile(path.join(newDir, "page.tsx"), adapt(newPage), meta);
+  session.writeFile(path.join(editDir, "page.tsx"), adapt(editPage), meta);
   if (authLayout) {
     session.writeFile(path.join(modelDir, "layout.tsx"), authLayout, meta);
   }
+  if (react) session.writeFile(path.join(modelDir, "routes.tsx"), generateReactModelRoutes(modelInfo, authOptions), meta);
 
   console.log(`✅ Created: ${path.join(modelDir, "page.tsx")}`);
   console.log(`✅ Created: ${path.join(idDir, "page.tsx")}`);
@@ -971,4 +993,3 @@ ${models.map(m => `    { name: '${m.name}', path: '${m.path}', label: '${m.label
   session.writeFile(configPath, newConfigContent, { ownership: "extension-point", generator: SCAFFOLD_GENERATOR });
   console.log(`✅ Added ${modelInfo.name} to navigation menu`);
 }
-

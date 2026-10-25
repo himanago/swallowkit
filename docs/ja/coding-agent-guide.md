@@ -1,5 +1,10 @@
 # コーディングエージェントガイド
 
+生成先の指示は `frontend.framework` に応じて Next.js API Routes、または
+React SPA + SWA マネージド Functions BFF を説明します。`app/api` の存在を仮定せず、
+manifest を inspect してください。パス、検証、環境上の注意は [React ガイド](./react-guide.md)を参照してください。
+このツールキット自身の直下の `AGENTS.md` は、生成先のテンプレートとは別の開発者向け指示です。
+
 pnpm 11/12 と npm の使い分けは[コマンドとトラブルシューティング](./package-managers.md)を参照してください。
 
 SwallowKit はコーディングエージェントの開発プロセスを置き換えません。

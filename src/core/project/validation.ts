@@ -55,7 +55,7 @@ function validateRequiredPaths(manifest: ProjectManifest, violations: ProjectVio
     pushViolation(violations, {
       code: "missing-call-function-helper",
       severity: "warning",
-      message: "BFF helper lib/api/call-function.ts is missing.",
+      message: `BFF helper ${manifest.artifacts.callFunctionHelperPath} is missing.`,
       location: { path: manifest.artifacts.callFunctionHelperPath },
       suggestedFix: "Run scaffold to regenerate the BFF helper.",
     });
@@ -117,8 +117,8 @@ function validateGeneratedArtifacts(manifest: ProjectManifest, violations: Proje
   }
 }
 
-function validateLayeringViolations(projectRoot: string, violations: ProjectViolation[]): void {
-  const apiDir = path.join(projectRoot, "app", "api");
+function validateLayeringViolations(projectRoot: string, manifest: ProjectManifest, violations: ProjectViolation[]): void {
+  const apiDir = path.join(projectRoot, ...(manifest.frontendFramework === "react" ? ["bff", "src"] : ["app", "api"]));
   const modelsDir = path.join(projectRoot, "shared", "models");
 
   if (fs.existsSync(apiDir)) {
@@ -130,7 +130,7 @@ function validateLayeringViolations(projectRoot: string, violations: ProjectViol
           severity: "error",
           message: "BFF files must not depend directly on Azure Cosmos or Functions implementation paths.",
           location: { path: path.relative(projectRoot, filePath).replace(/\\/g, "/") },
-          suggestedFix: "Keep app/api as a pure BFF layer and call the backend through generated helpers instead.",
+          suggestedFix: `Keep ${manifest.frontendFramework === "react" ? "bff/src" : "app/api"} as a pure BFF layer and call the backend through generated helpers instead.`,
         });
       }
     }
@@ -139,14 +139,35 @@ function validateLayeringViolations(projectRoot: string, violations: ProjectViol
   if (fs.existsSync(modelsDir)) {
     for (const filePath of walkFiles(modelsDir, [".ts", ".tsx"])) {
       const content = fs.readFileSync(filePath, "utf-8");
-      if (content.match(/from\s+['"].*(app\/|functions\/|lib\/api\/)/)) {
+      if (content.match(/from\s+['"].*(app\/|functions\/|bff\/|src\/|lib\/api\/)/)) {
         pushViolation(violations, {
           code: "forbidden-model-layer-import",
           severity: "error",
-          message: "Shared models must not import from app/, functions/, or lib/api/ layers.",
+          message: "Shared models must not import from frontend, BFF, Functions, or lib/api/ layers.",
           location: { path: path.relative(projectRoot, filePath).replace(/\\/g, "/") },
           suggestedFix: "Keep shared/models framework-agnostic so generators can reuse them across all layers.",
         });
+      }
+    }
+
+    if (manifest.frontendFramework === "react") {
+      for (const directory of ["src", "lib"]) {
+        const root = path.join(projectRoot, directory);
+        if (!fs.existsSync(root)) continue;
+        for (const filePath of walkFiles(root, [".ts", ".tsx"])) {
+          const content = fs.readFileSync(filePath, "utf-8");
+          const serverImport = /(?:from\s*|import\s*\(|require\s*\()\s*['"](?:@azure\/cosmos|[^'"]*(?:bff\/|functions\/|lib\/api\/call-function))/;
+          const serverSetting = /\b(?:process\.env|import\.meta\.env)\s*(?:\.\s*(?:VITE_)?BACKEND_FUNCTIONS_(?:KEY|BASE_URL)\b|\[\s*['"](?:VITE_)?BACKEND_FUNCTIONS_(?:KEY|BASE_URL)['"]\s*\])/;
+          if (serverImport.test(content) || serverSetting.test(content)) {
+            pushViolation(violations, {
+              code: "forbidden-client-backend-dependency",
+              severity: "error",
+              message: "React client code must not import server implementation code or read server-side backend settings.",
+              location: { path: path.relative(projectRoot, filePath).replace(/\\/g, "/") },
+              suggestedFix: "Call same-origin /api from the SPA. Keep backend URLs, keys, and Functions/Cosmos dependencies in the managed BFF or standalone backend.",
+            });
+          }
+        }
       }
     }
   }
@@ -160,10 +181,11 @@ function validateManifestDrift(
 ): void {
   const sameEntitySet = JSON.stringify(loadedManifest.entities.map((entity) => entity.name).sort()) ===
     JSON.stringify(rebuiltManifest.entities.map((entity) => entity.name).sort());
-  const sameRouteSet = JSON.stringify(loadedManifest.routes.map((route) => route.name).sort()) ===
-    JSON.stringify(rebuiltManifest.routes.map((route) => route.name).sort());
+  const sameRouteSet = JSON.stringify(loadedManifest.routes.map((route) => `${route.name}:${route.filePath}`).sort()) ===
+    JSON.stringify(rebuiltManifest.routes.map((route) => `${route.name}:${route.filePath}`).sort());
+  const sameFrontend = (loadedManifest.frontendFramework ?? "nextjs") === (rebuiltManifest.frontendFramework ?? "nextjs");
 
-  if (!sameEntitySet || !sameRouteSet) {
+  if (!sameEntitySet || !sameRouteSet || !sameFrontend) {
     pushViolation(violations, {
       code: "manifest-out-of-date",
       severity: "warning",
@@ -279,7 +301,7 @@ export async function validateProject(projectRoot: string = process.cwd()): Prom
   }
 
   validateGeneratedArtifacts(loaded.manifest, violations);
-  validateLayeringViolations(projectRoot, violations);
+  validateLayeringViolations(projectRoot, loaded.manifest, violations);
   validateExternalTokenVerifierStubs(projectRoot, loaded.manifest, violations);
 
   if (loaded.source === "file") {

@@ -1,5 +1,11 @@
 # Coding agent guide
 
+Generated instructions follow `frontend.framework`: Next.js API routes or a
+React SPA with SWA managed Functions BFF. Inspect the current manifest rather
+than assuming `app/api` exists. The [React guide](./react-guide.md) covers paths,
+verification and safe local prerequisites. The toolkit repository's root
+`AGENTS.md` is a separate contributor contract, not a generated app template.
+
 See [package manager commands and troubleshooting](./package-managers.md) for pnpm 11/12 and npm usage.
 
 SwallowKit does not replace a coding agent's development process. It supplies

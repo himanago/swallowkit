@@ -4,7 +4,11 @@ pnpm 11/12 と npm の使い分けは[コマンドとトラブルシューティ
 
 このページでは、SwallowKit プロジェクトを作成し、最初の CRUD フローを生成するまでの手順を説明します。
 
-最終的に、1 つの Zod スキーマから生成された型付き BFF ルート、Azure Functions バックエンドハンドラー、React UI コンポーネントを持つ Next.js アプリケーションが動作する状態になります。
+最終的に、1 つの Zod スキーマから生成された型付き BFF ルート、Azure Functions バックエンドハンドラー、UI を持つ Next.js / React アプリケーションが動作する状態になります。
+
+React では Vite SPA と SWA マネージド Functions BFF を生成します。
+生成パス、認証、開発、デプロイは [React ガイド](./react-guide.md)を参照してください。
+以下のパス例は、特記しない限り Next.js 構成です。
 
 ## 前提条件
 
@@ -29,25 +33,27 @@ cd my-app
 ```
 :::
 
-このコマンドは内部で `create-next-app` を実行し、その上に SwallowKit のプロジェクト構造を追加します。
+Next.js の場合は `create-next-app` を使います。React の場合は Vite + React Router SPA とマネージド Functions BFF を生成します。
 
 対話プロンプトで以下を選択します：
 
 | オプション | 値 | デフォルト |
 |-----------|-----|----------|
+| フロントエンド | `nextjs`, `react` | 非対話時は `nextjs` |
 | CI/CD プロバイダー | `github`, `azure`, `skip` | （対話で選択） |
 | バックエンド言語 | `typescript`, `csharp`, `python` | （対話で選択） |
 | Cosmos DB モード | `freetier`, `serverless` | （対話で選択） |
 | ネットワーク | `outbound`, `none` | （対話で選択） |
+| SWA プラン | `free`, `standard` | （対話で選択） |
 
 プロンプトをスキップするには、フラグで直接指定します：
 
 ::: code-group
 ```bash [npm]
-npx swallowkit init my-app --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none
+npx swallowkit init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
 ```
 ```bash [pnpm]
-pnpm dlx swallowkit init my-app --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none
+pnpm dlx swallowkit init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
 ```
 :::
 
@@ -104,6 +110,9 @@ pnpm exec swallowkit scaffold todo
 
 C# バックエンドでは `functions/Crud/TodoCrudFunctions.cs`、Python では `functions/blueprints/todo.py` が生成されます。
 
+React では BFF を `bff/src/todo/index.ts` と `bff/todo/function.json`、
+UI・フォーム・ルート登録を `src/pages/todo/` に生成します。
+
 ## 4. 開発サーバーを起動する
 
 ::: code-group
@@ -120,6 +129,10 @@ pnpm exec swallowkit dev
 - Azure Functions: http://localhost:7071
 
 http://localhost:3000/todo を開くと生成された UI を確認できます。
+
+**React の場合**はマネージド BFF（7073）と SWA CLI（4280）も起動します。
+**http://localhost:4280/todo** を開き、`/api` をマネージド BFF に通してください。
+独立 Functions は引き続き 7071 で動作し、SWA にはリンクしません。
 
 ## 5. 動作を確認する
 

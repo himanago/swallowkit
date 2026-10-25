@@ -272,7 +272,7 @@ function createMachineProgram(): Command {
     .description("Generate scaffold artifacts with deterministic JSON output")
     .argument("<model>", "Model file or model name")
     .option("--functions-dir <dir>", "Functions directory", "functions")
-    .option("--api-dir <dir>", "API routes directory", "app/api")
+    .option("--api-dir <dir>", "BFF routes directory (Next.js: app/api; React: bff)")
     .option("--api-only", "Skip UI components; still update Functions, BFF routes, OpenAPI, and native schema assets", false)
     .action(async (model: string, options: { functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
       await handleMachineAction("generate-scaffold", async () => {
@@ -292,7 +292,7 @@ function createMachineProgram(): Command {
     .description("Compute the scaffold change plan without writing any files (accepts multiple models)")
     .argument("<models...>", "Model files or model names")
     .option("--functions-dir <dir>", "Functions directory", "functions")
-    .option("--api-dir <dir>", "API routes directory", "app/api")
+    .option("--api-dir <dir>", "BFF routes directory (Next.js: app/api; React: bff)")
     .option("--api-only", "Skip UI components in the plan", false)
     .action(async (models: string[], options: { functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
       await handleMachineAction(

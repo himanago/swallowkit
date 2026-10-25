@@ -1,5 +1,12 @@
 # Authentication
 
+All providers and named schemes also support React. The managed BFF forwards
+request-local SWA principals/bearer tokens; custom JWT login uses an HttpOnly
+cookie through `/api/auth/{action}`. Authorization stays in standalone Functions.
+React does not generate Next.js proxy/API route files. See
+[React authentication](./react-guide.md#authentication-and-connectors) for the
+framework-specific paths and local SWA entry point.
+
 Add user authentication and role-based authorization to a SwallowKit project. Both custom JWT with an external RDB user store and Static Web Apps built-in authentication are supported.
 
 Current implementation status:

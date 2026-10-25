@@ -1,5 +1,11 @@
 # Scaffold guide
 
+The same scaffold/plan/apply commands support React. React writes managed BFF
+handlers to `bff/src/{model}/index.ts`, HTTP registrations to
+`bff/{model}/function.json`, and React Router pages to `src/pages/{model}/`.
+Backend generation and schemas are unchanged. See the [React guide](./react-guide.md);
+`app/` paths in the examples below are specific to Next.js.
+
 Generate CRUD operations from Zod schemas. This command creates Azure Functions backend handlers, Next.js BFF API routes, React UI pages, and Cosmos DB infrastructure — all typed from a single schema file.
 
 For C# or Python backends, it also exports an OpenAPI document and generates native schema assets.

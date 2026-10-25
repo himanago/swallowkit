@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import { createRequire } from "module";
 import * as path from "path";
-import { AuthConfig, AuthProvider, BackendLanguage, ConnectorDefinition, NormalizedAuthConfig, SwallowKitConfig } from "../types";
+import { AuthConfig, AuthProvider, BackendLanguage, ConnectorDefinition, FrontendFramework, NormalizedAuthConfig, SwallowKitConfig } from "../types";
 import { detectFromProject, getCommands } from "../utils/package-manager";
 
 const requireFromHere = createRequire(__filename);
@@ -21,6 +21,7 @@ const VALID_BACKEND_LANGUAGES: BackendLanguage[] = ["typescript", "csharp", "pyt
  * デフォルト設定
  */
 const DEFAULT_CONFIG: SwallowKitConfig = {
+  frontend: { framework: "nextjs" },
   database: {},
   backend: {
     language: "typescript",
@@ -78,6 +79,10 @@ export function loadConfig(configPath?: string, throwOnError = false, quiet = fa
  */
 function mergeConfig(defaultConfig: SwallowKitConfig, userConfig: Partial<SwallowKitConfig>): SwallowKitConfig {
   return {
+    frontend: {
+      ...defaultConfig.frontend,
+      ...userConfig.frontend,
+    },
     database: {
       ...defaultConfig.database,
       ...userConfig.database,
@@ -108,6 +113,9 @@ function mergeConfig(defaultConfig: SwallowKitConfig, userConfig: Partial<Swallo
 export function generateConfig(outputPath: string = "swallowkit.config.json"): void {
   const config = {
     $schema: "https://swallowkit.dev/schema.json",
+    frontend: {
+      framework: "nextjs",
+    },
     database: {
       connectionString: "your-cosmos-connection-string",
       databaseName: "SwallowKitDB",
@@ -174,6 +182,14 @@ export function getBackendLanguage(configPath?: string): BackendLanguage {
   }
 
   return "typescript";
+}
+
+export function getFrontendFramework(configPath?: string): FrontendFramework {
+  const framework = getFullConfig(configPath).frontend?.framework ?? "nextjs";
+  if (framework !== "nextjs" && framework !== "react") {
+    throw new Error(`Unsupported frontend framework '${framework}'; use nextjs or react`);
+  }
+  return framework;
 }
 
 /**
@@ -249,6 +265,10 @@ function hasConfiguredDatabase(config: SwallowKitConfig): boolean {
 
 export function validateConfig(config: SwallowKitConfig): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
+
+  if (config.frontend?.framework && !["nextjs", "react"].includes(config.frontend.framework)) {
+    errors.push("Frontend framework must be one of: nextjs, react");
+  }
 
   const auth = normalizeAuthConfig(config.auth);
   if (auth) {

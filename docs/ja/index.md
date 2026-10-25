@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "SwallowKit"
   text: "スキーマ駆動 scaffolding"
-  tagline: "共有 Zod スキーマを中心に、Next.js フロントエンド・BFF・Azure Functions バックエンド・インフラ構成の整合性を保ちます。"
+  tagline: "共有 Zod スキーマを中心に、Next.js / React フロントエンド・BFF・Azure Functions バックエンド・インフラ構成の整合性を保ちます。"
   image:
     src: /logo.png
     alt: SwallowKit
@@ -23,7 +23,7 @@ features:
   - title: 共有スキーマと契約の一元化
     details: ドメインモデルを Zod スキーマとして一度定義すれば、TypeScript 型、バリデーション、BFF ルート、バックエンドハンドラー、API 契約が生成されます。アプリケーションが大きくなっても定義がずれません。
   - title: フルスタック CRUD scaffolding
-    details: "<code>swallowkit scaffold</code> を実行すると、1 つのスキーマファイルから Azure Functions、Next.js BFF API ルート、React UI コンポーネントが生成されます。生成コードは読みやすく、自由に編集できます。"
+    details: "1 つのスキーマから Azure Functions、Next.js API Routes または SWA マネージド Functions BFF、React UI を生成します。init で Next.js / React + Vite SPA を選べます。"
   - title: Azure インフラとデプロイ
     details: Bicep テンプレート、CI/CD ワークフロー（GitHub Actions または Azure Pipelines）、Azure リソースのプロビジョニングがアプリケーションコードと一緒に生成されます。Static Web Apps、Functions、Cosmos DB は Managed Identity で構成されます。
   - title: AI エージェント対応の構造

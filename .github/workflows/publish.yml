@@ -9,7 +9,7 @@ on:
       dry-run:
         description: 'Dry run (skip actual publish)'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 permissions:
@@ -25,20 +25,7 @@ jobs:
 
       - name: Validate release version and determine npm tag
         id: tag
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-          const { version } = require('./package.json');
-          const lock = require('./package-lock.json');
-          if (lock.version !== version || lock.packages[''].version !== version) {
-            throw new Error('package.json and package-lock.json versions must match');
-          }
-          if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v${version}`) {
-            throw new Error('Git tag must match package.json version');
-          }
-          const distTag = version.includes('-') ? 'next' : 'latest';
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\ndist_tag=${distTag}\n`);
-          NODE
+        run: node scripts/release-metadata.cjs
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -68,23 +55,34 @@ jobs:
           node scripts/consumer-smoke.mjs npm bundled typescript
 
       - name: Publish (dry run)
-        if: ${{ github.event.inputs.dry-run == 'true' }}
-        run: npm publish --tag ${{ steps.tag.outputs.dist_tag }} --dry-run
+        if: ${{ inputs.dry-run == true }}
+        run: npm publish --tag "$NPM_DIST_TAG" --access public --dry-run
         env:
+          NPM_DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish
-        if: ${{ github.event.inputs.dry-run != 'true' }}
-        run: npm publish --tag ${{ steps.tag.outputs.dist_tag }} --provenance --access public
+        if: ${{ inputs.dry-run != true }}
+        run: npm publish --tag "$NPM_DIST_TAG" --provenance --access public
         env:
+          NPM_DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Summary
-        if: ${{ github.event.inputs.dry-run != 'true' }}
+        env:
+          DRY_RUN: ${{ inputs.dry-run || false }}
+          RELEASE_VERSION: ${{ steps.tag.outputs.version }}
+          NPM_DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
         run: |
-          echo "## 📦 Published to npm" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "## 📦 npm publish dry run (not published)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## 📦 Published to npm" >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Package:** swallowkit" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Version:** ${{ steps.tag.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Tag:** ${{ steps.tag.outputs.dist_tag }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Provenance:** ✅" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version:** $RELEASE_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Tag:** $NPM_DIST_TAG" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$DRY_RUN" != "true" ]; then
+            echo "- **Provenance:** ✅" >> "$GITHUB_STEP_SUMMARY"
+          fi

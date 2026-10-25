@@ -11,9 +11,12 @@ const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const manager = process.argv[2] || 'pnpm';
 const major = process.argv[3] || '11';
 const backend = process.argv[4] || 'typescript';
+const frontendIndex = process.argv.indexOf('--frontend');
+const frontend = frontendIndex === -1 ? 'nextjs' : process.argv[frontendIndex + 1];
 const bootstrapOnly = process.argv.includes('--bootstrap-only');
 assert(['npm', 'pnpm'].includes(manager));
 assert(['typescript', 'csharp', 'python'].includes(backend));
+assert(['nextjs', 'react'].includes(frontend), '--frontend must be nextjs or react');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), `swallowkit-consumer-${manager}-${major}-`));
 console.log(`Consumer test directory: ${directory} (Node ${process.version})`);
 const home = path.join(directory, 'home');
@@ -128,7 +131,7 @@ try {
   if (!bootstrapOnly) {
     await run(launcher, [...bootstrap, 'init', 'sample',
       '--cicd', 'github', '--backend-language', backend, '--cosmos-db-mode', 'serverless',
-      '--vnet', 'none', '--swa-plan', 'standard']);
+      '--vnet', 'none', '--swa-plan', 'standard', '--frontend', frontend]);
     const project = path.join(directory, 'sample');
     const local = manager === 'pnpm' ? ['exec'] : ['--no-install'];
     const localCommand = manager === 'pnpm' ? 'pnpm' : 'npx';
@@ -141,6 +144,24 @@ try {
     await run(manager, manager === 'pnpm' ? ['install', '--frozen-lockfile'] : ['ci'], project);
     await cli(['create-model', 'task']);
     await cli(['scaffold', 'shared/models/task.ts']);
+    if (frontend === 'react') {
+      const pkg = JSON.parse(fs.readFileSync(path.join(project, 'package.json'), 'utf8'));
+      assert(!pkg.dependencies.next, 'React consumers must not depend on Next.js');
+      assert(pkg.workspaces.includes('bff'));
+      const binding = JSON.parse(fs.readFileSync(path.join(project, 'bff', 'task', 'function.json'), 'utf8'));
+      assert.equal(binding.bindings.find(binding => binding.type === 'http').name, '$return');
+      assert(fs.existsSync(path.join(project, 'src', 'pages', 'task', 'routes.tsx')));
+      const swa = fs.readFileSync(path.join(project, '.github', 'workflows', 'deploy-swa.yml'), 'utf8');
+      assert(swa.includes('api_location: bff'));
+      assert(!swa.includes('api_location: functions'));
+    } else {
+      const nextConfigPath = path.join(project, fs.existsSync(path.join(project, 'next.config.ts')) ? 'next.config.ts' : 'next.config.js');
+      const nextConfig = fs.readFileSync(nextConfigPath, 'utf8');
+      assert.match(nextConfig, /\bcacheComponents\s*:\s*false\b/,
+        'Generated dynamic routes require Cache Components to be disabled');
+      assert.doesNotMatch(nextConfig, /\bpartialPrefetching\s*:\s*true\b/,
+        'Partial Prefetching requires Cache Components and must also be disabled');
+    }
     await cli(['machine', 'inspect', 'project']);
     await run(manager, ['run', 'build'], project);
     await run(localCommand, [...local, 'tsc', '--noEmit'], project);
@@ -173,7 +194,8 @@ test('compiled shared model validates data through the installed workspace', () 
       fs.copyFileSync(path.join(project, 'shared', 'package.json'), path.join(destination, 'package.json'));
       await run('node', ['-e', `require(${JSON.stringify(sharedName)}); require('@azure/functions'); require('@azure/cosmos'); require('@azure/identity')`], staging);
     }
-    // Frontend startup is independent of external Cosmos/Core Tools prerequisites.
+    // React still needs Core Tools for its BFF, even without a standalone backend.
+    if (frontend === 'react') await run('func', ['--version'], project);
     const portProbe = http.createServer();
     await new Promise(resolve => portProbe.listen(0, '127.0.0.1', resolve));
     const port = portProbe.address().port;

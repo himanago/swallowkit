@@ -1,5 +1,12 @@
 # Local development
 
+For React, `dev` starts Vite (3000), managed BFF Functions (7073), independent
+Functions (7071), and SWA CLI (4280). Open the SWA port, not Vite directly.
+`--bff-port` changes the managed API port. `--no-functions` retains the BFF;
+`--no-swa` removes same-origin routing/auth emulation.
+See [React local development](./react-guide.md#local-development) for settings
+and prerequisites. Next.js-specific steps below apply only to Next.js projects.
+
 See [package manager commands and troubleshooting](./package-managers.md) for pnpm 11/12 and npm usage.
 
 This page covers the `swallowkit dev` command, local seed data management, and backend-specific setup.

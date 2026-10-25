@@ -5,8 +5,10 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { ensureSwallowKitProject, getBackendLanguage, getConnectorDefinition, getValidatedFullConfig } from "../../core/config";
-import { AuthProvider, BackendLanguage, CustomJwtConfig, RdbConnectorConfig } from "../../types";
+import { ensureSwallowKitProject, getBackendLanguage, getFrontendFramework, getConnectorDefinition, getValidatedFullConfig } from "../../core/config";
+import { generateManagedFunctionConfig, generateReactAuthBff, generateReactBffHelper } from "../../core/scaffold/react-bff-generator";
+import { adaptReactPage } from "../../core/scaffold/react-ui-generator";
+import { AuthConfig, AuthProvider, BackendLanguage, CustomJwtConfig, RdbConnectorConfig } from "../../types";
 import {
   generateAuthModels,
   generateAuthFunctionsTS,
@@ -98,6 +100,32 @@ function defaultCustomJwtConfig(): CustomJwtConfig {
   };
 }
 
+function writeCallFunction(cwd: string, session: FileOperationSession, nextSource: string, auth: AuthConfig): void {
+  if (getFrontendFramework() === "react") {
+    const name = JSON.parse(session.readFile(path.join(cwd, "package.json"))).name;
+    session.writeFile(path.join(cwd, "bff", "src", "lib", "call-function.ts"), generateReactBffHelper(name, auth), managedMeta);
+  } else {
+    session.writeFile(path.join(cwd, "lib", "api", "call-function.ts"), nextSource, managedMeta);
+  }
+}
+
+function writeLoginPage(cwd: string, session: FileOperationSession, source: string): void {
+  const react = getFrontendFramework() === "react";
+  const destination = react ? path.join(cwd, "src", "pages", "login.tsx") : path.join(cwd, "app", "login", "page.tsx");
+  session.writeFile(destination, react ? adaptReactPage(source) : source, managedMeta);
+}
+
+function writeAuthContext(cwd: string, session: FileOperationSession, source: string): void {
+  session.writeFile(path.join(cwd, "lib", "auth", "auth-context.tsx"), getFrontendFramework() === "react" ? adaptReactPage(source) : source, managedMeta);
+}
+
+function writeManagedAuthRoute(cwd: string, session: FileOperationSession, customJwt: boolean): void {
+  const name = JSON.parse(session.readFile(path.join(cwd, "package.json"))).name;
+  const sharedName = JSON.parse(session.readFile(path.join(cwd, "shared", "package.json"))).name;
+  session.writeFile(path.join(cwd, "bff", "src", "auth", "index.ts"), generateReactAuthBff(name, sharedName, customJwt), managedMeta);
+  session.writeFile(path.join(cwd, "bff", "auth", "function.json"), generateManagedFunctionConfig("auth/{action}", ["GET", "POST"], "auth"), managedMeta);
+}
+
 function setupSwaAuth(cwd: string, backendLanguage: BackendLanguage, session: FileOperationSession, allowedProviders?: string[]): void {
   const providers = normalizeSwaProviders(allowedProviders);
   const helperPath = backendLanguage === "typescript"
@@ -112,14 +140,12 @@ function setupSwaAuth(cwd: string, backendLanguage: BackendLanguage, session: Fi
       : generateSwaAuthHelperPython();
   session.writeFile(helperPath, helper, managedMeta);
 
-  const callFnPath = path.join(cwd, "lib", "api", "call-function.ts");
-  session.writeFile(callFnPath, generateBFFCallFunctionWithSwaAuth(), managedMeta);
+  writeCallFunction(cwd, session, generateBFFCallFunctionWithSwaAuth(), { provider: "swa" });
 
   const authDir = path.join(cwd, "lib", "auth");
   session.writeFile(path.join(authDir, "auth-context.tsx"), generateSwaAuthContext(providers), managedMeta);
   updateRootLayoutWithAuthProvider(cwd, session);
-  const loginDir = path.join(cwd, "app", "login");
-  session.writeFile(path.join(loginDir, "page.tsx"), generateSwaLoginPage(providers), managedMeta);
+  writeLoginPage(cwd, session, generateSwaLoginPage(providers));
   updateSwaRouteConfig(cwd, session, providers);
 }
 
@@ -127,10 +153,10 @@ function setupExternalTokenAuth(cwd: string, backendLanguage: BackendLanguage, s
   const authDir = path.join(cwd, "lib", "auth");
   writeIfMissing(session, path.join(authDir, "external-token-adapter.ts"), generateExternalTokenAdapter());
   session.writeFile(path.join(authDir, "authenticated-fetch.ts"), generateAuthenticatedFetch(), managedMeta);
-  session.writeFile(path.join(authDir, "auth-context.tsx"), generateExternalTokenAuthContext(), managedMeta);
-  session.writeFile(path.join(cwd, "lib", "api", "call-function.ts"), generateBFFCallFunctionWithAuth(), managedMeta);
-  const meDir = path.join(cwd, "app", "api", "auth", "me");
-  session.writeFile(path.join(meDir, "route.ts"), generateExternalTokenBFFMeRoute(), managedMeta);
+  writeAuthContext(cwd, session, generateExternalTokenAuthContext());
+  writeCallFunction(cwd, session, generateBFFCallFunctionWithAuth(), { provider: "external-token" });
+  if (getFrontendFramework() === "react") writeManagedAuthRoute(cwd, session, false);
+  else session.writeFile(path.join(cwd, "app", "api", "auth", "me", "route.ts"), generateExternalTokenBFFMeRoute(), managedMeta);
   updateRootLayoutWithAuthProvider(cwd, session);
 
   if (backendLanguage === "typescript") {
@@ -240,6 +266,14 @@ export function addAuthProviderToRootLayout(layout: string): string {
 }
 
 function updateRootLayoutWithAuthProvider(cwd: string, session: FileOperationSession): void {
+  if (getFrontendFramework() === "react") {
+    const mainPath = path.join(cwd, "src", "main.tsx");
+    const main = session.readFile(mainPath);
+    if (main.includes("<AuthProvider>")) return;
+    if (!main.includes("<App />")) throw new Error("Could not find <App /> in src/main.tsx; cannot install AuthProvider");
+    session.writeFile(mainPath, `import { AuthProvider } from '@/lib/auth/auth-context';\n${main.replace("<App />", "<AuthProvider><App /></AuthProvider>")}`, extensionMeta);
+    return;
+  }
   const layoutPath = path.join(cwd, "app", "layout.tsx");
   if (!session.fileExists(layoutPath)) {
     throw new Error("app/layout.tsx was not found; cannot install AuthProvider");
@@ -364,27 +398,25 @@ export async function addAuthCommand(options: AddAuthOptions) {
 
   // 4. Generate proxy
   console.log("\n  Generating proxy...");
-  const proxyPath = path.join(cwd, "proxy.ts");
-  session.writeFile(proxyPath, generateProxy(projectName), managedMeta);
-  console.log(` Created: proxy.ts`);
+  if (getFrontendFramework() === "nextjs") {
+    const proxyPath = path.join(cwd, "proxy.ts");
+    session.writeFile(proxyPath, generateProxy(projectName), managedMeta);
+    console.log(` Created: proxy.ts`);
+  }
 
   // 5. Generate login page
   console.log("\n Generating login page...");
-  const loginDir = path.join(cwd, "app", "login");
-  session.writeFile(path.join(loginDir, "page.tsx"), generateLoginPage(), managedMeta);
-  console.log(` Created: app/login/page.tsx`);
+  writeLoginPage(cwd, session, generateLoginPage());
 
   // 6. Generate auth context
   console.log("\n Generating auth context...");
-  const authLibDir = path.join(cwd, "lib", "auth");
-  session.writeFile(path.join(authLibDir, "auth-context.tsx"), generateAuthContext(), managedMeta);
+  writeAuthContext(cwd, session, generateAuthContext());
   console.log(`✅ Created: lib/auth/auth-context.tsx`);
 
   // 7. Update callFunction with auth support
   console.log("\n Updating callFunction with auth support...");
-  const callFnPath = path.join(cwd, "lib", "api", "call-function.ts");
-  session.writeFile(callFnPath, generateBFFCallFunctionWithAuth(), managedMeta);
-  console.log(` Updated: lib/api/call-function.ts`);
+  writeCallFunction(cwd, session, generateBFFCallFunctionWithAuth(), { provider: "custom-jwt" });
+  console.log(` Updated: ${getFrontendFramework() === "react" ? "bff/src/lib" : "lib/api"}/call-function.ts`);
 
   // 8. Update swallowkit.config.js
   console.log("\n Updating configuration...");
@@ -498,11 +530,19 @@ function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, lan
   if (provider === "external-token") {
     writeIfMissing(session, path.join(clientDir, "token-adapter.ts"), generateExternalTokenAdapter());
     writeIfMissing(session, path.join(clientDir, "authenticated-fetch.ts"), generateAuthenticatedFetch().replace("'./external-token-adapter'", "'./token-adapter'"));
-    writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), generateExternalTokenAuthContext().replace(/external-token-adapter/g, "token-adapter"));
+    const source = generateExternalTokenAuthContext().replace(/external-token-adapter/g, "token-adapter");
+    writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), getFrontendFramework() === "react" ? adaptReactPage(source) : source);
   } else if (provider === "swa") {
     writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), generateSwaAuthContext(allowedProviders));
   } else if (provider === "custom-jwt") {
-    writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), generateAuthContext());
+    writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), getFrontendFramework() === "react" ? adaptReactPage(generateAuthContext()) : generateAuthContext());
+  }
+  if (getFrontendFramework() === "react") {
+    const existing = getValidatedFullConfig().auth;
+    writeCallFunction(cwd, session, "", {
+      ...existing, schemes: { ...existing?.schemes, [scheme]: { provider } },
+    });
+    return;
   }
   const callFunctionPath = path.join(cwd, "lib", "api", "call-function.ts");
   if (!session.fileExists(callFunctionPath)) writeIfMissing(session, callFunctionPath, generateBFFCallFunctionWithMultipleAuth());
@@ -667,6 +707,10 @@ function generateFunctionsAuth(
 }
 
 function generateBFFAuth(cwd: string, projectName: string, sharedPackageName: string, session: FileOperationSession): void {
+  if (getFrontendFramework() === "react") {
+    writeManagedAuthRoute(cwd, session, true);
+    return;
+  }
   const authApiDir = path.join(cwd, "app", "api", "auth");
 
   // Login route
