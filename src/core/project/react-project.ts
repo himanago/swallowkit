@@ -1,6 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import { BackendLanguage } from "../../types";
+import { buildReactDevWatchIgnoredSource } from "../../utils/react-dev";
+import { DEFAULT_AZURE_PYTHON_VERSION } from "../../utils/python-uv";
 import {
   PackageManager,
   getCommands,
@@ -117,7 +119,11 @@ export default defineConfig({
     '@': fileURLToPath(new URL('.', import.meta.url)),
     '@${projectName}/shared': fileURLToPath(new URL('./shared/index.ts', import.meta.url)),
   } },
-  server: { port: 3000, strictPort: true },
+  server: {
+    port: 3000,
+    strictPort: true,
+    watch: { ignored: ${buildReactDevWatchIgnoredSource("fileURLToPath(new URL('.', import.meta.url))")} },
+  },
   build: { outDir: 'dist' },
 });
 `
@@ -375,6 +381,17 @@ The BFF stays separate even with \`--no-functions\`; \`--no-swa\` starts only th
 direct Vite/BFF servers (no same-origin API routing or SWA authentication).
 Core Tools v4 must already be available. Start Cosmos DB Emulator manually if
 this application needs Cosmos; SwallowKit never starts it.
+${backend === "python" ? `
+Python environments use normal uv discovery and user settings, including installed
+Python, \`.python-version\`, and \`UV_PYTHON\`. Local Python is not pinned to the Azure
+deployment runtime (${DEFAULT_AZURE_PYTHON_VERSION}). Functions uses \`functions/.venv\`; scaffold uses
+\`functions/.codegen-venv\`. Existing environments are never cleared automatically.
+When switching interpreters, explicitly recreate them with uv. Do not disable
+Windows application-control policy to run an unsigned interpreter.
+` : backend === "csharp" ? `
+The .NET isolated backend starts with \`dotnet run\` so extensions are loaded from
+the build output. Vite does not watch \`functions/\` or \`bff/\` build artifacts.
+` : ""}
 
 Local BFF settings live in \`bff/local.settings.json\` (gitignored). Backend settings
 live in \`functions/local.settings.json\`. Keep their secrets out of source control.

@@ -120,7 +120,7 @@ The initial push triggers a CI/CD run that cannot succeed without secrets. Cance
 ### Azure Functions
 
 - **Plan**: Flex Consumption
-- **Runtime**: Selected during initialization (TypeScript/Node.js 22, C#/.NET Isolated 10.0, or Python 3.11)
+- **Runtime**: Selected during initialization (TypeScript/Node.js 22, C#/.NET Isolated 10.0, or Python 3.14). Local Python selection is independent; use the deployment version when checking cloud compatibility.
 - **Features**:
   - HTTP triggers
   - Cosmos DB bindings

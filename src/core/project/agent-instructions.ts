@@ -71,6 +71,9 @@ function getBackendRules(backendLanguage: BackendLanguage): string {
     "- All backend business logic and data access live in `functions/`.",
     `- SwallowKit derives OpenAPI and native ${BACKEND_LANGUAGE_LABELS[backendLanguage]} schema assets from the Zod source of truth.`,
     "- Keep custom business logic in ai-authored locations identified by the current boundary contract.",
+    backendLanguage === "python"
+      ? "- Use uv with the user's interpreter/version settings. Local Python is not pinned to the Azure deployment runtime. Preserve functions/.venv and functions/.codegen-venv; do not clear them or weaken OS application-control policy to fix interpreter errors."
+      : "- Start the isolated Functions backend with dotnet run, not func start from the source directory, so the SDK loads extensions from the build output.",
   ].join("\n");
 }
 

@@ -19,15 +19,15 @@ import {
 import { BackendLanguage } from '../../types';
 import { detectFromProject, getCommands } from '../../utils/package-manager';
 import {
-  buildProjectLocalUvEnv,
   buildProjectLocalUvInstallerEnv,
   buildUvPipInstallArgs,
-  buildUvVenvArgs,
+  ensureUvVirtualEnvironment,
   getProjectLocalUvInstallerCommand,
   getProjectLocalUvPaths,
   getPythonProjectRoot,
 } from '../../utils/python-uv';
 import { ConnectorMockServer } from '../../core/mock/connector-mock-server';
+import { buildReactDevConfigSource } from '../../utils/react-dev';
 
 export interface DevOptions {
   port?: string;
@@ -65,8 +65,8 @@ function normalizeParsedDevOptions(options: ParsedDevActionOptions): DevOptions 
   };
 }
 
-export function buildFunctionsStartArgs(functionsPort: string): string[] {
-  return ['start', '--port', functionsPort];
+export function buildFunctionsStartArgs(functionsPort: string, backendLanguage: BackendLanguage = 'typescript'): string[] {
+  return [...(backendLanguage === 'csharp' ? [] : ['start']), '--port', functionsPort];
 }
 
 export function parseCoreToolsVersion(output: string): string | null {
@@ -105,15 +105,15 @@ export function buildFunctionsCoreToolsCommand(
 
     return {
       command: 'npm',
-      argsPrefix: ['exec', '--yes', NPM_CORE_TOOLS_PACKAGE, '--'],
-      label: `npm exec ${NPM_CORE_TOOLS_PACKAGE} (${reason})`,
+      argsPrefix: ['exec', '--yes', '--package', NPM_CORE_TOOLS_PACKAGE, '--', 'dotnet', 'run', '--no-launch-profile', '--'],
+      label: `dotnet run with npm ${NPM_CORE_TOOLS_PACKAGE} (${reason})`,
     };
   }
 
   return {
-    command: 'func',
-    argsPrefix: [],
-    label: installedVersion ? `func ${installedVersion}` : 'func',
+    command: backendLanguage === 'csharp' ? 'dotnet' : 'func',
+    argsPrefix: backendLanguage === 'csharp' ? ['run', '--no-launch-profile', '--'] : [],
+    label: backendLanguage === 'csharp' ? 'dotnet run' : installedVersion ? `func ${installedVersion}` : 'func',
   };
 }
 
@@ -138,8 +138,8 @@ export function buildSwaStartArgs(host: string | undefined, nextPort: string, sw
   ];
 }
 
-export function buildReactDevArgs(pm: string, port: string, host = 'localhost'): string[] {
-  const args = ['vite', '--port', port, '--host', host, '--strictPort'];
+export function buildReactDevArgs(pm: string, port: string, host = 'localhost', configPath?: string): string[] {
+  const args = ['vite', '--port', port, '--host', host, '--strictPort', ...(configPath ? ['--config', configPath] : [])];
   return pm === 'pnpm' ? ['exec', ...args] : args;
 }
 
@@ -270,7 +270,7 @@ async function checkCommand(
 }
 
 async function resolveProjectLocalUvCommand(projectRoot: string): Promise<{ command: string; env: NodeJS.ProcessEnv }> {
-  const uvEnv = buildProjectLocalUvEnv(process.env, projectRoot);
+  const uvEnv = { ...process.env };
   const { localUvExecutable } = getProjectLocalUvPaths(projectRoot);
 
   if (await checkCommand('uv', ['--version'], { shell: false })) {
@@ -471,22 +471,8 @@ async function bridgePythonCoreToolsForWindowsArm64(
 async function preparePythonFunctionsEnvironment(functionsDir: string): Promise<NodeJS.ProcessEnv> {
   const projectRoot = getPythonProjectRoot(functionsDir);
   const { command: uvCommand, env: uvEnv } = await resolveProjectLocalUvCommand(projectRoot);
-  const { venvDir, pythonExecutable } = getPythonVirtualEnvPaths(functionsDir);
-  const hasUsableVirtualEnv = fs.existsSync(pythonExecutable) && await checkCommand(pythonExecutable, ['--version'], {
-    cwd: functionsDir,
-    env: uvEnv,
-    shell: false,
-  });
-
-  if (!hasUsableVirtualEnv) {
-    const venvArgs = buildUvVenvArgs('.venv');
-    if (fs.existsSync(venvDir)) {
-      venvArgs.push('--clear');
-    }
-
-    console.log('📦 Creating Python virtual environment with uv...');
-    await runCommand(uvCommand, venvArgs, functionsDir, 'python virtual environment setup', uvEnv, false);
-  }
+  const { venvDir } = getPythonVirtualEnvPaths(functionsDir);
+  const pythonExecutable = await ensureUvVirtualEnvironment(uvCommand, venvDir, functionsDir, uvEnv);
 
   console.log('📦 Installing Python Azure Functions dependencies with uv...');
   await runCommand(
@@ -538,7 +524,7 @@ export async function assertDevPortAvailable(port: number, host: string): Promis
 }
 
 function stopDevProcesses(processes: ChildProcess[]): void {
-  const active = processes.filter(child => child.pid && !child.killed);
+  const active = processes.filter(child => child.pid && !child.killed && child.exitCode === null && child.signalCode === null);
   if (process.platform === 'win32' && active.length) {
     // Windows shell termination alone leaves Vite, Core Tools, and SWA running.
     const ids = active.map(child => child.pid).join(',');
@@ -721,6 +707,14 @@ async function startDevEnvironment(options: DevOptions) {
   const functionsBaseUrl = buildFunctionsBaseUrl(options.host, functionsPort);
   let functionsReadinessPromise: Promise<boolean> | null = null;
   let functionsReady = !!options.noFunctions;
+  let reactDevConfigDir: string | undefined;
+  const cleanupReactDevConfig = () => {
+    if (reactDevConfigDir) {
+      fs.rmSync(reactDevConfigDir, { recursive: true, force: true });
+      reactDevConfigDir = undefined;
+    }
+  };
+  process.once('exit', cleanupReactDevConfig);
 
   // Cleanup processes on Ctrl+C
   process.on('SIGINT', async () => {
@@ -939,7 +933,7 @@ async function startDevEnvironment(options: DevOptions) {
 
       // Azure Functions を起動
       const functionsCommand = functionsCoreToolsCommand ?? buildFunctionsCoreToolsCommand(backendLanguage, installedCoreToolsVersion);
-      const funcProcess = spawn(functionsCommand.command, [...functionsCommand.argsPrefix, ...buildFunctionsStartArgs(functionsPort)], {
+      const funcProcess = spawn(functionsCommand.command, [...functionsCommand.argsPrefix, ...buildFunctionsStartArgs(functionsPort, backendLanguage)], {
         cwd: functionsDir,
         shell: true,
         stdio: 'pipe', // Always pipe to capture output
@@ -987,6 +981,8 @@ async function startDevEnvironment(options: DevOptions) {
         console.error('⚠️  Azure Functions startup error:', error.message);
         console.log('💡 Please ensure Azure Functions Core Tools is installed');
         console.log(`   ${pmCmd.addGlobal} azure-functions-core-tools@4`);
+        stopDevProcesses(processes);
+        process.exit(1);
       });
 
       funcProcess.on('close', (code) => {
@@ -997,6 +993,8 @@ async function startDevEnvironment(options: DevOptions) {
             console.log('   Reinstall a matching Core Tools v4 package (Windows users should prefer the official x64/x86 MSI for their machine).');
             console.log('   SwallowKit local Python dev uses functions/.venv and requirements.txt, but Core Tools still needs its own bundled Python worker.');
           }
+          stopDevProcesses(processes);
+          process.exit(code || 1);
         }
       });
 
@@ -1083,7 +1081,17 @@ async function startDevEnvironment(options: DevOptions) {
     }
 
     // 5. Start Next.js development server
-    const nextArgs = react ? buildReactDevArgs(pm, port, options.host) : buildNextDevArgs(pm, port);
+    let reactDevConfigPath: string | undefined;
+    if (react) {
+      const stateDir = path.join(process.cwd(), '.swallowkit');
+      fs.mkdirSync(stateDir, { recursive: true });
+      reactDevConfigDir = fs.mkdtempSync(path.join(stateDir, 'vite-dev-'));
+      reactDevConfigPath = path.join(reactDevConfigDir, 'config.mjs');
+      fs.writeFileSync(reactDevConfigPath, buildReactDevConfigSource());
+    }
+    const nextArgs = react
+      ? buildReactDevArgs(pm, port, options.host, reactDevConfigPath && path.relative(process.cwd(), reactDevConfigPath))
+      : buildNextDevArgs(pm, port);
     
     // Ensure .env.local points to bffTargetPort so Next.js reads the correct backend URL.
     // When --mock-connectors is active, bffTargetPort = mock port (7072); otherwise = Functions port (7071).
@@ -1141,6 +1149,7 @@ async function startDevEnvironment(options: DevOptions) {
 
     nextProcess.on('error', (error) => {
       console.error(`❌ ${frontendLabel} startup error:`, error.message);
+      stopDevProcesses(processes);
       process.exit(1);
     });
 

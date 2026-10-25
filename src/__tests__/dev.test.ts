@@ -32,6 +32,7 @@ describe("dev command helpers", () => {
 
   it("passes the requested port to Azure Functions Core Tools", () => {
     expect(buildFunctionsStartArgs("7076")).toEqual(["start", "--port", "7076"]);
+    expect(buildFunctionsStartArgs("7076", "csharp")).toEqual(["--port", "7076"]);
   });
 
   it("parses the Core Tools version from CLI output", () => {
@@ -47,16 +48,22 @@ describe("dev command helpers", () => {
   it("falls back to npm Core Tools for older C# isolated hosts", () => {
     expect(buildFunctionsCoreToolsCommand("csharp", "4.0.5198")).toEqual({
       command: "npm",
-      argsPrefix: ["exec", "--yes", "azure-functions-core-tools@4", "--"],
-      label: "npm exec azure-functions-core-tools@4 (installed func 4.0.5198 is too old for C# isolated)",
+      argsPrefix: ["exec", "--yes", "--package", "azure-functions-core-tools@4", "--", "dotnet", "run", "--no-launch-profile", "--"],
+      label: "dotnet run with npm azure-functions-core-tools@4 (installed func 4.0.5198 is too old for C# isolated)",
     });
   });
 
-  it("keeps the installed func command for supported Core Tools versions", () => {
+  it("uses the .NET SDK launch target for C# so extensions load from the output directory", () => {
     expect(buildFunctionsCoreToolsCommand("csharp", "4.6.0")).toEqual({
-      command: "func",
-      argsPrefix: [],
-      label: "func 4.6.0",
+      command: "dotnet",
+      argsPrefix: ["run", "--no-launch-profile", "--"],
+      label: "dotnet run",
+    });
+  });
+
+  it.each(["typescript", "python"] as const)("keeps func start for %s", language => {
+    expect(buildFunctionsCoreToolsCommand(language, "4.14.0")).toEqual({
+      command: "func", argsPrefix: [], label: "func 4.14.0",
     });
   });
 

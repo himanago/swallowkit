@@ -58,16 +58,24 @@ No additional setup required. Functions start immediately with `func start`.
 ### Python
 
 `swallowkit dev` uses **uv** for local Python environment management:
-- Installs or reuses a project-local `uv` binary under `.uv/bin`
-- Keeps uv-managed Python under `.uv/python`
+- Reuses installed `uv`; bootstraps `.uv/bin` only if uv is missing, without changing PATH
+- Uses normal uv interpreter discovery (including installed Python and the Windows registry), `.python-version`, `UV_PYTHON`, and user configuration; does not force a managed download, cache directory, or Python 3.11
 - Creates `functions/.venv` for the Functions app
 - Creates `functions/.codegen-venv` for schema generation (used by `scaffold`)
 
-You do not need to install Python or create virtualenvs manually.
+If Python is not installed, uv may download it according to your settings. New projects do not create a `.python-version` pin. An existing pin remains effective: update it explicitly if you want another interpreter. Existing environments are reused and are never automatically cleared. When switching Python, explicitly recreate the environment with uv after preserving anything you need.
+
+On Windows with Smart App Control, an unsigned interpreter or venv executable may be blocked. Use a trusted interpreter (for example official CPython) and explicitly select it with uv; do not disable application-control policy. An execution failure reports the executable path and preserves the environment.
+
+Local interpreter selection is separate from the generated Azure runtime and CI version (Python 3.14, the current GA default). Python 3.15 is currently in Azure Functions preview; Core Tools 4.14.0 currently accepts only Python 3.10–3.14. Use an interpreter supported by your Core Tools version for `dev`, even if scaffold works with a newer Python. A Functions startup failure stops dev rather than reporting the backend as still warming up.
+
+Schema-tool installation defaults to PyYAML's pure-Python mode when building from source, avoiding a C compiler requirement for its optional accelerator. An explicit `PYYAML_FORCE_LIBYAML` setting is respected.
 
 ### C#
 
-Azure Functions isolated worker (.NET 10) requires a build step before the host responds. `swallowkit dev` waits up to 90 seconds for the Functions host to become ready before printing the URL.
+Azure Functions isolated worker (.NET 10) starts with `dotnet run`, which builds and launches Core Tools from the output directory so function extensions load correctly. The requested `--functions-port` is forwarded to the host. `swallowkit dev` waits up to 90 seconds for readiness.
+
+React/Vite excludes standalone `functions/`, managed `bff/`, `.uv/`, `.swallowkit/`, and compiled `shared/dist/` from file watching, including when starting existing projects through `swallowkit dev`. Your Vite configuration and other ignore rules are retained, and frontend files and shared model sources remain watched.
 
 Requires .NET 10 SDK and Azure Functions Core Tools 4.6.0 or later.
 

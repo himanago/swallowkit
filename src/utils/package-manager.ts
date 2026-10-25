@@ -250,5 +250,5 @@ export function getFunctionsStartScript(
     return "cd functions && npm start";
   }
 
-  return "cd functions && func start";
+  return backendLanguage === "csharp" ? "cd functions && dotnet run" : "cd functions && func start";
 }

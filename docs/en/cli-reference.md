@@ -859,7 +859,7 @@ pnpm dlx swallowkit dev [options]
     - Check Azure Functions Core Tools
     - Auto-install dependencies
     - Start Functions in `functions/` directory
-    - **Python backend**: use **uv** for local runtime management, keeping project-local state under `.uv/`, creating `functions/.venv` for the app, and `functions/.codegen-venv` for Python schema generation
+    - **Python backend**: use **uv** with normal interpreter discovery and user settings, creating `functions/.venv` for the app and `functions/.codegen-venv` for schema generation without forcing Python 3.11 or clearing existing environments
     - **C# backend**: allow extra cold-start time for the isolated worker build, and only report the Functions URL as ready after the host answers HTTP requests
 5. **Next.js Start**: Launch development server
 6. **SWA authentication emulator** (when `auth.provider: 'swa'` and `--no-swa` is not set):

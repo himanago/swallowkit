@@ -25,7 +25,7 @@ import {
   buildCSharpCodegenToolManifestSource,
   buildPythonCodegenRequirementsSource,
 } from "../../core/scaffold/native-schema-generator";
-import { getProjectLocalUvPaths } from "../../utils/python-uv";
+import { DEFAULT_AZURE_PYTHON_VERSION } from "../../utils/python-uv";
 
 interface InitOptions {
   name: string;
@@ -144,7 +144,7 @@ function getFunctionsRuntimeConfig(backendLanguage: BackendLanguage): { name: st
     return { name: "dotnet-isolated", version: "10.0" };
   }
   if (backendLanguage === "python") {
-    return { name: "python", version: "3.11" };
+    return { name: "python", version: DEFAULT_AZURE_PYTHON_VERSION };
   }
   return { name: "node", version: "22" };
 }
@@ -1492,7 +1492,6 @@ public sealed class GreetFunction
 }
 
 function createPythonFunctionsProject(projectDir: string, functionsDir: string): void {
-  fs.writeFileSync(path.join(projectDir, '.python-version'), '3.11\n');
   ensureProjectGitignoreEntry(projectDir, '.uv');
 
   fs.writeFileSync(path.join(functionsDir, 'requirements.txt'), `azure-functions>=1.20.0
@@ -1796,9 +1795,8 @@ function createReadme(
   const backendScaffoldNote = backendLanguage === 'typescript'
     ? '- Azure Functions CRUD endpoints'
     : `- Azure Functions ${backendLanguageLabel} CRUD handlers\n- OpenAPI export + native-generated ${backendLanguageLabel} schema assets`;
-  const pythonUvPaths = getProjectLocalUvPaths(projectDir);
   const pythonLocalDevNote = backendLanguage === 'python'
-    ? `\n**Python local dev note**: SwallowKit uses \`uv\` for Python backends and keeps the managed Python runtime under \`${path.relative(projectDir, pythonUvPaths.pythonInstallDir)}\`. Local Azure Functions runs from \`functions/.venv\`, schema generation uses \`functions/.codegen-venv\`, and \`swallowkit dev\` bootstraps a project-local \`uv\` binary automatically when needed. Keep \`functions/requirements.txt\` and \`functions/requirements.codegen.txt\` as the dependency sources of truth.\n`
+    ? `\n**Python local dev note**: SwallowKit uses normal \`uv\` interpreter discovery and settings, including installed Python, \`.python-version\`, and \`UV_PYTHON\`. It does not pin local Python to the Azure deployment version (${DEFAULT_AZURE_PYTHON_VERSION}). Local Functions uses \`functions/.venv\` and schema generation uses \`functions/.codegen-venv\`. Existing environments are preserved; explicitly recreate them with uv when switching interpreters. A missing uv binary is bootstrapped under \`.uv/bin\` without changing PATH. Keep \`functions/requirements.txt\` and \`functions/requirements.codegen.txt\` as the dependency sources of truth.\n`
     : '';
 
   const readme = `# ${projectName}
@@ -2949,7 +2947,7 @@ jobs:
 ${commonSetup}      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '${DEFAULT_AZURE_PYTHON_VERSION}'
 
       - name: Install Functions dependencies
         run: |
@@ -3138,7 +3136,7 @@ variables:
 steps:
 ${commonSetup}  - task: UsePythonVersion@0
     inputs:
-      versionSpec: '3.11'
+      versionSpec: '${DEFAULT_AZURE_PYTHON_VERSION}'
     displayName: 'Install Python'
 
   - script: |

@@ -335,6 +335,21 @@ describe("Infrastructure generation", () => {
 });
 
 describe("GitHub Actions workflow generation", () => {
+  it("keeps Python deployment and both CI providers on the same GA runtime", async () => {
+    expect(getGitHubFunctionsWorkflow("npm", "python")).toContain("python-version: '3.14'");
+    expect(getAzureFunctionsPipeline("npm", "python")).toContain("versionSpec: '3.14'");
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-python-infra-"));
+    try {
+      await createInfrastructure(projectDir, "sample-app", {
+        cosmosDbMode: "serverless", vnetOption: "none", swaPlan: "free",
+      }, "python");
+      const source = fs.readFileSync(path.join(projectDir, "infra", "main.bicep"), "utf8");
+      expect(source).toContain("functionsRuntimeVersion: '3.14'");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("only enables setup-node caching when no package-manager conversion is needed", () => {
     expect(buildGitHubSwaWorkflow("npm")).toContain("Select Node.js 22 for SWA");
     expect(buildGitHubSwaWorkflow("npm")).toContain("app_build_command: 'npm run build'");

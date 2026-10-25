@@ -1,13 +1,13 @@
 import * as path from "path";
+import * as fs from "fs";
+import { execFile } from "child_process";
+import { promisify } from "util";
 
-export const SWALLOWKIT_PYTHON_VERSION = "3.11";
+const execFileAsync = promisify(execFile);
+export const DEFAULT_AZURE_PYTHON_VERSION = "3.14";
 
 export interface ProjectLocalUvPaths {
   stateDir: string;
-  cacheDir: string;
-  pythonInstallDir: string;
-  toolDir: string;
-  toolBinDir: string;
   localUvInstallDir: string;
   localUvExecutable: string;
 }
@@ -22,36 +22,11 @@ export function getProjectLocalUvPaths(projectRoot: string): ProjectLocalUvPaths
 
   return {
     stateDir,
-    cacheDir: path.join(stateDir, "cache"),
-    pythonInstallDir: path.join(stateDir, "python"),
-    toolDir: path.join(stateDir, "tools"),
-    toolBinDir: path.join(stateDir, "tools", "bin"),
     localUvInstallDir,
     localUvExecutable: process.platform === "win32"
       ? path.join(localUvInstallDir, "uv.exe")
       : path.join(localUvInstallDir, "uv"),
   };
-}
-
-export function buildProjectLocalUvEnv(
-  baseEnv: NodeJS.ProcessEnv,
-  projectRoot: string
-): NodeJS.ProcessEnv {
-  const uvPaths = getProjectLocalUvPaths(projectRoot);
-  const env: NodeJS.ProcessEnv = {
-    ...baseEnv,
-    UV_CACHE_DIR: uvPaths.cacheDir,
-    UV_PYTHON_INSTALL_DIR: uvPaths.pythonInstallDir,
-    UV_TOOL_DIR: uvPaths.toolDir,
-    UV_TOOL_BIN_DIR: uvPaths.toolBinDir,
-    UV_PYTHON_PREFERENCE: "only-managed",
-  };
-
-  if (process.platform === "win32") {
-    env.UV_PYTHON_NO_REGISTRY = "true";
-  }
-
-  return env;
 }
 
 export function buildProjectLocalUvInstallerEnv(
@@ -60,11 +35,18 @@ export function buildProjectLocalUvInstallerEnv(
 ): NodeJS.ProcessEnv {
   const uvPaths = getProjectLocalUvPaths(projectRoot);
 
-  return {
-    ...buildProjectLocalUvEnv(baseEnv, projectRoot),
+  const env: NodeJS.ProcessEnv = {
+    ...baseEnv,
     UV_UNMANAGED_INSTALL: uvPaths.localUvInstallDir,
     UV_NO_MODIFY_PATH: "1",
   };
+  // Windows PowerShell must discover its own modules, not inherit PowerShell 7's.
+  if (process.platform === "win32") {
+    for (const key of Object.keys(env)) {
+      if (key.toLowerCase() === "psmodulepath") delete env[key];
+    }
+  }
+  return env;
 }
 
 export function getProjectLocalUvInstallerCommand(): { command: string; args: string[] } {
@@ -87,10 +69,48 @@ export function getProjectLocalUvInstallerCommand(): { command: string; args: st
   };
 }
 
-export function buildUvVenvArgs(venvDir: string, pythonVersion = SWALLOWKIT_PYTHON_VERSION): string[] {
-  return ["venv", venvDir, "--python", pythonVersion];
+export function buildUvVenvArgs(venvDir: string): string[] {
+  return ["venv", venvDir];
+}
+
+export function getVirtualEnvPythonPath(venvDir: string): string {
+  return process.platform === "win32"
+    ? path.join(venvDir, "Scripts", "python.exe")
+    : path.join(venvDir, "bin", "python");
+}
+
+export async function ensureUvVirtualEnvironment(
+  uvCommand: string,
+  venvDir: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv
+): Promise<string> {
+  const pythonExecutable = getVirtualEnvPythonPath(venvDir);
+  if (!fs.existsSync(venvDir)) {
+    const { stdout, stderr } = await execFileAsync(uvCommand, buildUvVenvArgs(venvDir), { cwd, env });
+    if (env.SWALLOWKIT_MACHINE_OUTPUT !== "1") {
+      if (stdout) process.stdout.write(stdout);
+      if (stderr) process.stderr.write(stderr);
+    }
+  }
+  try {
+    await execFileAsync(pythonExecutable, ["--version"], { cwd, env });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Cannot execute Python at ${pythonExecutable}: ${reason}\n` +
+      "The virtual environment was preserved. Check the interpreter and OS application-control policy. " +
+      "To switch Python, explicitly recreate this environment with uv and a trusted interpreter; SwallowKit will not clear it automatically."
+    );
+  }
+  return pythonExecutable;
 }
 
 export function buildUvPipInstallArgs(pythonExecutable: string, requirementsPath: string): string[] {
   return ["pip", "install", "--python", pythonExecutable, "-r", requirementsPath];
+}
+
+export function buildPythonCodegenInstallEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  // Codegen reads JSON; PyYAML's optional accelerator must not require a C compiler.
+  return { ...env, PYYAML_FORCE_LIBYAML: env.PYYAML_FORCE_LIBYAML ?? "0" };
 }
