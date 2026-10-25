@@ -156,7 +156,7 @@ export function getWorkspaceConfig(pm: PackageManager, workspaces: string[]) {
       /** pnpm uses pnpm-workspace.yaml */
       type: "file" as const,
       filename: "pnpm-workspace.yaml",
-      content: `packages:\n${workspaces.map((w) => `  - ${w}`).join("\n")}\nallowBuilds:\n  protobufjs: false\n  unrs-resolver: false\n`,
+      content: `packages:\n${workspaces.map((w) => `  - ${w}`).join("\n")}\nallowBuilds:\n  keytar: false\n  protobufjs: false\n  unrs-resolver: false\n`,
     };
   }
 

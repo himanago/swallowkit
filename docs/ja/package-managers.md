@@ -26,7 +26,11 @@ Azure Functions Core Tools v4 と各 backend runtime は別途必要な開発環
 
 SwallowKit CLI の起動に `esbuild` の build script 承認は不要です。旧版の `init` で `ERR_PNPM_IGNORED_BUILDS` が `esbuild` を示す場合は、SwallowKit を更新してから再実行してください。
 
-生成アプリの project-local `allowBuilds` は、不要な `protobufjs`（Application Insights 経由のバージョン指定に関する通知）と `unrs-resolver`（native binding の fallback installer。対応 platform では optional な配布済み binary を利用）の script を明示的に **拒否** します。実行許可は与えません。未知の依存は引き続きレビュー対象です。wildcard、global 許可、release age・trust policy の例外は生成しません。
+生成アプリの project-local `allowBuilds` は、不要な `keytar`（SWA CLI のネイティブ資格情報ストア。`swa start` では不要）、`protobufjs`（Application Insights 経由のバージョン指定に関する通知）、`unrs-resolver`（native binding の fallback installer。対応 platform では optional な配布済み binary を利用）の script を明示的に **拒否** します。これらの実行許可は与えません。React 構成では、Vite／BFF のビルドに必要な `esbuild` だけを別途許可します。未知の依存は引き続きレビュー対象です。wildcard、global 許可、release age・trust policy の例外は生成しません。
+
+`2.0.0-alpha.1` の React 初期化で `ERR_PNPM_IGNORED_BUILDS: keytar@7.9.0` が出た場合は、この修正を含むバージョンで `init` をやり直してください。初期化に失敗すると、新しく作成したプロジェクトディレクトリは削除されます。既存の pnpm プロジェクトでは、`pnpm-workspace.yaml` の既存の `allowBuilds` に `keytar: false` を追加し、他の設定を残して `pnpm install` を実行します。これは実行の拒否を記録する設定であり、資格情報ストアのネイティブバイナリを導入したり、pnpm の検査を緩めたりするものではありません。
+
+生成する開発フローは `swa start` を使い、CI のデプロイは `swa login` ではなく SWA action で行います。別途 `swa login` を使い、OS のキーチェーンへの資格情報保存が必要な場合だけ、`keytar` とそのネイティブ installer を確認したうえで、そのプロジェクトの設定を `keytar: true` に変更し、`pnpm rebuild keytar` を実行してください。永続保存を使わない場合は `swa login --no-use-keychain` を利用できます。いずれもグローバル設定は変更しないでください。
 
 別の package が表示されたら `pnpm why <package>` とその `package.json`／script を確認し、アプリや platform に本当に必要か判断してください。必要な場合だけ内容をレビューし project-local に許可します。script は利用者の権限でコードを実行します。init を通すための一括承認や security controls の無効化は不要です。
 

@@ -52,19 +52,27 @@ jobs:
           - { manager: npm, version: '10', backend: typescript, node: 22 }
           - { manager: pnpm, version: '11', backend: csharp, node: 22 }
           - { manager: pnpm, version: '12', backend: python, node: 24 }
+          - { manager: pnpm, version: '12', backend: typescript, frontend: react, node: 22 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+      - name: Setup Core Tools for React BFF smoke test
+        if: matrix.frontend == 'react'
+        run: |
+          npm install --prefix "$RUNNER_TEMP/swallowkit-core-tools" azure-functions-core-tools@4 --no-audit --no-fund
+          # Consumer smoke removes node_modules directories from its inherited PATH.
+          ln -s "$RUNNER_TEMP/swallowkit-core-tools/node_modules/.bin/func" "$RUNNER_TEMP/swallowkit-core-tools/func"
+          echo "$RUNNER_TEMP/swallowkit-core-tools" >> "$GITHUB_PATH"
       - run: npm ci
       - run: npm run build
-      - run: node scripts/consumer-smoke.mjs ${{ matrix.manager }} ${{ matrix.version }} ${{ matrix.backend }}
+      - run: node scripts/consumer-smoke.mjs ${{ matrix.manager }} ${{ matrix.version }} ${{ matrix.backend }} --frontend ${{ matrix.frontend || 'nextjs' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: consumer-${{ matrix.manager }}-${{ matrix.version }}-${{ matrix.backend }}
+          name: consumer-${{ matrix.manager }}-${{ matrix.version }}-${{ matrix.backend }}-${{ matrix.frontend || 'nextjs' }}
           path: |
             /tmp/swallowkit-consumer-*/*.log
             /tmp/swallowkit-consumer-*/dependency-audit.json

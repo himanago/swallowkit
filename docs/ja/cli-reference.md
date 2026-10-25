@@ -186,7 +186,7 @@ VS Code 拡張機能やスクリプトなど、stdin が TTY でない環境か�
 非対話環境（CI、コーディングエージェント、パイプ経由の実行など）を検出すると、`init` はプロンプトでハングする代わりに以下のように振る舞います：
 
 - 設定フラグが不足している場合は、不足フラグの一覧をエラーとして即座に返します（ハングしません）。
-- pnpm の build scripts 承認（esbuild など）は、`pnpm-workspace.yaml` の `allowBuilds` への登録と `pnpm rebuild` により自動で承認・実行されます。
+- pnpm プロジェクトは `pnpm-workspace.yaml` にローカルの build script 方針を記録します。React のビルドに必要な `esbuild` は許可し、不要な `keytar`、`protobufjs`、`unrs-resolver` の script は拒否します。未知の script は自動承認しません。[パッケージマネージャーの切り分け](./package-managers#build-script-と-security-policy-の切り分け)も参照してください。
 
 不正な値を指定するとエラーになります：
 

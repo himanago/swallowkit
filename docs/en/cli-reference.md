@@ -185,7 +185,7 @@ This is especially useful when calling the CLI from VS Code extensions or script
 When a non-interactive environment is detected (CI, coding agents, piped execution, etc.), `init` behaves as follows instead of hanging on prompts:
 
 - If configuration flags are missing, it fails immediately with a list of the missing flags (no hang).
-- pnpm build-script approval (e.g. esbuild) is handled automatically by registering the packages under `allowBuilds` in `pnpm-workspace.yaml` and running `pnpm rebuild`.
+- pnpm projects record a local build-script policy in `pnpm-workspace.yaml`: React builds permit `esbuild`, while unnecessary `keytar`, `protobufjs`, and `unrs-resolver` scripts are denied. Unknown scripts are not automatically approved; see [package-manager troubleshooting](./package-managers#build-script-and-supply-chain-troubleshooting).
 
 Invalid flag values produce a clear error:
 
