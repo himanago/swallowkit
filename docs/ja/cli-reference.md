@@ -969,7 +969,7 @@ pnpm dlx swallowkit dev [options]
     - Azure Functions Core Tools の確認
     - 依存関係の自動インストール
     - `functions/` ディレクトリで Functions を起動
-    - **Python バックエンド**: ローカル実行環境の管理に **uv** を使い、`.uv/` 配下にプロジェクトローカルな状態を保持しつつ、アプリ用の `functions/.venv` と Python スキーマ生成用の `functions/.codegen-venv` を作成
+    - **Python バックエンド**: 通常の Python 探索と利用者の設定に従って **uv** を使い、アプリ用の `functions/.venv` とスキーマ生成用の `functions/.codegen-venv` を作成。Python 3.11 の強制や既存環境の自動消去はしません
     - **C# バックエンド**: isolated worker のビルドが完了するまでコールドスタートが長めになるため、Functions URL は HTTP 応答できる状態になってから ready として表示
 5. **Next.js 起動**: 開発サーバーを起動
 6. **SWA認証エミュレーター起動**（`auth.provider: 'swa'`かつ`--no-swa`未指定時）:

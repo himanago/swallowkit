@@ -71,6 +71,9 @@ function getBackendRules(backendLanguage: BackendLanguage): string {
     "- All backend business logic and data access live in `functions/`.",
     `- SwallowKit derives OpenAPI and native ${BACKEND_LANGUAGE_LABELS[backendLanguage]} schema assets from the Zod source of truth.`,
     "- Keep custom business logic in ai-authored locations identified by the current boundary contract.",
+    backendLanguage === "python"
+      ? "- Use uv with the user's interpreter/version settings. Local Python is not pinned to the Azure deployment runtime. Preserve functions/.venv and functions/.codegen-venv; do not clear them or weaken OS application-control policy to fix interpreter errors."
+      : "- Start the isolated Functions backend with dotnet run, not func start from the source directory, so the SDK loads extensions from the build output.",
   ].join("\n");
 }
 
@@ -91,7 +94,7 @@ function interpolateTemplate(template: string, context: AgentInstructionContext)
       ? "├── src/                    # React SPA (Vite + React Router)\n│   └── pages/              # generated/custom UI and route registrations\n├── bff/                    # SWA managed HTTP-only Functions\n│   ├── src/                # BFF handlers and request-local helpers\n│   └── {function}/         # function.json registrations"
       : "├── app/                    # Next.js App Router\n│   ├── api/                # BFF routes\n│   └── {model}/            # generated/custom UI",
     devGuidance: react
-      ? "Use http://localhost:4280 for the app. `swallowkit dev` runs Vite (3000), the managed BFF (7073), standalone Functions (7071), and SWA CLI (4280). SWA forwards /api only to the managed BFF, never directly to standalone Functions. `--no-functions` leaves the BFF running; `--no-swa` removes same-origin routing/auth emulation. BFF local settings belong in bff/local.settings.json. Build bundles BFF dependencies and copies staticwebapp.config.json into dist/. Deploy dist/ + bff/ together, and functions/ separately."
+      ? "Use http://localhost:4280 for the app. `swallowkit dev` runs Vite (3000), the managed BFF (7073), standalone Functions (7071), and SWA CLI (4280). SWA forwards /api only to the managed BFF, never directly to standalone Functions. `--no-functions` leaves the BFF running; `--no-swa` removes same-origin routing/auth emulation. BFF local settings belong in bff/local.settings.json. Build bundles BFF dependencies and copies staticwebapp.config.json into dist/. Deploy dist/ + bff/ together, and functions/ separately. Generated home, CRUD, and login pages share the Next.js presentation templates. Preserve their Tailwind styles and the light/dark defaults in src/style.css when editing them."
       : "Use http://localhost:3000 for the app, or the SWA emulator port (4280) when testing SWA authentication. `swallowkit dev` runs Next.js and standalone Functions (7071). The BFF remains Next.js API routes.",
     pm: context.packageManager,
     runCmd,

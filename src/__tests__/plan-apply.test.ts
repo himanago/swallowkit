@@ -17,6 +17,12 @@ jest.mock("child_process", () => {
   const actual = jest.requireActual<typeof import("child_process")>("child_process");
   return {
     ...actual,
+    execFile: jest.fn((
+      _command: string,
+      _args: string[],
+      _options: object,
+      callback: (error: Error | null, stdout: string, stderr: string) => void
+    ) => process.nextTick(() => callback(null, "", ""))),
     execFileSync: jest.fn(actual.execFileSync),
     spawn: jest.fn(),
     spawnSync: jest.fn(),
@@ -125,6 +131,7 @@ function createNativeBackendFixture(rootDir: string, backendLanguage: "csharp" |
 }
 
 function mockSuccessfulNativeCodegen(): () => void {
+  jest.mocked(childProcess.execFile).mockClear();
   const spawnSyncMock = childProcess.spawnSync as unknown as any;
   const spawnMock = childProcess.spawn as unknown as any;
   spawnSyncMock.mockReturnValue({ status: 0 });
@@ -134,6 +141,7 @@ function mockSuccessfulNativeCodegen(): () => void {
     return child;
   });
   return () => {
+    jest.mocked(childProcess.execFile).mockClear();
     spawnMock.mockReset();
     spawnSyncMock.mockReset();
   };
@@ -525,6 +533,7 @@ describe("plan / apply / drift / verify machine commands", () => {
         expect(fs.existsSync(path.join(tempDir, "functions", "openapi"))).toBe(false);
         expect(fs.existsSync(path.join(tempDir, modelPath))).toBe(false);
         expect(childProcess.spawn).not.toHaveBeenCalled();
+        expect(childProcess.execFile).not.toHaveBeenCalled();
 
         const applied = await runMachine(
           machineArgs("apply", "scaffold", "--plan", plan.response.data.planId)

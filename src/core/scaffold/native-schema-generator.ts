@@ -7,10 +7,10 @@ import { FileOperationSession } from "../operations/file-session";
 import { ModelInfo, toKebabCase } from "./model-parser";
 import { generateOpenApiDocument } from "./openapi-generator";
 import {
-  buildProjectLocalUvEnv,
   buildProjectLocalUvInstallerEnv,
   buildUvPipInstallArgs,
-  buildUvVenvArgs,
+  buildPythonCodegenInstallEnv,
+  ensureUvVirtualEnvironment,
   getProjectLocalUvInstallerCommand,
   getProjectLocalUvPaths,
   getPythonProjectRoot,
@@ -19,6 +19,8 @@ import {
 export const NSWAG_CONSOLECORE_VERSION = "14.7.1";
 export const PYTHON_SCHEMA_CODEGEN_REQUIREMENT = "datamodel-code-generator>=0.44.0,<1.0.0";
 const PYTHON_OUTPUT_MODEL_TYPE = "pydantic_v2.BaseModel";
+// Preserve model syntax compatibility with existing deployments, not the tool's interpreter.
+const PYTHON_MODEL_SYNTAX_VERSION = "3.11";
 
 function getMachineAwareStdio(): "inherit" | "pipe" {
   return process.env.SWALLOWKIT_MACHINE_OUTPUT === "1" ? "pipe" : "inherit";
@@ -201,7 +203,7 @@ export function getPythonNativeGeneratorArgs(specPath: string, outputPath: strin
     "--output-model-type",
     PYTHON_OUTPUT_MODEL_TYPE,
     "--target-python-version",
-    "3.11",
+    PYTHON_MODEL_SYNTAX_VERSION,
     "--disable-timestamp",
     "--use-union-operator",
     "--collapse-root-models",
@@ -724,14 +726,8 @@ function ensurePythonCodegenProjectFiles(
   return requirementsPath;
 }
 
-function getVirtualEnvPythonPath(venvDir: string): string {
-  return process.platform === "win32"
-    ? path.join(venvDir, "Scripts", "python.exe")
-    : path.join(venvDir, "bin", "python");
-}
-
 async function ensureProjectLocalUvCommand(projectRoot: string): Promise<{ command: string; env: NodeJS.ProcessEnv }> {
-  const uvEnv = buildProjectLocalUvEnv(process.env, projectRoot);
+  const uvEnv = { ...process.env };
   const { localUvExecutable } = getProjectLocalUvPaths(projectRoot);
 
   if (canRun("uv", ["--version"], projectRoot)) {
@@ -762,22 +758,7 @@ async function ensurePythonCodegenEnvironment(functionsRoot: string, requirement
   const projectRoot = getPythonProjectRoot(functionsRoot);
   const { command: uvCommand, env: uvEnv } = await ensureProjectLocalUvCommand(projectRoot);
   const venvDir = path.join(functionsRoot, ".codegen-venv");
-  const venvPython = getVirtualEnvPythonPath(venvDir);
-
-  if (!canRun(venvPython, ["--version"], functionsRoot, uvEnv)) {
-    const venvArgs = buildUvVenvArgs(venvDir);
-    if (fs.existsSync(venvDir)) {
-      venvArgs.push("--clear");
-    }
-
-    await runCommand(
-      uvCommand,
-      venvArgs,
-      functionsRoot,
-      "Failed to create the Python schema code generation virtual environment.",
-      uvEnv
-    );
-  }
+  const venvPython = await ensureUvVirtualEnvironment(uvCommand, venvDir, functionsRoot, uvEnv);
 
   if (!canRun(venvPython, ["-c", "import datamodel_code_generator"], functionsRoot, uvEnv)) {
     await runCommand(
@@ -785,7 +766,7 @@ async function ensurePythonCodegenEnvironment(functionsRoot: string, requirement
       buildUvPipInstallArgs(venvPython, requirementsPath),
       functionsRoot,
       "Failed to install Python schema generation dependencies.",
-      uvEnv
+      buildPythonCodegenInstallEnv(uvEnv)
     );
   }
 

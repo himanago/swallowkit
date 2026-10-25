@@ -237,8 +237,8 @@ describe("getFunctionsStartScript", () => {
     expect(getFunctionsStartScript("npm")).toContain("npm start");
   });
 
-  it("uses func start for csharp backends", () => {
-    expect(getFunctionsStartScript("pnpm", "csharp")).toBe("cd functions && func start");
+  it("uses dotnet run for csharp isolated backends", () => {
+    expect(getFunctionsStartScript("pnpm", "csharp")).toBe("cd functions && dotnet run");
   });
 
   it("uses func start for python backends", () => {

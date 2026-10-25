@@ -2,6 +2,13 @@
 
 SSR や React Server Components が不要なアプリでは、Next.js の代わりに React を選択できます。
 React + TypeScript の SPA を Vite、React Router、Tailwind CSS で生成します。
+
+ホーム画面は Next.js 版と同じ表示テンプレートを使い、グラデーション背景、
+接続テストのカードと状態表示、モデルのカード、モデル未作成時の案内、フッターを揃えています。
+CRUD・ログイン画面も共通テンプレートを使い、画面遷移だけ React Router に置き換えます。
+基本の色、本文フォント、OS のライト／ダーク設定への追従も Next.js 版に合わせています。
+Next.js のランタイムは不要です。新規 init に適用する既定値であり、
+既存アプリで変更した画面やスタイルを自動で上書きするものではありません。
 独立 Azure Functions、共有 Zod スキーマ、コネクタ、認可は従来と同じ構成です。
 
 ## 初期化

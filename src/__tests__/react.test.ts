@@ -14,6 +14,7 @@ import {
   createReactBffProject,
   buildReactSwaConfig,
 } from "../core/project/react-project";
+import { buildHomePage } from "../core/project/home-page";
 import {
   generateManagedFunctionConfig,
   generateReactBffHelper,
@@ -503,6 +504,24 @@ describe("React project integration", () => {
     expect(
       validateConfig({ frontend: { framework: "invalid" as never } }).valid
     ).toBe(false);
+  });
+
+  it("generates the shared home page with the selected package manager and Tailwind defaults", () => {
+    createReactProject(project, "sample", "npm");
+    expect(fs.readFileSync(path.join(project, "src", "Home.tsx"), "utf8"))
+      .toBe(buildHomePage("react", "npm"));
+
+    const css = fs.readFileSync(path.join(project, "src", "style.css"), "utf8");
+    expect(css).toContain('@import "tailwindcss"');
+    expect(css).toContain("@media (prefers-color-scheme: dark)");
+    expect(css).toContain("--background: #ffffff");
+    expect(css).toContain("--background: #0a0a0a");
+    expect(css).toContain("--color-background: var(--background)");
+    expect(css).toContain("font-family: Arial, Helvetica, sans-serif");
+    expect(fs.readFileSync(path.join(project, "index.html"), "utf8"))
+      .toContain('class="h-full antialiased"');
+    expect(fs.readFileSync(path.join(project, "vite.config.mts"), "utf8"))
+      .toContain("plugins: [react(), tailwindcss()]");
   });
 
   it("plans and applies BFF bindings, React pages and metadata through the common path", async () => {

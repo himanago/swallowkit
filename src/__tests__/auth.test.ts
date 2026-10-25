@@ -300,6 +300,15 @@ describe("generateLoginPage", () => {
     expect(code).toContain("handleSubmit");
     expect(code).toContain("/api/auth/login");
   });
+
+  it("keeps the shared form legible with either global color scheme", () => {
+    const code = generateLoginPage();
+    expect(code).toContain("bg-gray-50 dark:bg-gray-900");
+    expect(code).toContain("bg-white dark:bg-gray-800");
+    expect(code).toContain("text-gray-900 dark:text-gray-100");
+    expect(code).toContain("dark:border-gray-600");
+    expect(code).toContain("dark:text-red-300");
+  });
 });
 
 describe("generateAuthContext", () => {
