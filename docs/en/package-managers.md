@@ -16,7 +16,7 @@ Run project commands after `cd my-app`. The project pins SwallowKit to the versi
 
 `init --package-manager npm|pnpm` overrides detection. Otherwise the invocation's user agent wins: `npx` selects npm even if pnpm is installed. When launched directly without a user agent, available pnpm is preferred, then npm. Existing-project commands consult project metadata and lockfiles.
 
-The root install includes `shared/` and, for TypeScript backends, `functions/`. Commit only the selected lockfile. pnpm projects have `pnpm-workspace.yaml`; npm projects have npm workspaces and `package-lock.json`. Functions CI uses the selected manager and frozen root installation. SWA is an exception: its npm/Oryx deployment tooling requires an npm-compatible CI checkout, described below. Generated `devEngines.packageManager` uses a supported range, with pnpm recording its selected version in the lockfile; patch versions are not hardcoded. See the [pnpm 11 release specification](https://github.com/pnpm/pnpm.io/blob/main/blog/releases/11.0.md).
+The root install includes `shared/` and, for TypeScript backends, `functions/`. Commit only the selected lockfile. pnpm projects have `pnpm-workspace.yaml`; npm projects have npm workspaces and `package-lock.json`. Functions CI uses the selected manager and frozen root installation. Next.js SWA deployment is an exception: its npm/Oryx tooling requires an npm-compatible CI checkout, described below. React SWA deployment uses prebuilt artifacts instead. Generated `devEngines.packageManager` uses a supported range, with pnpm recording its selected version in the lockfile; patch versions are not hardcoded. See the [pnpm 11 release specification](https://github.com/pnpm/pnpm.io/blob/main/blog/releases/11.0.md).
 
 MCP intentionally resolves `swallowkit@latest` using the selected package manager. `.mcp.json` uses pnpm's package/dlx launcher or npm's `npx --yes --package` launcher. This keeps MCP information current independently of the project CLI. An uncached version requires network access; beta updates can differ from the local CLI. For offline/reproducible sessions, set `SWALLOWKIT_MCP_VERSION` in `.mcp.json` to the desired version and cache it beforehand, or use the local machine CLI. Neither npm projects nor their MCP launcher require pnpm.
 
@@ -39,7 +39,9 @@ pnpm also applies release-age and trust policies to `dlx`/`create`, including po
 
 ## SWA deployment from pnpm projects
 
-Continue using pnpm locally. The generated SWA workflow converts files only in the CI checkout to use npm in Azure's build environment. You do not need to change your local `package.json` or `pnpm-lock.yaml`. Functions CI uses the selected package manager.
+For React, CI builds the SPA and bundles the managed BFF with the selected package manager, then deploys those artifacts with `skip_app_build` and `skip_api_build`. It does not use Oryx or convert the project to npm.
+
+For Next.js, continue using pnpm locally. The generated SWA workflow converts files only in the CI checkout to use npm in Azure's build environment. You do not need to change your local `package.json` or `pnpm-lock.yaml`. Functions CI uses the selected package manager.
 
 The workflow constrains `engines.node` to `>=22.14.0 <23` in the CI checkout for SWA. The `actions/setup-node` setting selects the GitHub runner's runtime separately from SWA's runtime. See [Azure's build configuration](https://learn.microsoft.com/en-us/azure/static-web-apps/build-configuration#custom-build-commands).
 

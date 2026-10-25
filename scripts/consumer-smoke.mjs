@@ -152,8 +152,11 @@ try {
       assert.equal(binding.bindings.find(binding => binding.type === 'http').name, '$return');
       assert(fs.existsSync(path.join(project, 'src', 'pages', 'task', 'routes.tsx')));
       const swa = fs.readFileSync(path.join(project, '.github', 'workflows', 'deploy-swa.yml'), 'utf8');
+      assert(swa.includes('app_location: dist'));
       assert(swa.includes('api_location: bff'));
       assert(!swa.includes('api_location: functions'));
+      assert(swa.includes('skip_app_build: true'));
+      assert(swa.includes('skip_api_build: true'));
     } else {
       const nextConfigPath = path.join(project, fs.existsSync(path.join(project, 'next.config.ts')) ? 'next.config.ts' : 'next.config.js');
       const nextConfig = fs.readFileSync(nextConfigPath, 'utf8');
@@ -268,8 +271,8 @@ test('compiled shared model validates data through the installed workspace', () 
         protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'consumer-smoke', version: '1.0.0' },
       } })}\n`);
     });
-    if (manager === 'pnpm') {
-      // SWA/Oryx uses npm even when local development uses pnpm. Exercise the
+    if (manager === 'pnpm' && frontend === 'nextjs') {
+      // Next.js SWA/Oryx uses npm even when local development uses pnpm. Exercise the
       // generated CI checkout conversion and rebuild without pnpm node_modules.
       const swaCheckout = path.join(directory, 'swa-ci');
       fs.cpSync(project, swaCheckout, {

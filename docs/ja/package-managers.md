@@ -16,7 +16,7 @@ Node.js 22.14 以上、pnpm 11／12 または npm 10 以上を使います。SWA
 
 `init --package-manager npm|pnpm` が最優先です。未指定なら起動元の user agent を使うため、pnpm がインストール済みでも `npx` から起動すれば npm を選びます。user agent のない直接起動では利用可能な pnpm、次に npm を選びます。既存プロジェクトの操作は metadata と lockfile を参照します。
 
-root の install で `shared/`、TypeScript backend なら `functions/` も導入します。選択した lockfile だけをコミットしてください。pnpm は `pnpm-workspace.yaml`、npm は npm workspaces と `package-lock.json` を使います。Functions の CI は選択した manager で root の frozen install を実行します。SWA は内部の npm/Oryx に合わせ、CI の checkout だけ npm 用に変換する例外です（後述）。`devEngines.packageManager` は対応範囲を指定し、pnpm は選択した版を lockfile に保存します。patch 固定を生成しません。[pnpm 11 の仕様](https://github.com/pnpm/pnpm.io/blob/main/blog/releases/11.0.md)も参照してください。
+root の install で `shared/`、TypeScript backend なら `functions/` も導入します。選択した lockfile だけをコミットしてください。pnpm は `pnpm-workspace.yaml`、npm は npm workspaces と `package-lock.json` を使います。Functions の CI は選択した manager で root の frozen install を実行します。Next.js の SWA デプロイは内部の npm/Oryx に合わせ、CI の checkout だけ npm 用に変換する例外です（後述）。React の SWA デプロイはビルド済みの成果物を使います。`devEngines.packageManager` は対応範囲を指定し、pnpm は選択した版を lockfile に保存します。patch 固定を生成しません。[pnpm 11 の仕様](https://github.com/pnpm/pnpm.io/blob/main/blog/releases/11.0.md)も参照してください。
 
 MCP は最新情報を使うため、選択した manager で意図的に `swallowkit@latest` を解決します。`.mcp.json` は pnpm の package/dlx または npm の `npx --yes --package` を使います。通常のローカル CLI とは独立して更新されるため、beta のバージョン差が生じる可能性があります。未キャッシュの版にはネットワークが必要です。オフライン・再現性が必要な場合は `.mcp.json` 内の `SWALLOWKIT_MCP_VERSION` を指定して事前にキャッシュするか、ローカル machine CLI を使います。npm project の MCP に pnpm は不要です。
 
@@ -39,7 +39,9 @@ pnpm の `dlx`／`create` にも、親 project を含む release-age・trust pol
 
 ## pnpm プロジェクトの SWA デプロイ
 
-ローカル開発では pnpm を使います。SWA の生成ワークフローは、Azure のビルド環境に合わせて CI 内のファイルだけを npm 用に変換します。ローカルの `package.json` や `pnpm-lock.yaml` を変更する必要はありません。Functions の CI は選択したパッケージマネージャーを使います。
+React 構成では、選択したパッケージマネージャーで SPA とマネージド BFF をビルドし、`skip_app_build` と `skip_api_build` を指定して成果物をデプロイします。Oryx は使わず、npm 用の変換も行いません。
+
+Next.js 構成のローカル開発では pnpm を使います。SWA の生成ワークフローは、Azure のビルド環境に合わせて CI 内のファイルだけを npm 用に変換します。ローカルの `package.json` や `pnpm-lock.yaml` を変更する必要はありません。Functions の CI は選択したパッケージマネージャーを使います。
 
 SWA の Node.js は、CI 内の `package.json` の `engines.node` で `>=22.14.0 <23` に制限します。`actions/setup-node` の指定は GitHub runner 用で、SWA 内の Node.js 選択とは別です。[Azure のビルド設定](https://learn.microsoft.com/en-us/azure/static-web-apps/build-configuration#custom-build-commands)を参照してください。
 
