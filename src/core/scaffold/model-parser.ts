@@ -503,7 +503,8 @@ function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] |
     if (current !== undefined && current > value) return field;
     const constraints: FieldConstraints = { ...(field.constraints ?? {}), [key]: value };
     if (key === "minimum") {
-      if (exclusive) constraints.exclusiveMinimum = true;
+      // An equal bound stays exclusive if either check was exclusive (gt(0).min(0) still rejects 0).
+      if (exclusive || (current === value && field.constraints?.exclusiveMinimum)) constraints.exclusiveMinimum = true;
       else delete constraints.exclusiveMinimum;
     }
     return { ...field, constraints };
@@ -514,7 +515,7 @@ function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] |
     if (current !== undefined && current < value) return field;
     const constraints: FieldConstraints = { ...(field.constraints ?? {}), [key]: value };
     if (key === "maximum") {
-      if (exclusive) constraints.exclusiveMaximum = true;
+      if (exclusive || (current === value && field.constraints?.exclusiveMaximum)) constraints.exclusiveMaximum = true;
       else delete constraints.exclusiveMaximum;
     }
     return { ...field, constraints };
@@ -696,13 +697,15 @@ const v3Name = (s) => (s && s._def && s._def.typeName) || '';
 
 function lower(c, key, value, exclusive) {
   if (typeof value !== 'number' || (c[key] !== undefined && c[key] > value)) return;
+  const keepExclusive = c[key] === value && c.exclusiveMinimum;
   c[key] = value;
-  if (key === 'minimum') { if (exclusive) c.exclusiveMinimum = true; else delete c.exclusiveMinimum; }
+  if (key === 'minimum') { if (exclusive || keepExclusive) c.exclusiveMinimum = true; else delete c.exclusiveMinimum; }
 }
 function upper(c, key, value, exclusive) {
   if (typeof value !== 'number' || (c[key] !== undefined && c[key] < value)) return;
+  const keepExclusive = c[key] === value && c.exclusiveMaximum;
   c[key] = value;
-  if (key === 'maximum') { if (exclusive) c.exclusiveMaximum = true; else delete c.exclusiveMaximum; }
+  if (key === 'maximum') { if (exclusive || keepExclusive) c.exclusiveMaximum = true; else delete c.exclusiveMaximum; }
 }
 
 function unwrap(s, info) {

@@ -4,7 +4,9 @@ import * as path from "path";
 import { parseModelFile } from "../core/scaffold/model-parser";
 import { generateOpenApiDocument } from "../core/scaffold/openapi-generator";
 import { generateListPage, generateFormComponent } from "../core/scaffold/ui-generator";
-import { generateLanguageSchemaArtifacts } from "../core/scaffold/native-schema-generator";
+import { generateLanguageSchemaArtifacts, getPythonRegexWarnings, toPythonRegex } from "../core/scaffold/native-schema-generator";
+import { generateDetailPage } from "../core/scaffold/ui-generator";
+import { spawnSync } from "child_process";
 import { FileOperationSession } from "../core/operations/file-session";
 import { buildUserScopedDataWarning } from "../cli/commands/scaffold";
 import { inspectCapabilities } from "../core/project/capabilities";
@@ -78,6 +80,26 @@ describe("foreign-key inference", () => {
     ]);
   });
 
+  it("declares one lookup per referenced model when several fields reference it", async () => {
+    write("user", model("user", "  name: z.string(),"));
+    const info = await parseModelFile(write("review", model(
+      "review",
+      "  authorId: z.string(),\n  reviewerId: z.string(),",
+      "export const references = { authorId: 'User', reviewerId: 'User' };\n"
+    )));
+    const count = (source: string, text: string) => source.split(text).length - 1;
+    for (const source of [generateListPage(info, "@sample/shared"), generateDetailPage(info, "@sample/shared")]) {
+      expect(count(source, "const [userMap, setUserMap]")).toBe(1);
+      expect(count(source, "fetch('/api/user')")).toBe(1);
+      expect(source).toContain("userMap[item.authorId]".replace("item", source.includes("ListPage") ? "item" : "review"));
+    }
+    const form = generateFormComponent(info, "@sample/shared");
+    expect(count(form, "const [userOptions, setUserOptions]")).toBe(1);
+    expect(count(form, "fetch('/api/user')")).toBe(1);
+    expect(form).toContain('id="authorId"');
+    expect(form).toContain('id="reviewerId"');
+  });
+
   it("documents the references declaration in capabilities", () => {
     expect(inspectCapabilities().modelDeclarations.map((declaration) => declaration.name)).toContain("references");
   });
@@ -103,6 +125,7 @@ describe("dynamic schema evaluation metadata", () => {
       "  code: z.string().regex(/^a\\d$/i),",
       "  tags: z.array(z.string().min(2)).min(1),",
       "  score: z.number().gt(0).lte(1),",
+      "  edge: z.number().gt(0).min(0).lt(1).max(1),",
       "  count: z.int(),",
       "  publishedAt: z.iso.datetime().optional(),",
       "  createdAt: z.string().optional(),",
@@ -117,6 +140,7 @@ describe("dynamic schema evaluation metadata", () => {
     expect(field("code").constraints).toEqual({ pattern: "^a\\d$", patternFlags: "i" });
     expect(field("tags")).toMatchObject({ isArray: true, constraints: { minLength: 2, minItems: 1 } });
     expect(field("score").constraints).toEqual({ minimum: 0, exclusiveMinimum: true, maximum: 1 });
+    expect(field("edge").constraints).toEqual({ minimum: 0, exclusiveMinimum: true, maximum: 1, exclusiveMaximum: true });
     expect(field("count").isInteger).toBe(true);
     expect(field("publishedAt")).toMatchObject({ format: "date-time", isOptional: true });
     expect(field("createdAt").format).toBeUndefined();
@@ -186,6 +210,97 @@ describe("Python schema assets", () => {
     expect(source).toContain("return self.model_dump_json(by_alias=True, exclude_none=True)");
     expect(fs.readFileSync(path.join(modelsDir, "probe_item_nested.py"), "utf8")).toContain("class ProbeItemNested(BaseModel):");
   });
+});
+
+describe("Python regex translation", () => {
+  it("translates JavaScript named groups and back-references", () => {
+    expect(toPythonRegex("^(?<code>[A-Z]+)-\\k<code>$")).toEqual({ pattern: "^(?P<code>[A-Z]+)-(?P=code)$" });
+    expect(toPythonRegex("^a\\d$", "i")).toEqual({ pattern: "^a\\d$" });
+  });
+
+  it.each([
+    ["\\p{L}+", "", /Unicode property/],
+    ["(?<=a)b", "", /lookbehind/],
+    ["[^]", "", /empty character classes/],
+    ["\\u{1F600}", "u", /flag\(s\) u|code point/],
+    ["abc", "y", /flag\(s\) y/],
+  ])("reports %s /%s as not enforceable", (pattern, flags, reason) => {
+    const result = toPythonRegex(pattern, flags);
+    expect("unsupported" in result && result.unsupported).toMatch(reason);
+  });
+
+  it("skips unenforceable patterns with a warning and validates raw strings before conversion", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-python-regex-"));
+    const originalCwd = process.cwd();
+    try {
+      const file = path.join(root, "shared", "models", "regex-item.ts");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, model("regex-item", [
+        "  code: z.string().regex(/^(?<code>[A-Z]+)$/),",
+        "  letters: z.string().regex(/^\\p{L}+$/u),",
+        "  when: z.string().datetime().regex(/Z$/),",
+      ].join("\n")));
+      const info = await parseModelFile(file);
+      expect(getPythonRegexWarnings(info)).toEqual([
+        expect.stringMatching(/^python-regex-not-enforced: RegexItem\.letters uses Unicode property escapes/),
+      ]);
+      process.chdir(root);
+      const session = new FileOperationSession("commit", root);
+      await generateLanguageSchemaArtifacts([info], info, "functions", "python", session);
+      expect(session.warnings).toEqual(getPythonRegexWarnings(info));
+      const source = fs.readFileSync(path.join(root, "functions", "generated", "python-models", "backend_models", "models", "regex_item.py"), "utf8");
+      expect(source).toContain('re.search("^(?P<code>[A-Z]+)$", item, 0)');
+      expect(source).not.toContain("letters_validate_pattern");
+      expect(source).toContain("@field_validator('when', mode='before')");
+      expect(source).toContain("if isinstance(item, str) and not re.search");
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+const pydanticPython = ["python", "python3"].find((command) => spawnSync(command, ["-c", "import pydantic"], { stdio: "ignore" }).status === 0);
+const itWithPydantic = pydanticPython ? it : it.skip;
+
+describe("generated Python model runtime", () => {
+  itWithPydantic("accepts valid regex and timestamp values and rejects invalid ones", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-python-runtime-"));
+    const originalCwd = process.cwd();
+    try {
+      const file = path.join(root, "shared", "models", "regex-item.ts");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, model("regex-item", [
+        "  code: z.string().regex(/^(?<code>[A-Z]+)$/),",
+        "  when: z.iso.datetime().regex(/Z$/),",
+        "  tags: z.array(z.string().regex(/^t/)),",
+      ].join("\n")));
+      const info = await parseModelFile(file);
+      process.chdir(root);
+      await generateLanguageSchemaArtifacts([info], info, "functions", "python", new FileOperationSession("commit", root));
+      process.chdir(originalCwd);
+      const script = [
+        "import sys",
+        "sys.path.insert(0, 'generated/python-models')",
+        "from backend_models.models.regex_item import RegexItem",
+        "ok = {'id': '1', 'code': 'ABC', 'when': '2024-05-06T07:08:09Z', 'tags': ['t1']}",
+        "RegexItem.from_dict(ok)",
+        "for bad in ({**ok, 'code': 'abc'}, {**ok, 'when': '2024-05-06T07:08:09+09:00'}, {**ok, 'tags': ['x']}):",
+        "    try:",
+        "        RegexItem.from_dict(bad)",
+        "    except ValueError:",
+        "        continue",
+        "    raise SystemExit('accepted ' + repr(bad))",
+        "print('ok')",
+      ].join("\n");
+      const run = spawnSync(pydanticPython!, ["-c", script], { cwd: path.join(root, "functions"), encoding: "utf8" });
+      if (run.status !== 0) throw new Error(`${run.stdout}\n${run.stderr}`);
+      expect(run.stdout.trim()).toBe("ok");
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 60000);
 });
 
 describe("user-scoped data warning", () => {

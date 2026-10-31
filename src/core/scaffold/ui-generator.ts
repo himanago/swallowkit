@@ -18,6 +18,16 @@ export interface UIAuthOptions {
 /**
  * 認証付きCRUDルートを、ページ側のuseAuthと同じAuthProviderで囲むレイアウトを生成する。
  */
+/** Lookup state and fetches are per referenced model; several fields may reference the same model. */
+function uniqueByReferencedModel(fields: FieldInfo[]): FieldInfo[] {
+  const seen = new Set<string>();
+  return fields.filter((field) => {
+    if (!field.referencedModel || seen.has(field.referencedModel)) return false;
+    seen.add(field.referencedModel);
+    return true;
+  });
+}
+
 /** Untyped or inline z.object fields (not references to another model) are edited and shown as JSON. */
 function isJsonField(f: FieldInfo): boolean {
   return f.type === "object" && !f.isNestedSchema;
@@ -64,14 +74,14 @@ export function generateListPage(model: ModelInfo, sharedPackageName: string, au
   const hasForeignKeys = foreignKeyFields.length > 0;
   
   // 外部キー用のstate定義を生成
-  const foreignKeyStates = foreignKeyFields.map(f => {
+  const foreignKeyStates = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
     const refModelCamel = toCamelCase(refModel);
     return `  const [${refModelCamel}Map, set${refModel}Map] = useState<Record<string, string>>({});`;
   }).join('\n');
   
   // 外部キーデータのフェッチロジックを生成
-  const foreignKeyFetches = foreignKeyFields.map(f => {
+  const foreignKeyFetches = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
     const refModelCamel = toCamelCase(refModel);
     return `    fetch('/api/${refModelCamel}')
@@ -314,14 +324,14 @@ export function generateDetailPage(model: ModelInfo, sharedPackageName: string, 
   const hasForeignKeys = foreignKeyFields.length > 0;
   
   // 外部キー用のstate定義を生成
-  const foreignKeyStates = foreignKeyFields.map(f => {
+  const foreignKeyStates = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
     const refModelCamel = toCamelCase(refModel);
     return `  const [${refModelCamel}Map, set${refModel}Map] = useState<Record<string, string>>({});`;
   }).join('\n');
   
   // 外部キーデータのフェッチロジックを生成
-  const foreignKeyFetches = foreignKeyFields.map(f => {
+  const foreignKeyFetches = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
     const refModelCamel = toCamelCase(refModel);
     return `    fetch('/api/${refModelCamel}')
@@ -587,7 +597,7 @@ export default function ${modelName}Form({ initialData, isEdit = false }: ${mode
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-${hasForignKeys ? foreignKeyFields.map(f => `  const [${toCamelCase(f.referencedModel!)}Options, set${f.referencedModel}Options] = useState<Array<{ id: string; name: string }>>([]);`).join('\n') : ''}
+${hasForignKeys ? uniqueByReferencedModel(foreignKeyFields).map(f => `  const [${toCamelCase(f.referencedModel!)}Options, set${f.referencedModel}Options] = useState<Array<{ id: string; name: string }>>([]);`).join('\n') : ''}
 ${hasNestedSchemas ? nestedSchemaStates : ''}
   
   const [formData, setFormData] = useState({
@@ -631,7 +641,7 @@ ${formFields.map(f => {
 ${needsUseEffect ? `
   // 参照データの選択肢を取得
   useEffect(() => {
-${hasForignKeys ? foreignKeyFields.map(f => `    // ${f.referencedModel} の一覧を取得
+${hasForignKeys ? uniqueByReferencedModel(foreignKeyFields).map(f => `    // ${f.referencedModel} の一覧を取得
     fetch('/api/${toKebabCase(f.referencedModel!)}')
       .then(res => res.json())
       .then(data => set${f.referencedModel}Options(data.map((item: Record<string, string>) => ({ id: item.id, name: item.name || item.title || item.id }))))

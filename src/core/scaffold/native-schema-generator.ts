@@ -225,16 +225,17 @@ export function getPythonNativeGeneratorArgs(specPath: string, outputPath: strin
 }
 
 function getCSharpFieldBaseType(field: ModelInfo["fields"][number]): string {
+  // Arrays first: arrays of nested models or enums are lists of the element type.
+  if (field.isArray) {
+    return `List<${getCSharpArrayElementType(field)}>`;
+  }
+
   if (field.isNestedSchema && field.nestedModelName) {
     return field.nestedModelName;
   }
 
   if (field.enumValues?.length) {
     return `${toPascalIdentifier(field.name)}Enum`;
-  }
-
-  if (field.isArray) {
-    return `List<${getCSharpArrayElementType(field)}>`;
   }
 
   return getCSharpScalarType(field);
@@ -254,7 +255,7 @@ function getCSharpArrayElementType(field: ModelInfo["fields"][number]): string {
 
 function getCSharpPropertyType(field: ModelInfo["fields"][number]): string {
   const baseType = getCSharpFieldBaseType(field);
-  return field.isOptional ? `${baseType}?` : baseType;
+  return field.isOptional || field.isNullable ? `${baseType}?` : baseType;
 }
 
 function getCSharpOptionType(field: ModelInfo["fields"][number]): string {
@@ -358,7 +359,7 @@ function buildCSharpValueChecks(
   if (field.isNestedSchema && field.nestedModelName) {
     // Pattern variables in an if condition stay in scope for the enclosing block, so keep names unique.
     const variable = `validated${toPascalIdentifier(field.name)}${accessor === "item" ? "Item" : ""}`;
-    checks.push(`if (${accessor} is IValidatableObject ${variable})\n                foreach (var ${variable}Result in ${variable}.Validate(new ValidationContext(${accessor})))\n                    yield return new ValidationResult(${variable}Result.ErrorMessage, ${variable}Result.MemberNames.Select(name => ${member} + "." + name));`);
+    checks.push(`if (${accessor} is IValidatableObject ${variable})\n                foreach (var ${variable}Result in ${variable}.Validate(new ValidationContext(${accessor})))\n                    yield return new ValidationResult(${variable}Result.ErrorMessage, ${variable}Result.MemberNames.Select(name => ${member} + "." + name).ToArray());`);
     return checks;
   }
   if (field.enumValues?.length) return checks;
@@ -396,7 +397,8 @@ function buildCSharpValidationBody(model: ModelInfo): string {
     const member = csharpStringLiteral(field.name);
     const constraints = field.constraints ?? {};
 
-    if (!field.isOptional && isCSharpReferenceType(field)) {
+    // .nullable() fields accept null in Zod, so only non-nullable required references are rejected.
+    if (!field.isOptional && !field.isNullable && isCSharpReferenceType(field)) {
       blocks.push(`if (${propertyName} is null)\n                yield return new ValidationResult(${csharpStringLiteral(`${field.name} is required.`)}, new[] { ${member} });`);
     }
 
@@ -419,7 +421,7 @@ function buildCSharpValidationBody(model: ModelInfo): string {
       continue;
     }
 
-    const optionalValue = field.isOptional && !isCSharpReferenceType(field);
+    const optionalValue = (field.isOptional || field.isNullable === true) && !isCSharpReferenceType(field);
     blocks.push(...buildCSharpValueChecks(field, propertyName, member, optionalValue));
   }
 
@@ -433,7 +435,7 @@ function generateLegacyCompatibleCSharpModelSource(model: ModelInfo): string {
   const optionalFields = model.fields.filter((field) => field.isOptional);
 
   const constructorParams = [
-    ...requiredFields.map((field) => `${getCSharpFieldBaseType(field)} ${field.name}`),
+    ...requiredFields.map((field) => `${getCSharpPropertyType(field)} ${field.name}`),
     ...optionalFields.map((field) => `${getCSharpOptionType(field)} ${field.name} = default`),
   ].join(", ");
 
@@ -564,12 +566,12 @@ namespace SwallowKitBackendModels.Model
             OnCreated();
         }
 #pragma warning restore CS8618
-
+${constructorParams ? `
         public ${model.name}(${constructorParams})
         {
 ${constructorAssignments}
         }
-
+` : ""}
         partial void OnCreated();
 ${enumBlocks ? `\n\n${enumBlocks}` : ""}
 
@@ -676,24 +678,66 @@ function buildPythonRegexFlags(flags: string | undefined): string {
   return values.length > 0 ? values.join(" | ") : "0";
 }
 
-/** Zod regex checks use RegExp.test (search), so validators use re.search instead of pydantic's anchored pattern. */
-function buildPythonPatternValidators(model: ModelInfo): string {
+export type PythonRegexTranslation = { pattern: string } | { unsupported: string };
+
+/**
+ * Translates a JavaScript regex (as used by Zod) to Python `re` syntax. Constructs Python cannot
+ * express identically are reported as unsupported so the validator is skipped instead of breaking imports.
+ */
+export function toPythonRegex(pattern: string, flags = ""): PythonRegexTranslation {
+  const unsupportedFlags = [...flags].filter((flag) => !"imsgu".includes(flag));
+  if (unsupportedFlags.length > 0) return { unsupported: `flag(s) ${unsupportedFlags.join("")} have no Python equivalent` };
+  const checks: Array<[RegExp, string]> = [
+    [/\\[pP]\{/, "Unicode property escapes (\\p{...})"],
+    [/\\u\{/, "code point escapes (\\u{...})"],
+    [/\\c[A-Za-z]/, "control escapes (\\cX)"],
+    [/\(\?<[=!]/, "lookbehind (JavaScript allows variable width; Python does not)"],
+    [/\[\^?\]/, "empty character classes ([] / [^])"],
+  ];
+  for (const [construct, label] of checks) {
+    if (construct.test(pattern)) return { unsupported: label };
+  }
+  return {
+    pattern: pattern
+      .replace(/\(\?<([A-Za-z_][A-Za-z0-9_]*)>/g, "(?P<$1>")
+      .replace(/\\k<([A-Za-z_][A-Za-z0-9_]*)>/g, "(?P=$1)"),
+  };
+}
+
+function pythonRegexFields(model: ModelInfo): Array<{ field: ModelInfo["fields"][number]; translation: PythonRegexTranslation }> {
   return model.fields
     .filter((field) => field.type === "string" && !field.enumValues?.length && field.constraints?.pattern !== undefined)
-    .map((field) => {
+    .map((field) => ({ field, translation: toPythonRegex(field.constraints!.pattern!, field.constraints!.patternFlags) }));
+}
+
+export function getPythonRegexWarnings(model: ModelInfo): string[] {
+  return pythonRegexFields(model)
+    .filter((entry): entry is { field: ModelInfo["fields"][number]; translation: { unsupported: string } } => "unsupported" in entry.translation)
+    .map(({ field, translation }) =>
+      `python-regex-not-enforced: ${model.name}.${field.name} uses ${translation.unsupported}; the Python model does not enforce /${field.constraints!.pattern}/. The BFF Zod schema still validates it.`);
+}
+
+/**
+ * Zod regex checks use RegExp.test (search), so validators use re.search instead of pydantic's anchored pattern.
+ * They run before type conversion so date/time strings are checked as the JSON text Zod sees; non-string
+ * values are left to the field's own type validation.
+ */
+function buildPythonPatternValidators(model: ModelInfo): string {
+  return pythonRegexFields(model)
+    .filter((entry): entry is { field: ModelInfo["fields"][number]; translation: { pattern: string } } => "pattern" in entry.translation)
+    .map(({ field, translation }) => {
       const pythonName = toSnakeCase(field.name);
-      const pattern = JSON.stringify(field.constraints!.pattern);
+      const pattern = JSON.stringify(translation.pattern);
       const flags = buildPythonRegexFlags(field.constraints!.patternFlags);
       const message = JSON.stringify(`${field.name} must match /${field.constraints!.pattern}/${field.constraints!.patternFlags ?? ""}`);
-      const check = `re.search(${pattern}, item, ${flags})`;
-      return `    @field_validator('${pythonName}')
+      return `    @field_validator('${pythonName}', mode='before')
     def ${pythonName}_validate_pattern(cls, value):
         """Validates the Zod regex constraint"""
         if value is None:
             return value
 
         for item in (value if isinstance(value, list) else [value]):
-            if not ${check}:
+            if isinstance(item, str) and not re.search(${pattern}, item, ${flags}):
                 raise ValueError(${message})
         return value`;
     })
@@ -1055,6 +1099,10 @@ async function generatePythonSchemaArtifacts(
   );
 
   for (const model of models) {
+    for (const warning of getPythonRegexWarnings(model)) {
+      session.addWarning(warning);
+      console.warn(`⚠️  ${warning}`);
+    }
     const modelPath = getPythonSchemaModelPath(outputDir, model.name);
     session.writeFile(modelPath, generateLegacyCompatiblePythonModelSource(model), {
       ownership: "managed",

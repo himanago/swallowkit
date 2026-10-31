@@ -20,6 +20,11 @@ export const ProbeItem = z.object({
   kind: z.enum(['a', 'b']),
   nested: z.object({ x: z.string(), depth: z.object({ level: z.number().int() }).optional() }).optional(),
   publishedAt: z.iso.datetime().optional(),
+  note: z.string().nullable(),
+  rating: z.number().gt(0).min(0).lt(5).max(5).nullable(),
+  items: z.array(z.object({ x: z.string().min(1) })).optional(),
+  kinds: z.array(z.enum(['a', 'b'])).optional(),
+  metadata: z.object({}).optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
@@ -40,6 +45,11 @@ const ProbeItem = z.object({
   kind: z.enum(["a", "b"]),
   nested: z.object({ x: z.string(), depth: z.object({ level: z.number().int() }).optional() }).optional(),
   publishedAt: z.iso.datetime().optional(),
+  note: z.string().nullable(),
+  rating: z.number().gt(0).min(0).lt(5).max(5).nullable(),
+  items: z.array(z.object({ x: z.string().min(1) })).optional(),
+  kinds: z.array(z.enum(["a", "b"])).optional(),
+  metadata: z.object({}).optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
@@ -56,10 +66,15 @@ const VALID_INPUTS = [
     kind: "b",
     nested: { x: "value", depth: { level: 2 } },
     publishedAt: "2024-05-06T07:08:09.123Z",
+    note: "note",
+    rating: 2.5,
+    items: [{ x: "a" }, { x: "b" }],
+    kinds: ["a", "b"],
+    metadata: {},
     createdAt: "2024-05-06T07:08:09.123456+09:00",
     updatedAt: "not a timestamp but still a string",
   },
-  { id: "2", userId: "user-2", title: "Minimal", tags: [], score: 1, count: 0, kind: "a" },
+  { id: "2", userId: "user-2", title: "Minimal", tags: [], score: 1, count: 0, kind: "a", note: null, rating: null },
 ];
 
 const INVALID_INPUTS: Array<{ input: Record<string, unknown>; members: string[] }> = [
@@ -71,6 +86,9 @@ const INVALID_INPUTS: Array<{ input: Record<string, unknown>; members: string[] 
   { input: { ...VALID_INPUTS[1], score: 1.5 }, members: ["score"] },
   { input: { ...VALID_INPUTS[1], count: -1 }, members: ["count"] },
   { input: { ...VALID_INPUTS[1], nested: { depth: { level: 1 } } }, members: ["nested.x"] },
+  { input: { ...VALID_INPUTS[1], rating: 0 }, members: ["rating"] },
+  { input: { ...VALID_INPUTS[1], rating: 5 }, members: ["rating"] },
+  { input: { ...VALID_INPUTS[1], items: [{ x: "ok" }, { x: "" }] }, members: ["items[1].x"] },
 ];
 
 function createModel(): { root: string; modelPath: string } {
@@ -110,6 +128,11 @@ describe("Zod -> OpenAPI -> C# conversion", () => {
     expect(field("count")).toMatchObject({ isInteger: true, constraints: { minimum: 0 } });
     expect(field("nested").objectFields?.map((child) => child.name)).toEqual(["x", "depth"]);
     expect(field("nested").objectFields?.[1].objectFields?.[0]).toMatchObject({ name: "level", isInteger: true });
+    expect(field("rating")).toMatchObject({
+      isNullable: true,
+      constraints: { minimum: 0, exclusiveMinimum: true, maximum: 5, exclusiveMaximum: true },
+    });
+    expect(field("metadata").objectFields).toEqual([]);
   });
 
   it("emits typed OpenAPI components without guessing formats from names", async () => {
@@ -152,6 +175,14 @@ describe("Zod -> OpenAPI -> C# conversion", () => {
     expect(source).toContain("Count < 0");
     expect(fs.readFileSync(path.join(modelDir, "ProbeItemNested.cs"), "utf8")).toContain("public ProbeItemNestedDepth? Depth");
     expect(fs.readFileSync(path.join(modelDir, "ProbeItemNestedDepth.cs"), "utf8")).toContain("public long Level");
+    expect(source).toContain("public string? Note");
+    expect(source).not.toContain("if (Note is null)");
+    expect(source).toContain("public double? Rating");
+    expect(source).toContain("Rating.HasValue && Rating.Value <= 0");
+    expect(source).toContain("public List<ProbeItemItems>? Items");
+    expect(source).toContain("public List<KindsEnum>? Kinds");
+    const metadata = fs.readFileSync(path.join(modelDir, "ProbeItemMetadata.cs"), "utf8");
+    expect(metadata.match(/public ProbeItemMetadata\(\)/g)).toHaveLength(1);
   });
 });
 
