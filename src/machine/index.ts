@@ -274,7 +274,8 @@ function createMachineProgram(): Command {
     .option("--functions-dir <dir>", "Functions directory", "functions")
     .option("--api-dir <dir>", "BFF routes directory (Next.js: app/api; React: bff)")
     .option("--api-only", "Skip UI components; still update Functions, BFF routes, OpenAPI, and native schema assets", false)
-    .action(async (model: string, options: { functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
+    .option("--skip-infra", "Do not create or update anything under infra/ (container migration is reported as pending)", false)
+    .action(async (model: string, options: { functionsDir?: string; apiDir?: string; apiOnly?: boolean; skipInfra?: boolean }) => {
       await handleMachineAction("generate-scaffold", async () => {
         ensureProjectForMachine();
         return runMachineScaffoldOperation({
@@ -282,6 +283,7 @@ function createMachineProgram(): Command {
         functionsDir: options.functionsDir,
         apiDir: options.apiDir,
         apiOnly: options.apiOnly,
+        skipInfra: options.skipInfra,
       });
       });
     });
@@ -294,7 +296,8 @@ function createMachineProgram(): Command {
     .option("--functions-dir <dir>", "Functions directory", "functions")
     .option("--api-dir <dir>", "BFF routes directory (Next.js: app/api; React: bff)")
     .option("--api-only", "Skip UI components in the plan", false)
-    .action(async (models: string[], options: { functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
+    .option("--skip-infra", "Exclude all infra/ changes (container migration) from the plan", false)
+    .action(async (models: string[], options: { functionsDir?: string; apiDir?: string; apiOnly?: boolean; skipInfra?: boolean }) => {
       await handleMachineAction(
         "plan-scaffold",
         async () => {
@@ -307,6 +310,7 @@ function createMachineProgram(): Command {
                 functionsDir: options.functionsDir,
                 apiDir: options.apiDir,
                 apiOnly: options.apiOnly,
+                skipInfra: options.skipInfra,
               })
             );
           }
@@ -316,12 +320,20 @@ function createMachineProgram(): Command {
           const plans = "plans" in data ? data.plans : [data];
           return {
             status: plans.some((planData) => planData.requiresApproval) ? "requires-human" : "complete",
-            nextActions: plans.map((planData) => ({
-              command: `swallowkit machine apply scaffold --plan ${planData.planId}${planData.requiresApproval ? " --approve" : ""}`,
-              description: planData.requiresApproval
-                ? `Apply the plan for ${planData.model} after reviewing the listed conflicts (requires --approve).`
-                : `Apply the plan for ${planData.model}.`,
-            })),
+            nextActions: [
+              ...plans.map((planData) => ({
+                command: `swallowkit machine apply scaffold --plan ${planData.planId}${planData.requiresApproval ? " --approve" : ""}`,
+                description: planData.requiresApproval
+                  ? `Apply the plan for ${planData.model} after reviewing the listed conflicts (requires --approve).`
+                  : `Apply the plan for ${planData.model}.`,
+              })),
+              ...plans
+                .filter((planData) => planData.warnings.some((warning) => warning.startsWith("infra-skipped:")))
+                .map((planData) => ({
+                  command: `swallowkit migrations add-model ${planData.model}`,
+                  description: `Later, when infrastructure changes are allowed, generate only the Cosmos DB container migration for ${planData.model}.`,
+                })),
+            ],
           };
         }
       );
@@ -408,10 +420,11 @@ function createMachineProgram(): Command {
     .option("--functions-dir <dir>", "Functions directory")
     .option("--api-dir <dir>", "API routes directory")
     .option("--api-only", "Skip UI components; still update Functions, BFF routes, OpenAPI, and native schema assets")
+    .option("--skip-infra", "Do not create or update anything under infra/ (container migration is reported as pending)")
     .action(
       async (
         models: string[],
-        options: { plan?: string; approve?: boolean; functionsDir?: string; apiDir?: string; apiOnly?: boolean }
+        options: { plan?: string; approve?: boolean; functionsDir?: string; apiDir?: string; apiOnly?: boolean; skipInfra?: boolean }
       ) => {
         await handleMachineAction(
           "apply-scaffold",
@@ -433,6 +446,7 @@ function createMachineProgram(): Command {
                 functionsDir: options.functionsDir,
                 apiDir: options.apiDir,
                 apiOnly: options.apiOnly,
+                skipInfra: options.skipInfra,
               });
             }
             const results = [];
@@ -444,20 +458,30 @@ function createMachineProgram(): Command {
                   functionsDir: options.functionsDir,
                   apiDir: options.apiDir,
                   apiOnly: options.apiOnly,
+                  skipInfra: options.skipInfra,
                 })
               );
             }
             return { applyType: "scaffold-batch" as const, results };
           },
-          () => ({
-            status: "complete",
-            nextActions: [
-              {
-                command: "swallowkit machine verify project",
-                description: "Verify the project after applying scaffold changes.",
-              },
-            ],
-          })
+          (data) => {
+            const results = "results" in data ? data.results : [data];
+            return {
+              status: "complete",
+              nextActions: [
+                {
+                  command: "swallowkit machine verify project",
+                  description: "Verify the project after applying scaffold changes.",
+                },
+                ...results
+                  .filter((result) => result.warnings.some((warning) => warning.startsWith("infra-skipped:")))
+                  .map((result) => ({
+                    command: `swallowkit migrations add-model ${result.model}`,
+                    description: `The Cosmos DB container migration for ${result.model} is still pending; generate it when infrastructure changes are allowed.`,
+                  })),
+              ],
+            };
+          }
         );
       }
     );

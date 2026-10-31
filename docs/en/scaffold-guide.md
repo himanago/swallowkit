@@ -330,13 +330,53 @@ SwallowKit automatically reads the referenced schema file and detects the displa
 3. `label` field
 4. Default: `name`
 
+## Scaffolding Without Infrastructure Changes
+
+Use `--skip-infra` when a task must not change Bicep or other infrastructure:
+
+```bash
+npx swallowkit machine plan scaffold probe-item --skip-infra
+npx swallowkit machine apply scaffold --plan <planId>
+```
+
+Nothing under `infra/` changes. The plan includes an `infra-skipped` warning and a `nextActions` entry. `inspect drift` and `verify project` do not treat the missing container migration as an error. Generate it later with `swallowkit migrations add-model probe-item`, or plan scaffold again without `--skip-infra`.
+
+## Per-User Data Warning
+
+Generated CRUD does not scope documents to the authenticated principal. When a model looks per-user (for example `partitionKey = '/userId'`, or a `learnerId` / `ownerId` field) and authentication is not configured, `plan scaffold` reports `user-scoped-data-without-auth`. Add authentication with `plan auth`, restrict or remove generated write endpoints, and implement owner-scoped endpoints that take the owner id from the verified principal rather than the request body.
+
+## Native Backend Schema Types (C# / Python)
+
+C# and Python schema assets are derived from Zod through OpenAPI. Types come from the Zod definition, never from field names:
+
+| Zod | OpenAPI | C# | Python |
+| --- | --- | --- | --- |
+| `z.string()` (including `createdAt` / `updatedAt`) | `string` | `string` | `StrictStr` |
+| `z.iso.datetime()` / `z.string().datetime()` | `string`, `date-time` | `DateTime` | `datetime` |
+| `z.iso.date()` | `string`, `date` | `DateOnly` | `date` |
+| `z.number()` | `number`, `double` | `double` | `float \| int` |
+| `z.number().int()` / `z.int()` | `integer`, `int64` | `long` | `StrictInt` |
+| inline `z.object({...})` | named component | class `<Model><Field>` (e.g. `ProbeItemNested`) | class `<Model><Field>` |
+
+`min`, `max`, `length`, `nonempty`, `regex`, `gt`/`gte`/`lt`/`lte`, `positive`/`nonnegative`, `int`, and array `min`/`max` are enforced by the C# `IValidatableObject.Validate` implementation and by Python field bounds and validators. Regexes use search semantics like Zod's `RegExp.test`. String formats (email, uuid, url), refinements, and transforms are not re-implemented natively; the BFF Zod schemas remain the authoritative validation. Generated C# models round-trip JSON with System.Text.Json: absent optional values stay absent and enums use their Zod values.
+
+After upgrading SwallowKit, `inspect drift` may report `schema-drift` once for models whose constraints are now recorded. Plan and apply scaffold to regenerate.
+
 ## Foreign Key Relationships
 
-SwallowKit automatically detects foreign key relationships using a naming convention pattern.
+SwallowKit detects foreign key relationships using a naming convention, but only for models that exist.
 
 ### Convention
 
-Any field ending with `Id` and having `string` type is treated as a foreign key:
+A `string` field ending with `Id` is treated as a foreign key **only when the referenced model exists in `shared/models`**. For example, `userId` is a plain field unless `shared/models/user.ts` exists, so no lookup UI or `/api/user` request is generated for it.
+
+Declare other relationships explicitly, or opt out of inference:
+
+```typescript
+export const references = { authorId: 'User', legacyId: false };
+```
+
+References to models that do not exist are ignored with a `reference-model-not-found` warning.
 
 ```typescript
 // Field name: categoryId -> References: Category model
@@ -859,9 +899,9 @@ If you see "Failed to parse model file", ensure:
 ### Foreign Key Not Detected
 
 Check that:
-- Field name ends with `Id` (case-sensitive)
+- Field name ends with `Id` (case-sensitive), or the field is declared in `references`
 - Field type is `z.string()`
-- Referenced model exists and has been scaffolded
+- The referenced model file exists in `shared/models` and has been scaffolded
 
 ### Missing Display Names
 

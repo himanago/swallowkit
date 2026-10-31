@@ -330,13 +330,53 @@ SwallowKit は参照先スキーマのファイルを自動的に読み取り、
 3. `label` フィールド
 4. デフォルト: `name`
 
+## インフラを変更せずに scaffold する
+
+Bicep などのインフラを変更できないタスクでは `--skip-infra` を使います。
+
+```bash
+npx swallowkit machine plan scaffold probe-item --skip-infra
+npx swallowkit machine apply scaffold --plan <planId>
+```
+
+`infra/` 配下は一切変更されません。plan には `infra-skipped` の警告と `nextActions` が含まれます。`inspect drift` と `verify project` は、コンテナー用 migration が未生成であることをエラーとして扱いません。後から `swallowkit migrations add-model probe-item` で migration だけを生成するか、`--skip-infra` なしで plan し直してください。
+
+## ユーザー単位のデータに関する警告
+
+生成 CRUD は、データを認証ユーザーの範囲に絞り込みません。モデルがユーザー単位に見える場合（例：`partitionKey = '/userId'`、`learnerId` や `ownerId` フィールド）に認証が未設定だと、`plan scaffold` は `user-scoped-data-without-auth` を報告します。`plan auth` で認証を追加し、生成された書き込み API を制限または削除したうえで、所有者 ID をリクエスト本文ではなく検証済みのプリンシパルから取得する API を実装してください。
+
+## ネイティブバックエンドのスキーマ型（C# / Python）
+
+C# と Python のスキーマ資産は、Zod から OpenAPI を経由して生成します。型はフィールド名ではなく Zod の定義で決まります。
+
+| Zod | OpenAPI | C# | Python |
+| --- | --- | --- | --- |
+| `z.string()`（`createdAt` / `updatedAt` を含む） | `string` | `string` | `StrictStr` |
+| `z.iso.datetime()` / `z.string().datetime()` | `string`、`date-time` | `DateTime` | `datetime` |
+| `z.iso.date()` | `string`、`date` | `DateOnly` | `date` |
+| `z.number()` | `number`、`double` | `double` | `float \| int` |
+| `z.number().int()` / `z.int()` | `integer`、`int64` | `long` | `StrictInt` |
+| インラインの `z.object({...})` | 名前付きコンポーネント | クラス `<Model><Field>`（例：`ProbeItemNested`） | クラス `<Model><Field>` |
+
+`min`、`max`、`length`、`nonempty`、`regex`、`gt`/`gte`/`lt`/`lte`、`positive`/`nonnegative`、`int`、配列の `min`/`max` は、C# の `IValidatableObject.Validate` と Python のフィールド制約・バリデーターで検証します。正規表現は Zod の `RegExp.test` と同じく部分一致で判定します。文字列形式（email、uuid、url）、refine、transform はネイティブ側で再実装しません。BFF の Zod スキーマが最終的な検証を担います。生成した C# モデルは System.Text.Json で JSON を往復でき、省略された任意項目は省略されたまま、enum は Zod の値のまま出力します。
+
+SwallowKit の更新後、制約を記録するようになったモデルについて `inspect drift` が一度だけ `schema-drift` を報告することがあります。plan / apply scaffold で再生成してください。
+
 ## 外部キーリレーションシップ
 
-SwallowKit は、命名規約パターンを使用して外部キーリレーションシップを自動検出します。
+SwallowKit は命名規約から外部キーリレーションシップを検出します。ただし、参照先のモデルが存在する場合に限ります。
 
 ### 規約
 
-`Id` で終わり、`string` 型を持つフィールドは外部キーとして扱われます：
+`Id` で終わる `string` 型のフィールドは、**参照先のモデルが `shared/models` に存在する場合だけ**外部キーとして扱われます。たとえば `shared/models/user.ts` がなければ `userId` は通常のフィールドとなり、ルックアップ UI や `/api/user` へのリクエストは生成されません。
+
+それ以外の関係は明示的に宣言できます。推測を無効にすることもできます。
+
+```typescript
+export const references = { authorId: 'User', legacyId: false };
+```
+
+存在しないモデルへの参照は無視され、`reference-model-not-found` 警告が出ます。
 
 ```typescript
 // フィールド名: categoryId -> 参照先: Category モデル
@@ -859,9 +899,9 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 ### 外部キーが検出されない
 
 以下を確認してください：
-- フィールド名が `Id` で終わる（大文字小文字を区別）
+- フィールド名が `Id` で終わる（大文字小文字を区別）か、`references` で宣言されている
 - フィールド型が `z.string()`
-- 参照先モデルが存在し、scaffold されている
+- 参照先モデルのファイルが `shared/models` に存在し、scaffold されている
 
 ### 表示名が表示されない
 

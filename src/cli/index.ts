@@ -8,6 +8,7 @@ import { initCommand, devCommand, devSeedsCommand, scaffoldCommand, createModelC
 import { provisionCommand } from "./commands/provision";
 import { createMigrationCommand } from "./commands/create-migration";
 import { migrationsCommand } from "./commands/migrations";
+import { configureMcpCommand } from "./commands/configure-mcp";
 import { addConnectorCommand } from "./commands/add-connector";
 import { addAuthCommand } from "./commands/add-auth";
 import { planScaffoldOperation } from "../core/operations/scaffold-plan";
@@ -140,6 +141,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
   program.addCommand(provisionCommand);
   program.addCommand(migrationsCommand);
   program.addCommand(createMigrationCommand);
+  program.addCommand(configureMcpCommand);
 
   program
     .command("create-model <names...>")
@@ -160,6 +162,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
     .option("--functions-dir <dir>", "Azure Functions directory", "functions")
     .option("--api-dir <dir>", "BFF routes directory (Next.js: app/api; React: bff)")
     .option("--api-only", "Skip UI components; still update Functions, BFF routes, OpenAPI, and native schema assets", false)
+    .option("--skip-infra", "Do not create or update anything under infra/ (generate the container migration later with migrations add-model)", false)
     .option("--dry-run", "Show planned file changes without writing anything", false)
     .action(async (model, options) => {
       if (options.dryRun) {
@@ -168,6 +171,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
           functionsDir: options.functionsDir,
           apiDir: options.apiDir,
           apiOnly: options.apiOnly,
+          skipInfra: options.skipInfra,
         });
         return;
       }
@@ -177,6 +181,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
         functionsDir: options.functionsDir,
         apiDir: options.apiDir,
         apiOnly: options.apiOnly,
+        skipInfra: options.skipInfra,
       });
     });
 
@@ -226,7 +231,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
   return program;
 }
 
-async function runScaffoldDryRun(options: { model: string; functionsDir?: string; apiDir?: string; apiOnly?: boolean }): Promise<void> {
+async function runScaffoldDryRun(options: { model: string; functionsDir?: string; apiDir?: string; apiOnly?: boolean; skipInfra?: boolean }): Promise<void> {
   console.log("🔍 Scaffold dry-run — no files will be written.\n");
 
   const plan = await planScaffoldOperation(options);
@@ -264,7 +269,7 @@ async function runScaffoldDryRun(options: { model: string; functionsDir?: string
     console.log(`⚠️  ${plan.conflicts.length} file(s) were modified after generation and would be overwritten.`);
     console.log(`   Review the conflicts, then run: swallowkit scaffold ${options.model} (or machine apply scaffold --plan ${plan.planId} --approve)`);
   } else {
-    console.log(`   Run without --dry-run to apply: swallowkit scaffold ${options.model}`);
+    console.log(`   Run without --dry-run to apply: swallowkit scaffold ${options.model}${options.skipInfra ? " --skip-infra" : ""}`);
   }
 }
 

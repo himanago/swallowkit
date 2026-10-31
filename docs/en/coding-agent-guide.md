@@ -244,6 +244,7 @@ A finding does not automatically mean every affected file should be overwritten.
 | `manifest-drift` | Investigate the mismatch between the actual project structure and its records, then follow the supplied `repairAction`. |
 
 MCP defaults to `latest`, while normal CLI commands use the project's pinned version.
+Prerelease projects that are newer than `latest` pin MCP to the project version or delegate to the project-installed MCP; check `metadata.swallowkitVersion` in MCP responses.
 If versions differ, inspect the current capabilities of each interface instead of assuming
 they are identical. Use the same project and version of the interface for Plan and Apply.
 See the [package manager guide](./package-managers.md) for configuring the MCP version.

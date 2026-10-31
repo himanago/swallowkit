@@ -29,6 +29,7 @@ export interface PlanScaffoldOptions {
   functionsDir?: string;
   apiDir?: string;
   apiOnly?: boolean;
+  skipInfra?: boolean;
 }
 
 export type ScaffoldPlanAction = "create" | "update" | "overwrite" | "append" | "delete" | "skip";
@@ -59,6 +60,7 @@ export interface ScaffoldPlanData {
     functionsDir?: string;
     apiDir?: string;
     apiOnly?: boolean;
+    skipInfra?: boolean;
   };
   createdAt: string;
   swallowkitVersion: string;
@@ -93,6 +95,7 @@ async function collectScaffoldOperations(options: PlanScaffoldOptions): Promise<
             functionsDir: options.functionsDir,
             apiDir: options.apiDir,
             apiOnly: options.apiOnly,
+            skipInfra: options.skipInfra,
           });
         });
       });
@@ -193,7 +196,7 @@ export async function planScaffoldOperation(options: PlanScaffoldOptions): Promi
     .update(
       JSON.stringify({
         model: options.model,
-        options: { functionsDir: options.functionsDir, apiDir: options.apiDir, apiOnly: options.apiOnly },
+        options: { functionsDir: options.functionsDir, apiDir: options.apiDir, apiOnly: options.apiOnly, skipInfra: options.skipInfra },
         operations: operations.map((op) => ({ path: op.path, action: op.action })),
         fingerprints,
         schemaAnalysis,
@@ -210,6 +213,7 @@ export async function planScaffoldOperation(options: PlanScaffoldOptions): Promi
       ...(options.functionsDir ? { functionsDir: options.functionsDir } : {}),
       ...(options.apiDir ? { apiDir: options.apiDir } : {}),
       ...(options.apiOnly !== undefined ? { apiOnly: options.apiOnly } : {}),
+      ...(options.skipInfra ? { skipInfra: true } : {}),
     },
     createdAt: new Date().toISOString(),
     swallowkitVersion: getSwallowKitVersion(),

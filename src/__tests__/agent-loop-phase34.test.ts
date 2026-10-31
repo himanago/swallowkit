@@ -508,6 +508,30 @@ describe("agent loop phase 3/4", () => {
     );
   });
 
+  it.each<[string, string[]]>([
+    ["pnpm", ["exec", "next", "typegen"]],
+    ["npm", ["exec", "--", "next", "typegen"]],
+  ])("generates Next.js route types with %s before typechecking", async (packageManager, typegenArgs) => {
+    writeFile(
+      path.join(tempDir, "package.json"),
+      JSON.stringify({ name: "sample-app", devEngines: { packageManager: { name: packageManager, version: ">=10", onFail: "error" } } })
+    );
+    writeFile(path.join(tempDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { noEmit: true } }));
+    writeFile(path.join(tempDir, "next.config.ts"), "export default {};\n");
+    writeFile(path.join(tempDir, "node_modules", "next", "package.json"), JSON.stringify({ name: "next", version: "16.0.0" }));
+    const spawnSyncMock = childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>;
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "typegen failed" })
+      .mockReturnValueOnce({ status: 2, stdout: "app/layout.tsx: Cannot find name 'LayoutProps'.", stderr: "" });
+
+    const result = await runVerify(["typecheck"], tempDir);
+
+    expect(spawnSyncMock.mock.calls[0].slice(0, 2)).toEqual([packageManager, typegenArgs]);
+    expect(result.checks[0].status).toBe("fail");
+    expect(result.checks[0].evidence.logTail?.[0]).toMatch(/^next typegen did not complete \(exit 1\)/);
+  });
+
   it("uses the existing typecheck script when present", async () => {
     writeFile(
       path.join(tempDir, "package.json"),

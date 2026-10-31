@@ -53,6 +53,7 @@ export interface CapabilitiesContract {
   sharedModels: {
     idFieldRule: string;
     buildNote: string;
+    nativeSchemaMapping: string[];
   };
   seeding: {
     createTemplates: string;
@@ -108,6 +109,14 @@ export function inspectCapabilities(): CapabilitiesContract {
           "Role-based access control metadata applied to the generated CRUD Functions. `roles` guards all operations; `read`/`write` guard per-operation; `policy` references a named authorization policy from swallowkit.config auth.authorization.policies.",
         format:
           "export const authPolicy = { roles: ['admin'] };\n// or per-operation:\nexport const authPolicy = { read: ['user'], write: ['admin'] };\n// or a named policy:\nexport const authPolicy = { policy: 'adminOnly' };",
+      },
+      {
+        name: "references",
+        required: false,
+        description:
+          "Explicit foreign keys used by generated UI lookups. Without it, a string field named <model>Id is treated as a foreign key only when shared/models contains that model (userId -> User only if user.ts exists). Map a field to false to disable inference. References to missing models are ignored with a reference-model-not-found warning.",
+        format: "export const references = { authorId: 'User', legacyId: false };",
+        notes: ["Only single string id fields can reference a model.", "No lookup UI, fetch, or OpenAPI reference is generated for fields that do not reference an existing model."],
       },
       {
         name: "connectorConfig",
@@ -174,6 +183,7 @@ export function inspectCapabilities(): CapabilitiesContract {
       ],
       notGuaranteed: [
         "Owner scoping: generated CRUD does NOT restrict rows to the authenticated principal. Any authenticated caller passing the policy can read/write any document.",
+        "Without authentication, plan scaffold reports user-scoped-data-without-auth when the partition key or an owner-like field (userId, learnerId, ownerId, ...) suggests per-user data.",
       ],
       guidance: [
         "For multi-user data where users may only touch their own records, add ai-authored custom endpoints that derive the scoping key (e.g. learnerId) from the verified principal — never from the request body — and restrict generated write endpoints to admin roles or disable them.",
@@ -181,6 +191,14 @@ export function inspectCapabilities(): CapabilitiesContract {
     },
     sharedModels: {
       idFieldRule: "id: z.string() (required). createdAt/updatedAt: z.string().optional(). The backend owns their values.",
+      nativeSchemaMapping: [
+        "C#/Python schema assets derive types from Zod, never from field names: z.string() -> string/str (including createdAt/updatedAt).",
+        "Date types only when declared: z.iso.datetime() -> DateTime/datetime, z.iso.date() -> DateOnly/date, z.date() -> DateTime/datetime.",
+        "z.number() -> double / float|int; z.number().int() or z.int() -> long / int.",
+        "Inline z.object({...}) fields become named classes <Model><Field> (e.g. ProbeItemNested); imported model schemas keep their own class.",
+        "min/max/length/nonempty/regex/int/gt/gte/lt/lte/positive/nonnegative and array min/max are enforced by C# IValidatableObject.Validate and Python Field bounds/validators. Regexes use search semantics like Zod.",
+        "String formats (email/uuid/url), refinements, and transforms are not re-implemented natively; the BFF Zod schemas remain the authoritative validation.",
+      ],
       buildNote:
         "verify typecheck resolves the shared package from its built dist/. SwallowKit rebuilds shared automatically during verify; when typechecking manually, build the shared package first (errors like \"no exported member\" usually mean a stale dist).",
     },
@@ -193,10 +211,12 @@ export function inspectCapabilities(): CapabilitiesContract {
       "inspect project | entities | routes | artifacts | boundaries | infra | drift | capabilities",
       "validate project",
       "generate model <names...> | generate scaffold <model>",
-      "plan scaffold <models...> | plan auth --provider <p> [--scheme <name>] [--allowed-providers <csv>] | plan provision -g <rg> --location <loc> --swa-location <loc> [--adopt-existing --baseline 0 --what-if] [--reconcile --what-if]",
-      "apply scaffold [models...] --plan <id> [--approve] | apply auth --plan <id> [--approve] | apply provision --plan <id> --approve",
+      "plan scaffold <models...> [--api-only] [--skip-infra] | plan auth --provider <p> [--scheme <name>] [--allowed-providers <csv>] | plan provision -g <rg> --location <loc> --swa-location <loc> [--adopt-existing --baseline 0 --what-if] [--reconcile --what-if]",
+      "apply scaffold [models...] --plan <id> [--approve] [--skip-infra] | apply auth --plan <id> [--approve] | apply provision --plan <id> --approve",
       "verify project [--checks <ids>] [--compact]",
       "explain failure [--check <id>]",
+      "(regular CLI) migrations add-model <model> [--dry-run] — generate only the container migration after scaffold --skip-infra",
+      "(regular CLI) configure-mcp [--version auto|latest|<semver>] — re-select the MCP launcher version in .mcp.json",
     ],
     verifyChecks: {
       defaultChecks: ["structure", "drift", "typecheck"],

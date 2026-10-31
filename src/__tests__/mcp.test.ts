@@ -26,8 +26,46 @@ describe("SwallowKit MCP tool definitions", () => {
     expect(runner).toHaveBeenCalledWith(["inspect", "project"]);
     expect(JSON.parse(result.content[0].text)).toEqual({
       manifestSource: "file",
-      metadata: { swallowkitVersion: expect.stringMatching(/^\d+\.\d+\.\d+/) },
+      metadata: {
+        swallowkitVersion: expect.stringMatching(/^\d+\.\d+\.\d+/),
+        mcp: expect.objectContaining({ selection: "running-version", delegated: false }),
+      },
     });
+  });
+
+  it("reports delegation, the serving version, and version warnings on every tool", async () => {
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({ ok: true, command: "inspect-entities", data: { entities: [] } }),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const context = {
+      mcpVersion: "2.0.0-alpha.3",
+      requestedVersion: "latest",
+      projectVersion: "2.0.0-alpha.4",
+      selection: "project-version" as const,
+      delegated: true,
+      delegatedFrom: "1.1.2",
+      warnings: ["mcp-older-than-project: example"],
+      nextActions: [{ command: "pnpm exec swallowkit configure-mcp", description: "Re-select." }],
+    };
+    const tools = buildSwallowKitToolDefinitions(runner as MachineCliRunner, context);
+    for (const name of ["swallowkit_inspect_entities", "swallowkit_inspect_capabilities", "swallowkit_inspect_boundaries"]) {
+      const parsed = JSON.parse((await tools.find((tool) => tool.name === name)!.handler({})).content[0].text);
+      expect(parsed.metadata).toEqual({
+        swallowkitVersion: "2.0.0-alpha.3",
+        mcp: {
+          version: "2.0.0-alpha.3",
+          requestedVersion: "latest",
+          projectVersion: "2.0.0-alpha.4",
+          selection: "project-version",
+          delegated: true,
+          delegatedFrom: "1.1.2",
+        },
+        warnings: ["mcp-older-than-project: example"],
+      });
+      expect(parsed.nextActions).toEqual(context.nextActions);
+    }
   });
 
   it("includes the MCP version in validate_project metadata", async () => {
@@ -43,7 +81,7 @@ describe("SwallowKit MCP tool definitions", () => {
     const result = await tool!.handler({});
     expect(JSON.parse(result.content[0].text)).toEqual({
       valid: true,
-      metadata: { swallowkitVersion: expect.stringMatching(/^\d+\.\d+\.\d+/) },
+      metadata: expect.objectContaining({ swallowkitVersion: expect.stringMatching(/^\d+\.\d+\.\d+/) }),
     });
   });
 
@@ -78,7 +116,10 @@ describe("SwallowKit MCP tool definitions", () => {
       "app/api",
       "--api-only",
     ]);
-    expect(JSON.parse(result.content[0].text)).toEqual({ createdFiles: ["functions/src/todo.ts"] });
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      createdFiles: ["functions/src/todo.ts"],
+      metadata: expect.objectContaining({ swallowkitVersion: expect.any(String) }),
+    });
   });
 
   it("exposes the agent-loop tools (plan/apply/artifacts/drift/verify/explain)", () => {
@@ -114,6 +155,11 @@ describe("SwallowKit MCP tool definitions", () => {
     const result = await tool!.handler({ model: "todo", apiOnly: true });
 
     expect(runner).toHaveBeenCalledWith(["plan", "scaffold", "todo", "--api-only"]);
+    await tool!.handler({ model: "todo", skipInfra: true });
+    expect(runner).toHaveBeenLastCalledWith(["plan", "scaffold", "todo", "--skip-infra"]);
+    const applyTool = buildSwallowKitToolDefinitions(runner as MachineCliRunner).find((candidate) => candidate.name === "swallowkit_apply_scaffold");
+    await applyTool!.handler({ model: "todo", skipInfra: true });
+    expect(runner).toHaveBeenLastCalledWith(["apply", "scaffold", "todo", "--skip-infra"]);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.status).toBe("requires-human");
     expect(parsed.planId).toBe("abc");

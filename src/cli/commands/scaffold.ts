@@ -62,7 +62,33 @@ interface ScaffoldOptions {
   functionsDir?: string; // Azure Functions のディレクトリ（デフォルト: "functions"）
   apiDir?: string; // BFF directory (Next.js: app/api, React: bff)
   apiOnly?: boolean; // true の場合、UI を生成しない（デフォルト: false）
+  skipInfra?: boolean; // true の場合、infra/ 配下（コンテナー migration）を変更しない
   expectedSchemaAnalysis?: SchemaAnalysisSnapshot;
+}
+
+export function buildInfraSkippedWarning(modelName: string, modelArgument: string): string {
+  return `infra-skipped: The Cosmos DB container migration for ${modelName} was not generated (--skip-infra); infra/ was left unchanged. ` +
+    `Generate it later with "swallowkit migrations add-model ${modelArgument}", or re-plan scaffold without --skip-infra.`;
+}
+
+const USER_SCOPE_FIELD = /^(user|owner|learner|member|account|customer|student|author|creator|profile|person|employee|patient)Id$/i;
+
+function isAuthenticationConfigured(authConfig: AuthConfig | undefined): boolean {
+  if (!authConfig || authConfig.provider === "none") return false;
+  return Boolean(authConfig.provider) || Object.keys(authConfig.schemes ?? {}).length > 0;
+}
+
+/** Warn when a model looks per-user (partition key or owner-like id field) but no authentication is configured. */
+export function buildUserScopedDataWarning(modelInfo: ModelInfo, authConfig: AuthConfig | undefined): string | undefined {
+  if (isAuthenticationConfigured(authConfig)) return undefined;
+  const partitionField = modelInfo.partitionKey.replace(/^\//, "");
+  const fieldNames = modelInfo.fields.filter((field) => field.type === "string" && !field.isArray).map((field) => field.name);
+  const ownerField = [partitionField, ...fieldNames].find((name) => USER_SCOPE_FIELD.test(name) && fieldNames.includes(name));
+  if (!ownerField) return undefined;
+  const reason = ownerField === partitionField ? `is the partition key and looks like a per-user owner id` : `looks like a per-user owner id`;
+  return `user-scoped-data-without-auth: ${modelInfo.name}.${ownerField} ${reason}, but authentication is not configured. ` +
+    `Generated CRUD does not scope data to a principal, so any caller can read and write every ${modelInfo.name} document. ` +
+    `Add authentication with "plan auth", restrict or remove the generated write endpoints, and add ai-authored endpoints that derive ${ownerField} from the verified principal instead of the request body.`;
 }
 
 function getMachineAwareStdio(): "inherit" | "pipe" {
@@ -131,6 +157,12 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     }
     session.setSchemaAnalysis(schemaAnalysis);
     console.log(`✅ Model parsed: ${modelInfo.name} (${modelInfo.schemaName})`);
+
+    const userScopeWarning = buildUserScopedDataWarning(modelInfo, getAuthConfig());
+    if (userScopeWarning) {
+      session.addWarning(userScopeWarning);
+      console.warn(`⚠️  ${userScopeWarning}`);
+    }
 
     const backendLanguage = getBackendLanguage();
     const frontend = getFrontendFramework();
@@ -210,9 +242,15 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
       await generateBFFRoutes(modelInfo, apiDir, sharedPackageName, session);
     }
 
-    // 8. Generate Cosmos DB container Bicep file (skip for connector models)
+    // 8. Generate Cosmos DB container Bicep file (skip for connector models or when infra changes are excluded)
     if (!isConnectorModel) {
-      await generateCosmosContainer(modelInfo, session);
+      if (options.skipInfra) {
+        const warning = buildInfraSkippedWarning(modelInfo.name, toKebabCase(modelInfo.name));
+        session.addWarning(warning);
+        console.warn(`\n⚠️  ${warning}`);
+      } else {
+        await generateCosmosContainer(modelInfo, session);
+      }
     }
 
     // 9. Generate UI components (unless --api-only)

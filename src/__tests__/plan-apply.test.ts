@@ -6,6 +6,7 @@ import { EventEmitter } from "events";
 import { runMachineCli } from "../machine";
 import { getCSharpSchemaModelPath } from "../core/scaffold/native-schema-generator";
 import { initializeLegacyMigrations } from "../core/operations/migration-generator";
+import { addModelContainerMigration } from "../core/operations/model-migration";
 import {
   MIGRATION_MANIFEST_PATH,
   createMigrationManifest,
@@ -378,6 +379,64 @@ describe("plan / apply / drift / verify machine commands", () => {
       action: "update",
       conflict: false,
     }));
+  });
+
+  it("plans and applies with --skip-infra without touching infra/, then adds only the migration later", async () => {
+    createProjectFixture(tempDir);
+    createInfrastructureFixture(tempDir);
+    saveMigrationManifest(createMigrationManifest(tempDir, { legacy: false, projectId: "new-project" }), tempDir);
+    const snapshotInfra = () => {
+      const files: Record<string, string> = {};
+      const visit = (directory: string) => {
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+          const absolute = path.join(directory, entry.name);
+          if (entry.isDirectory()) visit(absolute);
+          else files[path.relative(tempDir, absolute).replace(/\\/g, "/")] = fs.readFileSync(absolute, "utf-8");
+        }
+      };
+      visit(path.join(tempDir, "infra"));
+      return files;
+    };
+    const before = snapshotInfra();
+
+    const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only", "--skip-infra"));
+    expect(plan.exitCode).toBe(0);
+    expect(plan.response.data.options.skipInfra).toBe(true);
+    expect(plan.response.data.operations.filter((operation: { path: string }) => operation.path.startsWith("infra/"))).toEqual([]);
+    expect(plan.response.data.warnings).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^infra-skipped: The Cosmos DB container migration for Todo was not generated/),
+    ]));
+    expect(plan.response.nextActions).toContainEqual(expect.objectContaining({ command: "swallowkit migrations add-model todo" }));
+
+    const apply = await runMachine(machineArgs("apply", "scaffold", "--plan", plan.response.data.planId));
+    expect(apply.exitCode).toBe(0);
+    expect(apply.response.data.createdFiles.filter((file: string) => file.startsWith("infra/"))).toEqual([]);
+    expect(apply.response.nextActions).toContainEqual(expect.objectContaining({ command: "swallowkit migrations add-model todo" }));
+    expect(snapshotInfra()).toEqual(before);
+
+    const verify = await runMachine(machineArgs("verify", "project", "--checks", "structure,drift"));
+    expect(verify.exitCode).toBe(0);
+    expect(verify.response.data.summary.done).toBe(true);
+    const drift = await runMachine(machineArgs("inspect", "drift"));
+    expect(drift.response.data.findings.filter((finding: { severity: string }) => finding.severity !== "info")).toEqual([]);
+
+    const dryRun = await addModelContainerMigration("todo", { dryRun: true });
+    expect(dryRun.operations.map((operation) => operation.path)).toEqual([
+      "infra/migrations/0001-create-todo-container/main.bicep",
+      MIGRATION_MANIFEST_PATH.replace(/\\/g, "/"),
+    ]);
+    expect(snapshotInfra()).toEqual(before);
+
+    const added = await addModelContainerMigration("todo");
+    expect(added.migration).toEqual({ version: 1, template: "infra/migrations/0001-create-todo-container/main.bicep" });
+    expect(fs.readFileSync(path.join(tempDir, added.migration!.template), "utf-8")).toContain("'/id'");
+    expect(loadMigrationManifest(tempDir).migrations).toEqual([
+      expect.objectContaining({ version: 1, source: "model", sourceModel: "Todo" }),
+    ]);
+    const again = await addModelContainerMigration("todo");
+    expect(again.operations.every((operation) => operation.action === "skip")).toBe(true);
+    const verifyAfter = await runMachine(machineArgs("verify", "project", "--checks", "structure,drift"));
+    expect(verifyAfter.response.data.summary.done).toBe(true);
   });
 
   it.each([

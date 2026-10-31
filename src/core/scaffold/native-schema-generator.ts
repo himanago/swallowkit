@@ -5,7 +5,7 @@ import { spawn, spawnSync } from "child_process";
 import { BackendLanguage } from "../../types";
 import { FileOperationSession } from "../operations/file-session";
 import { ModelInfo, toKebabCase } from "./model-parser";
-import { generateOpenApiDocument } from "./openapi-generator";
+import { expandInlineObjectModels, generateOpenApiDocument } from "./openapi-generator";
 import {
   buildProjectLocalUvInstallerEnv,
   buildUvPipInstallArgs,
@@ -154,8 +154,22 @@ function csharpStringLiteral(value: string): string {
   return JSON.stringify(value);
 }
 
-function isDateLikeField(field: Pick<ModelInfo["fields"][number], "name" | "type">): boolean {
-  return field.type === "date" || (field.type === "string" && field.name.toLowerCase().endsWith("at"));
+/** Date/time types are used only when the Zod schema declares them (z.iso.datetime(), z.iso.date(), z.date()). */
+function getCSharpScalarType(field: ModelInfo["fields"][number]): string {
+  switch (field.type) {
+    case "string":
+      return field.format === "date-time" ? "DateTime" : field.format === "date" ? "DateOnly" : "string";
+    case "number":
+      return field.isInteger ? "long" : "double";
+    case "boolean":
+      return "bool";
+    case "date":
+      return "DateTime";
+    case "object":
+      return "Dictionary<string, object>";
+    default:
+      return "object";
+  }
 }
 
 export function getCSharpSchemaModelPath(outputDir: string, modelName: string): string {
@@ -223,20 +237,7 @@ function getCSharpFieldBaseType(field: ModelInfo["fields"][number]): string {
     return `List<${getCSharpArrayElementType(field)}>`;
   }
 
-  switch (field.type) {
-    case "string":
-      return isDateLikeField(field) ? "DateTime" : "string";
-    case "number":
-      return "decimal";
-    case "boolean":
-      return "bool";
-    case "date":
-      return "DateTime";
-    case "object":
-      return "Dictionary<string, object>";
-    default:
-      return "object";
-  }
+  return getCSharpScalarType(field);
 }
 
 function getCSharpArrayElementType(field: ModelInfo["fields"][number]): string {
@@ -248,20 +249,7 @@ function getCSharpArrayElementType(field: ModelInfo["fields"][number]): string {
     return `${toPascalIdentifier(field.name)}Enum`;
   }
 
-  switch (field.type) {
-    case "string":
-      return isDateLikeField(field) ? "DateTime" : "string";
-    case "number":
-      return "decimal";
-    case "boolean":
-      return "bool";
-    case "date":
-      return "DateTime";
-    case "object":
-      return "Dictionary<string, object>";
-    default:
-      return "object";
-  }
+  return getCSharpScalarType(field);
 }
 
 function getCSharpPropertyType(field: ModelInfo["fields"][number]): string {
@@ -333,6 +321,113 @@ function buildCSharpEnumToJsonCases(field: ModelInfo["fields"][number], members:
     .join("\n\n");
 }
 
+function csharpNumberLiteral(value: number): string {
+  return Number.isInteger(value) ? `${value}` : `${value}d`;
+}
+
+function csharpRegexOptions(flags: string | undefined): string {
+  const options = [
+    flags?.includes("i") ? "RegexOptions.IgnoreCase" : null,
+    flags?.includes("m") ? "RegexOptions.Multiline" : null,
+    flags?.includes("s") ? "RegexOptions.Singleline" : null,
+  ].filter(Boolean);
+  return options.length > 0 ? options.join(" | ") : "RegexOptions.None";
+}
+
+function isCSharpReferenceType(field: ModelInfo["fields"][number]): boolean {
+  if (field.isArray || field.isNestedSchema || field.type === "object") return true;
+  if (field.enumValues?.length) return false;
+  return field.type === "string" && field.format !== "date-time" && field.format !== "date";
+}
+
+/**
+ * Translate Zod constraints into IValidatableObject checks. Regexes use search semantics like
+ * Zod's RegExp.test. String formats (email/uuid/url) and value-type presence stay with Zod.
+ */
+function buildCSharpValueChecks(
+  field: ModelInfo["fields"][number],
+  accessor: string,
+  member: string,
+  optionalValue: boolean
+): string[] {
+  const constraints = field.constraints ?? {};
+  const checks: string[] = [];
+  const add = (condition: string, message: string) =>
+    checks.push(`if (${condition})\n                yield return new ValidationResult(${csharpStringLiteral(message)}, new[] { ${member} });`);
+
+  if (field.isNestedSchema && field.nestedModelName) {
+    // Pattern variables in an if condition stay in scope for the enclosing block, so keep names unique.
+    const variable = `validated${toPascalIdentifier(field.name)}${accessor === "item" ? "Item" : ""}`;
+    checks.push(`if (${accessor} is IValidatableObject ${variable})\n                foreach (var ${variable}Result in ${variable}.Validate(new ValidationContext(${accessor})))\n                    yield return new ValidationResult(${variable}Result.ErrorMessage, ${variable}Result.MemberNames.Select(name => ${member} + "." + name));`);
+    return checks;
+  }
+  if (field.enumValues?.length) return checks;
+
+  if (field.type === "string" && field.format !== "date-time" && field.format !== "date") {
+    if (constraints.minLength !== undefined) add(`${accessor} != null && ${accessor}.Length < ${constraints.minLength}`, `${field.name} must contain at least ${constraints.minLength} character(s).`);
+    if (constraints.maxLength !== undefined) add(`${accessor} != null && ${accessor}.Length > ${constraints.maxLength}`, `${field.name} must contain at most ${constraints.maxLength} character(s).`);
+    if (constraints.pattern !== undefined) {
+      add(
+        `${accessor} != null && !Regex.IsMatch(${accessor}, ${csharpStringLiteral(constraints.pattern)}, ${csharpRegexOptions(constraints.patternFlags)})`,
+        `${field.name} must match /${constraints.pattern}/${constraints.patternFlags ?? ""}.`
+      );
+    }
+  }
+
+  if (field.type === "number") {
+    const value = optionalValue ? `${accessor}.Value` : accessor;
+    const guard = optionalValue ? `${accessor}.HasValue && ` : "";
+    if (constraints.minimum !== undefined) {
+      add(`${guard}${value} ${constraints.exclusiveMinimum ? "<=" : "<"} ${csharpNumberLiteral(constraints.minimum)}`,
+        `${field.name} must be ${constraints.exclusiveMinimum ? "greater than" : "greater than or equal to"} ${constraints.minimum}.`);
+    }
+    if (constraints.maximum !== undefined) {
+      add(`${guard}${value} ${constraints.exclusiveMaximum ? ">=" : ">"} ${csharpNumberLiteral(constraints.maximum)}`,
+        `${field.name} must be ${constraints.exclusiveMaximum ? "less than" : "less than or equal to"} ${constraints.maximum}.`);
+    }
+  }
+  return checks;
+}
+
+function buildCSharpValidationBody(model: ModelInfo): string {
+  const blocks: string[] = [];
+  for (const field of model.fields) {
+    const propertyName = toPascalIdentifier(field.name);
+    const member = csharpStringLiteral(field.name);
+    const constraints = field.constraints ?? {};
+
+    if (!field.isOptional && isCSharpReferenceType(field)) {
+      blocks.push(`if (${propertyName} is null)\n                yield return new ValidationResult(${csharpStringLiteral(`${field.name} is required.`)}, new[] { ${member} });`);
+    }
+
+    if (field.isArray) {
+      if (constraints.minItems !== undefined) {
+        blocks.push(`if (${propertyName} != null && ${propertyName}.Count < ${constraints.minItems})\n                yield return new ValidationResult(${csharpStringLiteral(`${field.name} must contain at least ${constraints.minItems} item(s).`)}, new[] { ${member} });`);
+      }
+      if (constraints.maxItems !== undefined) {
+        blocks.push(`if (${propertyName} != null && ${propertyName}.Count > ${constraints.maxItems})\n                yield return new ValidationResult(${csharpStringLiteral(`${field.name} must contain at most ${constraints.maxItems} item(s).`)}, new[] { ${member} });`);
+      }
+      const itemChecks = buildCSharpValueChecks(
+        { ...field, isArray: false },
+        "item",
+        `${member} + "[" + index + "]"`,
+        false
+      );
+      if (itemChecks.length > 0) {
+        blocks.push(`if (${propertyName} != null)\n            {\n                for (var index = 0; index < ${propertyName}.Count; index++)\n                {\n                    var item = ${propertyName}[index];\n${itemChecks.map((check) => `                    ${check.replace(/\n {16}/g, "\n                        ").replace(/\n {20}/g, "\n                            ")}`).join("\n")}\n                }\n            }`);
+      }
+      continue;
+    }
+
+    const optionalValue = field.isOptional && !isCSharpReferenceType(field);
+    blocks.push(...buildCSharpValueChecks(field, propertyName, member, optionalValue));
+  }
+
+  return blocks.length > 0
+    ? blocks.map((block) => `            ${block}`).join("\n\n")
+    : "            yield break;";
+}
+
 function generateLegacyCompatibleCSharpModelSource(model: ModelInfo): string {
   const requiredFields = model.fields.filter((field) => !field.isOptional);
   const optionalFields = model.fields.filter((field) => field.isOptional);
@@ -356,7 +451,7 @@ function generateLegacyCompatibleCSharpModelSource(model: ModelInfo): string {
       return `        /// <summary>
         /// Defines ${toPascalIdentifier(field.name)}
         /// </summary>
-        [JsonConverter(typeof(JsonStringEnumConverter))]
+        [JsonConverter(typeof(${enumType}JsonConverter))]
         public enum ${enumType}
         {
 ${buildCSharpEnumMembers(enumMembers)}
@@ -377,6 +472,22 @@ ${buildCSharpEnumFromStringCases(field, enumMembers, true)}
 ${buildCSharpEnumToJsonCases(field, enumMembers)}
 
             throw new NotImplementedException($"Value could not be handled: '{value}'");
+        }
+
+        /// <summary>
+        /// Reads and writes ${enumType} with the exact Zod enum values.
+        /// </summary>
+        public sealed class ${enumType}JsonConverter : JsonConverter<${enumType}>
+        {
+            public override ${enumType} Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            {
+                var value = reader.GetString();
+                var parsed = value == null ? null : ${enumType}FromStringOrDefault(value);
+                return parsed ?? throw new JsonException($"Unsupported ${enumType} value: '{value}'");
+            }
+
+            public override void Write(Utf8JsonWriter writer, ${enumType} value, JsonSerializerOptions options)
+                => writer.WriteStringValue(${enumType}ToJsonValue(value));
         }`;
     })
     .join("\n\n");
@@ -404,7 +515,8 @@ ${buildCSharpEnumToJsonCases(field, enumMembers)}
         /// <summary>
         /// Gets or Sets ${propertyName}
         /// </summary>
-        [JsonPropertyName("${field.name}")]
+        [JsonPropertyName("${field.name}")]${field.isNullable ? "" : `
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]`}
         public ${propertyType} ${propertyName} { get { return this.${propertyName}Option; } set { this.${propertyName}Option = new(value); } }`;
     })
     .join("\n\n");
@@ -428,8 +540,11 @@ ${buildCSharpEnumToJsonCases(field, enumMembers)}
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using SwallowKitBackendModels.Client;
 
 namespace SwallowKitBackendModels.Model
@@ -439,7 +554,17 @@ namespace SwallowKitBackendModels.Model
     /// </summary>
     public partial class ${model.name} : IValidatableObject
     {
+        /// <summary>
+        /// Used by System.Text.Json. Optional values are marked as set only when present in the JSON.
+        /// </summary>
+#pragma warning disable CS8618
         [JsonConstructor]
+        public ${model.name}()
+        {
+            OnCreated();
+        }
+#pragma warning restore CS8618
+
         public ${model.name}(${constructorParams})
         {
 ${constructorAssignments}
@@ -461,27 +586,19 @@ ${toStringBody}
 
         IEnumerable<ValidationResult> IValidatableObject.Validate(ValidationContext validationContext)
         {
-            yield break;
+${buildCSharpValidationBody(model)}
         }
     }
 }
 `;
 }
 
-function getPythonTypeName(field: ModelInfo["fields"][number]): string {
-  if (field.isNestedSchema && field.nestedModelName) {
-    return field.nestedModelName;
-  }
-
-  if (field.isArray) {
-    return `List[${getPythonArrayElementType(field)}]`;
-  }
-
+function getPythonScalarType(field: ModelInfo["fields"][number]): string {
   switch (field.type) {
     case "string":
-      return isDateLikeField(field) ? "datetime" : "StrictStr";
+      return field.format === "date-time" ? "datetime" : field.format === "date" ? "date" : "StrictStr";
     case "number":
-      return "Union[StrictFloat, StrictInt]";
+      return field.isInteger ? "StrictInt" : "Union[StrictFloat, StrictInt]";
     case "boolean":
       return "StrictBool";
     case "date":
@@ -491,6 +608,22 @@ function getPythonTypeName(field: ModelInfo["fields"][number]): string {
     default:
       return "Any";
   }
+}
+
+/** pydantic Field bounds for a scalar value (string length or numeric range). */
+function getPythonValueConstraintArgs(field: ModelInfo["fields"][number]): string[] {
+  const constraints = field.constraints ?? {};
+  if (field.enumValues?.length || field.isNestedSchema) return [];
+  const args: string[] = [];
+  if (field.type === "string" && field.format !== "date-time" && field.format !== "date") {
+    if (constraints.minLength !== undefined) args.push(`min_length=${constraints.minLength}`);
+    if (constraints.maxLength !== undefined) args.push(`max_length=${constraints.maxLength}`);
+  }
+  if (field.type === "number") {
+    if (constraints.minimum !== undefined) args.push(`${constraints.exclusiveMinimum ? "gt" : "ge"}=${constraints.minimum}`);
+    if (constraints.maximum !== undefined) args.push(`${constraints.exclusiveMaximum ? "lt" : "le"}=${constraints.maximum}`);
+  }
+  return args;
 }
 
 function getPythonArrayElementType(field: ModelInfo["fields"][number]): string {
@@ -498,38 +631,74 @@ function getPythonArrayElementType(field: ModelInfo["fields"][number]): string {
     return field.nestedModelName;
   }
 
-  switch (field.type) {
-    case "string":
-      return isDateLikeField(field) ? "datetime" : "StrictStr";
-    case "number":
-      return "Union[StrictFloat, StrictInt]";
-    case "boolean":
-      return "StrictBool";
-    case "date":
-      return "datetime";
-    case "object":
-      return "Dict[str, Any]";
-    default:
-      return "Any";
+  const elementType = getPythonScalarType(field);
+  const elementArgs = getPythonValueConstraintArgs(field);
+  return elementArgs.length > 0 ? `Annotated[${elementType}, Field(${elementArgs.join(", ")})]` : elementType;
+}
+
+function getPythonTypeName(field: ModelInfo["fields"][number]): string {
+  if (field.isArray) {
+    return `List[${getPythonArrayElementType(field)}]`;
   }
+
+  if (field.isNestedSchema && field.nestedModelName) {
+    return field.nestedModelName;
+  }
+
+  return getPythonScalarType(field);
 }
 
 function buildPythonFieldDeclaration(field: ModelInfo["fields"][number]): string {
   const pythonName = toSnakeCase(field.name);
   const typeName = field.isOptional ? `Optional[${getPythonTypeName(field)}]` : getPythonTypeName(field);
-  const aliasSuffix = pythonName !== field.name ? `, alias="${field.name}"` : "";
+  const fieldArgs = [
+    ...(field.isOptional ? ["default=None"] : []),
+    ...(pythonName !== field.name ? [`alias="${field.name}"`] : []),
+    ...(field.isArray
+      ? [
+          ...(field.constraints?.minItems !== undefined ? [`min_length=${field.constraints.minItems}`] : []),
+          ...(field.constraints?.maxItems !== undefined ? [`max_length=${field.constraints.maxItems}`] : []),
+        ]
+      : getPythonValueConstraintArgs(field)),
+  ];
 
-  if (field.isOptional) {
-    return `${pythonName}: ${typeName} = Field(default=None${aliasSuffix})`;
-  }
-
-  if (aliasSuffix) {
-    return `${pythonName}: ${typeName} = Field(${aliasSuffix.slice(2)})`;
-  }
-
-  return `${pythonName}: ${typeName}`;
+  return fieldArgs.length > 0
+    ? `${pythonName}: ${typeName} = Field(${fieldArgs.join(", ")})`
+    : `${pythonName}: ${typeName}`;
 }
 
+function buildPythonRegexFlags(flags: string | undefined): string {
+  const values = [
+    flags?.includes("i") ? "re.IGNORECASE" : null,
+    flags?.includes("m") ? "re.MULTILINE" : null,
+    flags?.includes("s") ? "re.DOTALL" : null,
+  ].filter(Boolean);
+  return values.length > 0 ? values.join(" | ") : "0";
+}
+
+/** Zod regex checks use RegExp.test (search), so validators use re.search instead of pydantic's anchored pattern. */
+function buildPythonPatternValidators(model: ModelInfo): string {
+  return model.fields
+    .filter((field) => field.type === "string" && !field.enumValues?.length && field.constraints?.pattern !== undefined)
+    .map((field) => {
+      const pythonName = toSnakeCase(field.name);
+      const pattern = JSON.stringify(field.constraints!.pattern);
+      const flags = buildPythonRegexFlags(field.constraints!.patternFlags);
+      const message = JSON.stringify(`${field.name} must match /${field.constraints!.pattern}/${field.constraints!.patternFlags ?? ""}`);
+      const check = `re.search(${pattern}, item, ${flags})`;
+      return `    @field_validator('${pythonName}')
+    def ${pythonName}_validate_pattern(cls, value):
+        """Validates the Zod regex constraint"""
+        if value is None:
+            return value
+
+        for item in (value if isinstance(value, list) else [value]):
+            if not ${check}:
+                raise ValueError(${message})
+        return value`;
+    })
+    .join("\n\n");
+}
 function buildPythonEnumValidators(model: ModelInfo): string {
   return model.fields
     .filter((field) => field.enumValues?.length)
@@ -566,7 +735,7 @@ function buildPythonModelImports(model: ModelInfo): string {
 function generateLegacyCompatiblePythonModelSource(model: ModelInfo): string {
   const fieldDeclarations = model.fields.map((field) => `    ${buildPythonFieldDeclaration(field)}`).join("\n");
   const propertyNames = model.fields.map((field) => `"${field.name}"`).join(", ");
-  const validators = buildPythonEnumValidators(model);
+  const validators = [buildPythonEnumValidators(model), buildPythonPatternValidators(model)].filter(Boolean).join("\n\n");
   const dictAssignments = model.fields
     .map((field) => `            "${field.name}": obj.get("${field.name}")`)
     .join(",\n");
@@ -590,9 +759,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from datetime import datetime
+from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, field_validator
-from typing import Any, ClassVar, Dict, List, Optional, Set, Union
+from typing import Annotated, Any, ClassVar, Dict, List, Optional, Set, Union
 from typing_extensions import Self
 
 ${buildPythonModelImports(model)}class ${model.name}(BaseModel):
@@ -616,7 +785,7 @@ ${validators ? `\n\n${validators}` : ""}
 
     def to_json(self) -> str:
         """Returns the JSON representation of the model using alias"""
-        return json.dumps(self.to_dict())
+        return self.model_dump_json(by_alias=True, exclude_none=True)
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
@@ -927,10 +1096,12 @@ export async function generateLanguageSchemaArtifacts(
     backendLanguage === "csharp" ? "csharp-models" : "python-models"
   );
 
+  // Inline z.object fields become named classes (e.g. ProbeItemNested) so their shape is preserved.
+  const nativeModels = expandInlineObjectModels(models);
   if (backendLanguage === "csharp") {
-    await generateCSharpSchemaArtifacts(models, outputDir, functionsRoot, session, rootModel.name);
+    await generateCSharpSchemaArtifacts(nativeModels, outputDir, functionsRoot, session, rootModel.name);
   } else {
-    await generatePythonSchemaArtifacts(models, outputDir, functionsRoot, session, rootModel.name);
+    await generatePythonSchemaArtifacts(nativeModels, outputDir, functionsRoot, session, rootModel.name);
   }
 
   console.log(

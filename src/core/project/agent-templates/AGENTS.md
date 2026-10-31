@@ -41,7 +41,14 @@ When a SwallowKit capability, project structure, or ownership boundary affects
 a design decision, inspect the current project and the currently available
 SwallowKit interfaces before deciding.
 
-Prefer the `swallowkit_*` MCP tools when available.
+Prefer the `swallowkit_*` MCP tools when available, with one exception: every
+MCP response reports the SwallowKit version that answered in
+`metadata.swallowkitVersion` and `metadata.mcp`. If that version is older than
+the project's installed SwallowKit (`{{runCmd}} swallowkit --version`), or
+`metadata.warnings` contains `mcp-older-than-project`, its capabilities,
+boundaries, and plan/apply contracts may be outdated for this project. Use
+`{{runCmd}} swallowkit machine ...` instead and follow the response's
+`nextActions` (for example `{{runCmd}} swallowkit configure-mcp`).
 
 If MCP is unavailable, use the machine interface:
 
@@ -263,6 +270,18 @@ SwallowKit should generate framework-owned CRUD artifacts.
 
 Do not manually recreate boilerplate that SwallowKit owns.
 
+When the task must not change Bicep or other infrastructure, still scaffold the
+model: pass `--skip-infra` to `plan scaffold` / `apply scaffold` (MCP
+`skipInfra: true`, or `swallowkit scaffold --skip-infra`). Nothing under
+`infra/` changes, the plan reports `infra-skipped`, and `verify project` still
+passes. Generate only the pending container migration later with
+`{{runCmd}} swallowkit migrations add-model <model>`.
+
+Treat plan `warnings` as decisions to make, not noise. In particular,
+`user-scoped-data-without-auth` means the model looks per-user (for example a
+`/userId` partition key) while authentication is not configured, so generated
+CRUD would let any caller read and write every document.
+
 ## Authentication
 
 Authentication is a **plan/apply operation**, not a free-form config edit.
@@ -458,9 +477,19 @@ same generated structure.
 - Re-export models from `shared/index.ts`.
 - `id` is a required `z.string()`; only `createdAt` / `updatedAt` are optional
   backend-managed fields.
-- Models may declare `partitionKey`, `authPolicy`, `displayName`, and
-  `connectorConfig` as exported constants. Exact formats:
+- Models may declare `partitionKey`, `authPolicy`, `displayName`,
+  `references`, and `connectorConfig` as exported constants. Exact formats:
   `{{runCmd}} swallowkit machine inspect capabilities` (modelDeclarations).
+- A string field named `<model>Id` is treated as a foreign key only when that
+  model exists in `shared/models`. Declare other references explicitly with
+  `export const references = { authorId: 'User' };` (map a field to `false`
+  to opt out).
+- Native C#/Python schema types come from Zod, not field names: use
+  `z.iso.datetime()` / `z.iso.date()` for date values (`createdAt` stays a
+  string), `z.number().int()` for integers, and inline `z.object` for nested
+  classes. Length/range/regex/item constraints are enforced natively; formats
+  such as email remain Zod (BFF) validation. See `inspect capabilities`
+  (sharedModels.nativeSchemaMapping).
 - Cosmos DB containers use PascalCase plural names and default to `/id` as the
   partition key unless the model declares another key, e.g.
   `export const partitionKey = '/learnerId';` (the field must exist in the
@@ -517,3 +546,10 @@ Do:
 - verify before final semantic review
 
 Use `{{pm}}`, the package manager selected for this project. Do not introduce another package manager or lockfile. Use `{{runCmd}} swallowkit` for the project-local CLI. The MCP launcher intentionally resolves `latest` independently.
+Exception for prerelease projects: when the project's SwallowKit is newer than
+the published `latest` (for example `2.0.0-alpha.3` while `latest` is `1.1.2`),
+`.mcp.json` may pin `SWALLOWKIT_MCP_VERSION` to the project version, and a
+`latest` launcher that supports it hands the session to the project-installed
+MCP. Run `{{runCmd}} swallowkit configure-mcp` to re-select the version (it
+returns to `latest` once `latest` is at least the project version). Until MCP
+reports the project version, prefer `{{runCmd}} swallowkit machine ...`.

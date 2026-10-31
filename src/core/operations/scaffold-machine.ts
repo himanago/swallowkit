@@ -13,6 +13,7 @@ export interface MachineScaffoldOperationOptions {
   functionsDir?: string;
   apiDir?: string;
   apiOnly?: boolean;
+  skipInfra?: boolean;
   expectedSchemaAnalysis?: SchemaAnalysisSnapshot;
 }
 

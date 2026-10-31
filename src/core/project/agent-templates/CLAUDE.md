@@ -14,7 +14,9 @@ Always-on rules:
 - Inspect the current project and SwallowKit capabilities before making
   SwallowKit-dependent assumptions or asking questions the repository can answer.
 - Prefer `swallowkit_*` MCP tools.
-- Fall back to `{{runCmd}} swallowkit machine ...` when MCP is unavailable.
+- Fall back to `{{runCmd}} swallowkit machine ...` when MCP is unavailable, or
+  when an MCP response's `metadata.swallowkitVersion` is older than the project's
+  SwallowKit (`metadata.warnings` contains `mcp-older-than-project`).
 - Inspect responsibility boundaries before editing framework-related files.
 - Never hand-edit deterministic SwallowKit-managed artifacts.
 - Add auth schemes only via plan/apply auth; never hand-write `auth.schemes`

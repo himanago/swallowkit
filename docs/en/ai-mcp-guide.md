@@ -305,6 +305,18 @@ Practical behavior:
 
 The generated instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) explicitly tell agents to prefer MCP tools when available and fall back to `swallowkit machine ...` when they are not. The launcher uses the project package manager: pnpm for pnpm projects, or `npx --yes --package swallowkit@${SWALLOWKIT_MCP_VERSION} swallowkit-mcp` for npm projects. Network access is needed when the selected version is not cached. MCP intentionally defaults to `latest`; normal project commands use the locally installed CLI.
 
+### MCP version selection
+
+`latest` is intentional: projects created with older releases still receive the current stable tools. A prerelease project can be newer than `latest`, so SwallowKit applies these rules:
+
+- `init` keeps `latest` unless the SwallowKit version used for init is newer than the published `latest` (for example `2.0.0-alpha.3` while `latest` is `1.1.2`). Then `SWALLOWKIT_MCP_VERSION` is pinned to that version.
+- A launcher started as `latest` (or without a version) compares itself with the project-installed `swallowkit` by semantic-version precedence. When the project is newer, it hands the session to the project's own `swallowkit-mcp`. Once `latest` catches up (for example `2.0.0` versus `2.0.0-alpha.3`), `latest` is used again.
+- An explicit `SWALLOWKIT_MCP_VERSION` other than `latest` is always honored. A pinned server warns with `mcp-older-than-project` when it is older than the project, and with `mcp-pin-outdated` when the published `latest` has caught up with the pin.
+- Every MCP response includes `metadata.swallowkitVersion` and `metadata.mcp` (`version`, `requestedVersion`, `projectVersion`, `selection`, `delegated`, `delegatedFrom`). Version warnings appear in `metadata.warnings` together with `nextActions`.
+- `swallowkit configure-mcp [--version auto|latest|<semver>]` changes only the version in `.mcp.json`. `auto` (default) selects `latest` unless the project is newer.
+
+Delegation only works when the `latest` release itself contains it. Until such a stable release is published, the pin written by `init` or `configure-mcp` keeps prerelease projects on their own version. Generated instructions also tell agents to use `swallowkit machine ...` whenever MCP reports an older version than the project.
+
 ### Agent Skills (agentskills.io standard)
 
 `init` also generates the autonomous-loop runbooks as skills in the [Agent Skills](https://agentskills.io/) open-standard format under `.github/skills/`. Skills-aware agents (GitHub Copilot in VS Code / CLI / cloud agent, and others) keep only the frontmatter `name` / `description` resident and load the body on demand when the task matches (progressive disclosure).
@@ -341,7 +353,9 @@ Responsibility boundary principles:
 | --- | --- | --- |
 | `deterministic` | Never hand-edit; regenerate via plan/apply | `functions/src/*.ts`, `app/api/*/route.ts`, `infra/containers/` |
 | `ai-authored` | AI / developers write freely | `app/**/page.tsx` (after generation), `lib/`, custom code |
-| `shared` | Edit outside SwallowKit markers only | `infra/main.bicep`, `functions/function_app.py`, `shared/index.ts` |
+| `shared` | Edit outside SwallowKit markers only | `shared/index.ts`; Python backends also `functions/function_app.py` |
+
+Convention rules are resolved for the configured `backend.language`: C# and TypeScript backends have no registration file, so no backend marker rule is reported. Baseline `infra/` files are deterministic because `infra/migrations/manifest.json` records their checksums; add infrastructure as new migrations instead.
 
 Fetch the contract with `inspect boundaries` (or `swallowkit_inspect_boundaries`) before editing, and replace direct edits to `deterministic` areas with model edits followed by plan/apply.
 # Authentication data in machine/MCP output

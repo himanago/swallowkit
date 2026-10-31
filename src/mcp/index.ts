@@ -1,11 +1,20 @@
 #!/usr/bin/env node
 
+import { spawn } from "child_process";
 import * as path from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import type { MachineNextAction, MachineOperationStatus, MachineResponse } from "../machine/contracts";
 import { getSwallowKitVersion } from "../version";
+import { detectFromProject, getCommands } from "../utils/package-manager";
+import {
+  MCP_DELEGATED_FROM_ENV,
+  McpVersionContext,
+  buildPinnedUpdateNotice,
+  decideMcpLaunch,
+  resolveProjectSwallowKit,
+} from "./version-selection";
 
 interface MachineSuccessPayload<TData> {
   ok: true;
@@ -70,6 +79,29 @@ async function executeMachineCommand<TData>(
   return parsed;
 }
 
+function defaultVersionContext(): McpVersionContext {
+  return {
+    mcpVersion: getSwallowKitVersion(),
+    requestedVersion: "latest",
+    projectVersion: null,
+    selection: "running-version",
+    delegated: false,
+    warnings: [],
+    nextActions: [],
+  };
+}
+
+function mergeNextActions(
+  first: MachineNextAction[] | undefined,
+  second: MachineNextAction[]
+): MachineNextAction[] {
+  const merged = [...(first ?? [])];
+  for (const action of second) {
+    if (!merged.some((existing) => existing.command === action.command)) merged.push(action);
+  }
+  return merged;
+}
+
 function withOperationStatus<TData>(response: MachineSuccessPayload<TData>): Record<string, unknown> {
   const data = response.data && typeof response.data === "object"
     ? (response.data as Record<string, unknown>)
@@ -92,25 +124,41 @@ function jsonTextContent(value: unknown): { content: Array<{ type: "text"; text:
   };
 }
 
-function withSwallowKitMetadata<TData>(data: TData): TData & { metadata: Record<string, unknown> } {
-  const value = data && typeof data === "object" ? data as Record<string, unknown> : { data };
+function withVersionMetadata(data: unknown, context: McpVersionContext): Record<string, unknown> {
+  const value = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : { data };
   const metadata = value.metadata && typeof value.metadata === "object"
     ? value.metadata as Record<string, unknown>
     : {};
+  const existingNextActions = Array.isArray(value.nextActions) ? value.nextActions as MachineNextAction[] : undefined;
+  const nextActions = mergeNextActions(existingNextActions, context.nextActions);
 
   return {
     ...value,
+    ...(nextActions.length > 0 ? { nextActions } : {}),
     metadata: {
       ...metadata,
-      swallowkitVersion: getSwallowKitVersion(),
+      swallowkitVersion: context.mcpVersion,
+      mcp: {
+        version: context.mcpVersion,
+        requestedVersion: context.requestedVersion,
+        projectVersion: context.projectVersion,
+        selection: context.selection,
+        delegated: context.delegated,
+        ...(context.delegatedFrom ? { delegatedFrom: context.delegatedFrom } : {}),
+      },
+      ...(context.warnings.length > 0 ? { warnings: [...context.warnings] } : {}),
     },
-  } as TData & { metadata: Record<string, unknown> };
+  };
 }
 
 export function buildSwallowKitToolDefinitions(
-  runMachineCli: MachineCliRunner = defaultMachineCliRunner
+  runMachineCli: MachineCliRunner = defaultMachineCliRunner,
+  versionContext: McpVersionContext = defaultVersionContext()
 ): ToolDefinition[] {
-  return [
+  const withSwallowKitMetadata = (data: unknown) => withVersionMetadata(data, versionContext);
+  const definitions: ToolDefinition[] = [
     {
       name: "swallowkit_inspect_project",
       description: "Return framework-owned SwallowKit project metadata.",
@@ -169,8 +217,9 @@ export function buildSwallowKitToolDefinitions(
         functionsDir: z.string().optional(),
         apiDir: z.string().optional(),
         apiOnly: z.boolean().optional(),
+        skipInfra: z.boolean().optional().describe("Do not create or update anything under infra/; the container migration stays pending."),
       }),
-      handler: async ({ model, functionsDir, apiDir, apiOnly }: { model: string; functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
+      handler: async ({ model, functionsDir, apiDir, apiOnly, skipInfra }: { model: string; functionsDir?: string; apiDir?: string; apiOnly?: boolean; skipInfra?: boolean }) => {
       const args = ["generate", "scaffold", model];
       if (functionsDir) {
         args.push("--functions-dir", functionsDir);
@@ -180,6 +229,9 @@ export function buildSwallowKitToolDefinitions(
       }
       if (apiOnly) {
         args.push("--api-only");
+      }
+      if (skipInfra) {
+        args.push("--skip-infra");
       }
 
       const response = await executeMachineCommand(args, runMachineCli);
@@ -195,14 +247,16 @@ export function buildSwallowKitToolDefinitions(
         functionsDir: z.string().optional(),
         apiDir: z.string().optional(),
         apiOnly: z.boolean().optional(),
+        skipInfra: z.boolean().optional().describe("Exclude all infra/ changes (container migration) from the plan."),
       }),
-      handler: async ({ model, models, functionsDir, apiDir, apiOnly }: { model?: string; models?: string[]; functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
+      handler: async ({ model, models, functionsDir, apiDir, apiOnly, skipInfra }: { model?: string; models?: string[]; functionsDir?: string; apiDir?: string; apiOnly?: boolean; skipInfra?: boolean }) => {
         const targets = models && models.length > 0 ? models : model ? [model] : [];
         if (targets.length === 0) throw new Error("Provide model or models.");
         const args = ["plan", "scaffold", ...targets];
         if (functionsDir) args.push("--functions-dir", functionsDir);
         if (apiDir) args.push("--api-dir", apiDir);
         if (apiOnly) args.push("--api-only");
+        if (skipInfra) args.push("--skip-infra");
 
         const response = await executeMachineCommand(args, runMachineCli);
         return jsonTextContent(withOperationStatus(response));
@@ -218,8 +272,9 @@ export function buildSwallowKitToolDefinitions(
         functionsDir: z.string().optional(),
         apiDir: z.string().optional(),
         apiOnly: z.boolean().optional(),
+        skipInfra: z.boolean().optional().describe("Do not create or update anything under infra/ (defaults to the plan's setting)."),
       }),
-      handler: async ({ model, planId, approve, functionsDir, apiDir, apiOnly }: { model?: string; planId?: string; approve?: boolean; functionsDir?: string; apiDir?: string; apiOnly?: boolean }) => {
+      handler: async ({ model, planId, approve, functionsDir, apiDir, apiOnly, skipInfra }: { model?: string; planId?: string; approve?: boolean; functionsDir?: string; apiDir?: string; apiOnly?: boolean; skipInfra?: boolean }) => {
         const args = ["apply", "scaffold"];
         if (model) args.push(model);
         if (planId) args.push("--plan", planId);
@@ -227,6 +282,7 @@ export function buildSwallowKitToolDefinitions(
         if (functionsDir) args.push("--functions-dir", functionsDir);
         if (apiDir) args.push("--api-dir", apiDir);
         if (apiOnly) args.push("--api-only");
+        if (skipInfra) args.push("--skip-infra");
 
         const response = await executeMachineCommand(args, runMachineCli);
         return jsonTextContent(withOperationStatus(response));
@@ -391,16 +447,28 @@ export function buildSwallowKitToolDefinitions(
       },
     },
   ];
+
+  // Every response reports which SwallowKit version answered and why it was selected.
+  return definitions.map((definition) => ({
+    ...definition,
+    handler: async (input: unknown) => {
+      const result = await definition.handler(input);
+      return jsonTextContent(withSwallowKitMetadata(JSON.parse(result.content[0].text)));
+    },
+  }));
 }
 
-export function createSwallowKitMcpServer(runMachineCli: MachineCliRunner = defaultMachineCliRunner): McpServer {
-  const version = getSwallowKitVersion();
+export function createSwallowKitMcpServer(
+  runMachineCli: MachineCliRunner = defaultMachineCliRunner,
+  versionContext: McpVersionContext = defaultVersionContext()
+): McpServer {
+  const version = versionContext.mcpVersion;
   const server = new McpServer({
     name: "swallowkit-mcp",
     version,
   });
 
-  for (const tool of buildSwallowKitToolDefinitions(runMachineCli)) {
+  for (const tool of buildSwallowKitToolDefinitions(runMachineCli, versionContext)) {
     server.registerTool(
       tool.name,
       {
@@ -414,9 +482,82 @@ export function createSwallowKitMcpServer(runMachineCli: MachineCliRunner = defa
   return server;
 }
 
+function resolveExecCommand(cwd: string): string {
+  try {
+    return getCommands(detectFromProject(cwd)).exec;
+  } catch {
+    return "npx";
+  }
+}
+
+async function fetchPublishedLatest(): Promise<string | null> {
+  if (process.env.SWALLOWKIT_MCP_UPDATE_CHECK === "0") return null;
+  const registry = (process.env.npm_config_registry || "https://registry.npmjs.org").replace(/\/+$/, "");
+  try {
+    const response = await fetch(`${registry}/swallowkit/latest`, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) return null;
+    const body = await response.json() as { version?: unknown };
+    return typeof body.version === "string" ? body.version : null;
+  } catch {
+    return null;
+  }
+}
+
+function delegateToProjectMcp(entrypoint: string, fromVersion: string): void {
+  const child = spawn(process.execPath, [entrypoint], {
+    stdio: "inherit",
+    env: { ...process.env, [MCP_DELEGATED_FROM_ENV]: fromVersion },
+  });
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => child.kill(signal));
+  }
+  child.on("error", (error) => {
+    console.error(`[swallowkit-mcp] failed to start the project-installed MCP: ${error.message}`);
+    process.exitCode = 1;
+  });
+  child.on("exit", (code, signal) => {
+    process.exitCode = code ?? (signal ? 1 : 0);
+  });
+}
+
 export async function runMcpServer(): Promise<void> {
-  console.error(`[swallowkit-mcp] version: ${getSwallowKitVersion()}`);
-  const server = createSwallowKitMcpServer();
+  const selfVersion = getSwallowKitVersion();
+  const cwd = process.cwd();
+  const execCommand = resolveExecCommand(cwd);
+  const decision = decideMcpLaunch({
+    selfVersion,
+    selfPackageRoot: path.resolve(__dirname, "..", ".."),
+    env: process.env,
+    project: resolveProjectSwallowKit(cwd),
+    execCommand,
+  });
+
+  if (decision.action === "delegate") {
+    console.error(
+      `[swallowkit-mcp] version: ${selfVersion}; delegating to the project-installed swallowkit-mcp ${decision.toVersion} (newer than the launcher).`
+    );
+    delegateToProjectMcp(decision.entrypoint, decision.fromVersion);
+    return;
+  }
+
+  const context = decision.context;
+  console.error(
+    `[swallowkit-mcp] version: ${selfVersion} (selection: ${context.selection}${context.delegatedFrom ? `, delegated from ${context.delegatedFrom}` : ""})`
+  );
+  for (const warning of context.warnings) console.error(`[swallowkit-mcp] warning: ${warning}`);
+
+  if (context.selection === "pinned") {
+    void fetchPublishedLatest().then((latest) => {
+      const notice = buildPinnedUpdateNotice(context, latest, execCommand);
+      if (notice) {
+        context.warnings.push(notice.warning);
+        context.nextActions.push(notice.nextAction);
+        console.error(`[swallowkit-mcp] warning: ${notice.warning}`);
+      }
+    });
+  }
+
+  const server = createSwallowKitMcpServer(defaultMachineCliRunner, context);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

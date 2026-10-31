@@ -27,6 +27,8 @@ SwallowKit CLI の全コマンドとオプションです。
 - [swallowkit create-dev-seeds](#swallowkit-create-dev-seeds)
 - [swallowkit migrations init](#swallowkit-migrations-init)
 - [swallowkit create-migration](#swallowkit-create-migration)
+- [swallowkit migrations add-model](#swallowkit-migrations-add-model)
+- [swallowkit configure-mcp](#swallowkit-configure-mcp)
 - [swallowkit provision](#swallowkit-provision)
 
 ## swallowkit machine
@@ -1103,6 +1105,7 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 | `--functions-dir <dir>` | Azure Functions ディレクトリ | `functions` |
 | `--api-dir <dir>` | BFF ディレクトリ | Next.js: `app/api`、React: `bff` |
 | `--api-only` | UI コンポーネントのみをスキップします。Functions、BFF ルート、OpenAPI、ネイティブスキーマ資産は更新されます。 | `false` |
+| `--skip-infra` | `infra/` 配下を一切作成・変更しません。コンテナー用 migration は未生成として報告され（`infra-skipped`）、後から `migrations add-model` で追加できます。`machine plan/apply/generate scaffold` と MCP（`skipInfra`）でも使えます。 | `false` |
 | `--dry-run` | 書き込まずに変更予定のファイル一覧と競合を表示します | `false` |
 
 ### Connector モデルの動作
@@ -1341,6 +1344,29 @@ npx swallowkit dev --seed-env local
 npx swallowkit create-dev-seeds local --from-emulator --force
 npx swallowkit dev --seed-env local
 ```
+
+## swallowkit migrations add-model
+
+モデルの Cosmos DB コンテナー用 migration だけを生成します。`scaffold --skip-infra` の後に使います。
+
+```bash
+npx swallowkit migrations add-model probe-item --dry-run
+npx swallowkit migrations add-model probe-item
+```
+
+`infra/migrations/<version>-create-<model>-container/main.bicep` を作成し、`infra/migrations/manifest.json` に追記します。同じモデルで再実行しても変更はありません。コネクターモデルにはコンテナーがありません。
+
+## swallowkit configure-mcp
+
+`.mcp.json` で起動する SwallowKit の版を選び直します。変更するのは `SWALLOWKIT_MCP_VERSION` だけです。
+
+```bash
+npx swallowkit configure-mcp                 # auto: プロジェクトのほうが新しい場合を除き latest
+npx swallowkit configure-mcp --version latest
+npx swallowkit configure-mcp --version 2.0.0-alpha.3
+```
+
+変更後は MCP サーバーを再起動してください。詳しくは [MCP のバージョン選択](./ai-mcp-guide.md#mcp-のバージョン選択)を参照してください。
 
 ## swallowkit provision
 
