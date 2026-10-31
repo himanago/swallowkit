@@ -9,8 +9,8 @@
 
 import * as crypto from "crypto";
 import * as fs from "fs";
+import { AzCliAvailability, checkAzCliAvailability, runAzCli } from "../../utils/azure-cli";
 import * as path from "path";
-import { spawnSync } from "child_process";
 import { MachineCommandError } from "../../machine/errors";
 import { getSwallowKitVersion } from "../../version";
 import { inspectInfra, InfraInspection } from "../project/infra";
@@ -30,7 +30,6 @@ import {
   getMigrationTagKey,
   loadMigrationManifest,
   replaceMigrationManifest,
-  resolveMigrations,
   selectPendingMigrations,
 } from "../project/migrations";
 
@@ -113,13 +112,10 @@ function validateProvisionInputs(options: PlanProvisionOptions): void {
   }
 }
 
-function isAzCliAvailable(): boolean {
-  try {
-    const result = spawnSync("az", ["--version"], { shell: false, stdio: "ignore", timeout: 30_000 });
-    return result.status === 0;
-  } catch {
-    return false;
-  }
+function azCliUnavailableWarning(availability: Exclude<AzCliAvailability, { available: true }>): string {
+  return availability.reason === "not-found"
+    ? "az-cli-not-found: Azure CLI was not found on PATH. Install it (https://aka.ms/azure-cli) or add it to PATH, then re-run the plan."
+    : `az-cli-not-runnable: Azure CLI was found but could not be started. ${availability.detail}`;
 }
 
 function displayCommand(command: ProvisionCommand): string {
@@ -133,12 +129,25 @@ interface AzResult {
 }
 
 function runAz(args: string[], timeout = 300_000): AzResult {
-  const result = spawnSync("az", args, { shell: false, encoding: "utf-8", timeout });
+  const result = runAzCli(args, { timeout });
   return {
     status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stdout: result.stdout,
+    stderr: result.stderr || (result.error ? result.error.message : ""),
   };
+}
+
+function azQueryError(code: string, message: string, result: AzResult): MachineCommandError {
+  const output = (result.stderr || result.stdout || "").trim();
+  if (/az login|not logged in|AADSTS|expired/i.test(output)) {
+    return new MachineCommandError(
+      "az-not-logged-in",
+      `Azure CLI is not signed in (or the session expired). Run "az login", then re-run the plan.\n${output.slice(0, 1000)}`,
+      undefined,
+      "requires-human"
+    );
+  }
+  return new MachineCommandError(code, `${message}: ${output}`, undefined, "blocked");
 }
 
 function subscriptionArgs(subscription?: string): string[] {
@@ -176,12 +185,12 @@ interface RemoteGroupState {
 function inspectRemoteGroup(options: PlanProvisionOptions): RemoteGroupState {
   const existsResult = runAz(["group", "exists", "--name", options.resourceGroup, ...subscriptionArgs(options.subscription)], 60_000);
   if (existsResult.status !== 0) {
-    throw new MachineCommandError("azure-state-query-failed", `Could not query resource group: ${(existsResult.stderr || existsResult.stdout || "").trim()}`, undefined, "blocked");
+    throw azQueryError("azure-state-query-failed", "Could not query resource group", existsResult);
   }
   if ((existsResult.stdout || "").trim() !== "true") return { exists: false, tags: {} };
   const showResult = runAz(["group", "show", "--name", options.resourceGroup, ...subscriptionArgs(options.subscription), "--query", "{id:id,tags:tags}", "-o", "json"], 60_000);
   if (showResult.status !== 0) {
-    throw new MachineCommandError("azure-state-query-failed", `Could not read resource group tags: ${(showResult.stderr || showResult.stdout || "").trim()}`, undefined, "blocked");
+    throw azQueryError("azure-state-query-failed", "Could not read resource group tags", showResult);
   }
   const parsed = JSON.parse(showResult.stdout || "{}");
   return { exists: true, id: parsed.id, tags: parsed.tags ?? {} };
@@ -250,9 +259,10 @@ export async function planProvisionOperation(options: PlanProvisionOptions): Pro
     warnings.push("infra/main.parameters.json not found; deployment will fail until it is created.");
   }
 
-  const azCliAvailable = isAzCliAvailable();
-  if (!azCliAvailable) {
-    warnings.push("az-cli-not-found: Azure CLI is not installed. Install it before applying: https://aka.ms/azure-cli");
+  const azCli = checkAzCliAvailability();
+  const azCliAvailable = azCli.available;
+  if (!azCli.available) {
+    warnings.push(azCliUnavailableWarning(azCli));
   }
 
   const mainBicepPath = path.join(projectRoot, "infra", "main.bicep");
@@ -396,7 +406,13 @@ export async function planProvisionOperation(options: PlanProvisionOptions): Pro
       }
     }
   } else if (options.whatIf || options.adoptExisting || options.reconcile) {
-    throw new MachineCommandError("az-cli-not-found", "Azure CLI is required for --what-if, --adopt-existing, and --reconcile.", undefined, "blocked");
+    const detail = azCli.available ? "" : ` ${azCliUnavailableWarning(azCli)}`;
+    throw new MachineCommandError(
+      !azCli.available && azCli.reason === "not-runnable" ? "az-cli-not-runnable" : "az-cli-not-found",
+      `Azure CLI is required for --what-if, --adopt-existing, and --reconcile.${detail}`,
+      undefined,
+      "blocked"
+    );
   }
 
   const fingerprints: Record<string, string | null> = {
@@ -572,7 +588,12 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     throw new MachineCommandError("incompatible-plan", "This provision plan was created by an older SwallowKit version. Re-run plan provision.", undefined, "blocked");
   }
   if (plan.mode === "offline") {
-    throw new MachineCommandError("online-plan-required", "Provision apply requires a fresh plan created while Azure CLI is available and authenticated.", undefined, "blocked");
+    throw new MachineCommandError(
+      "online-plan-required",
+      "This plan was created without Azure CLI, so Azure state was not read and it cannot be applied. Make az available and signed in (az login), then create a new plan.",
+      { planId: plan.planId, warnings: plan.warnings },
+      "blocked"
+    );
   }
 
   if (plan.mode === "adoption-required") {
@@ -584,13 +605,9 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     );
   }
 
-  if (!isAzCliAvailable()) {
-    throw new MachineCommandError(
-      "az-cli-not-found",
-      "Azure CLI is not installed. Install it first: https://aka.ms/azure-cli",
-      undefined,
-      "blocked"
-    );
+  const azCli = checkAzCliAvailability();
+  if (!azCli.available) {
+    throw new MachineCommandError(azCli.reason === "not-found" ? "az-cli-not-found" : "az-cli-not-runnable", azCliUnavailableWarning(azCli), undefined, "blocked");
   }
 
   const executedCommands: string[] = [];

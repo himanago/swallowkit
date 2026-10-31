@@ -16,6 +16,7 @@ import { inspectArtifacts } from "../core/project/artifacts";
 import { detectDrift } from "../core/project/drift";
 import { runVerify } from "../core/verify";
 import { isMachineCommand, runMachineCli } from "../machine";
+import { MachineCommandError } from "../machine/errors";
 
 const packageJsonPath = path.resolve(__dirname, "../../package.json");
 export const CLI_VERSION = JSON.parse(readFileSync(packageJsonPath, "utf8")).version as string;
@@ -356,9 +357,26 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
   await createProgram().parseAsync(normalizeDevCommandArgv(argv));
 }
 
+/** Human-readable error output for regular CLI commands (machine commands print JSON). */
+export function formatCliError(error: unknown): string {
+  if (error instanceof MachineCommandError) {
+    const lines = [`❌ ${error.message}`, `   (code: ${error.code})`];
+    const details = error.details as Record<string, unknown> | undefined;
+    if (details && typeof details === "object") {
+      if (typeof details.nextAction === "string") lines.push(`   Next: ${details.nextAction}`);
+      if (Array.isArray(details.changedFiles)) lines.push(`   Changed files: ${details.changedFiles.join(", ")}`);
+    }
+    return lines.join("\n");
+  }
+  if (error instanceof Error) {
+    return process.env.SWALLOWKIT_DEBUG ? String(error.stack ?? error.message) : `❌ ${error.message}`;
+  }
+  return `❌ ${String(error)}`;
+}
+
 if (require.main === module) {
   void runCli().catch((error) => {
-    console.error(error);
+    console.error(formatCliError(error));
     process.exitCode = 1;
   });
 }

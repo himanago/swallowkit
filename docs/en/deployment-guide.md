@@ -27,7 +27,7 @@ Provision Azure resources and configure CI/CD for a SwallowKit project. After co
 ## Prerequisites
 
 - Azure account
-- Azure CLI (`az`) installed
+- Azure CLI (`az`) installed and signed in (`az login`). `az --version` must work in the terminal that runs SwallowKit. On Windows, the `az.cmd` wrapper from the MSI/winget installer is supported.
 - GitHub account (for GitHub Actions)
 - Azure DevOps account (for Azure Pipelines)
 
@@ -58,6 +58,8 @@ This creates using Bicep templates:
 - Azure Functions (Flex Consumption)
 - Azure Cosmos DB (the Free Tier or Serverless option selected during initialization)
 - Managed Identity (secure service connections)
+
+If `az` cannot be found or started, the plan is reported as `offline`: the commands are shown for review only, the command exits without asking for approval, and nothing is changed in Azure. A `az-cli-not-found` warning means `az` is not on PATH, and `az-cli-not-runnable` means it was found but failed to start. If you are not signed in, the command asks you to run `az login`. Fix the cause and run `provision` again.
 
 In non-interactive environments, pass `--location`, `--swa-location`, and `--approve`. Obtain CI/CD secrets with the Azure CLI commands later in this guide.
 

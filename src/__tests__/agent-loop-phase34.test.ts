@@ -17,6 +17,7 @@ import { inspectInfra } from "../core/project/infra";
 import { loadCustomVerifyChecks, compactVerifyResult, runVerify, VerifyResult } from "../core/verify";
 import { buildAgentSkills, buildWorkflowDocs, writeAgentSkills, writeWorkflowDocs } from "../core/project/workflows";
 import { applyProvisionOperation, planProvisionOperation } from "../core/operations/provision-operations";
+import { resetAzCliInvocationCache, setAzCliInvocationForTesting } from "../utils/azure-cli";
 import { createCustomMigration, initializeLegacyMigrations } from "../core/operations/migration-generator";
 import { createMigrationManifest, encodeMigrationState, getMigrationTagKey, saveMigrationManifest } from "../core/project/migrations";
 
@@ -126,9 +127,12 @@ describe("agent loop phase 3/4", () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-p34-"));
     process.chdir(tempDir);
     (childProcess.spawnSync as unknown as any).mockReturnValue({ status: 1, stdout: "", stderr: "" });
+    // Platform-independent az invocation; the Windows wrapper resolution is covered in azure-cli.test.ts.
+    setAzCliInvocationForTesting({ command: "az", prefixArgs: [], source: "az" });
   });
 
   afterEach(() => {
+    resetAzCliInvocationCache();
     process.chdir(originalCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
     jest.clearAllMocks();
@@ -269,6 +273,7 @@ describe("agent loop phase 3/4", () => {
     createProjectFixture(tempDir);
     writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
     writeFile(path.join(tempDir, "infra", "main.parameters.json"), "{}\n");
+    setAzCliInvocationForTesting(null);
 
     const plan = await runMachine([
       "node", "swallowkit", "machine", "plan", "provision",

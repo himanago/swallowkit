@@ -26,7 +26,7 @@ SwallowKit プロジェクトの Azure リソースをプロビジョニング�
 ## 前提条件
 
 - Azure アカウント
-- Azure CLI (`az`) のインストール
+- Azure CLI (`az`) のインストールとサインイン（`az login`）。SwallowKit を実行するターミナルで `az --version` が動作する必要があります。Windows では MSI / winget でインストールした `az.cmd` に対応しています。
 - GitHub アカウント（GitHub Actions を使用する場合）
 - Azure DevOps アカウント（Azure Pipelines を使用する場合）
 
@@ -57,6 +57,8 @@ npx swallowkit provision --resource-group my-app-rg \
 - Azure Functions (Flex Consumption)
 - Azure Cosmos DB（初期化時に選択した Free Tier または Serverless）
 - マネージド ID（サービス間の安全な接続）
+
+`az` が見つからないか起動できない場合、plan は `offline` になります。このときコマンドは確認用に表示されるだけで、承認を求めずに終了し、Azure には何も変更を加えません。`az-cli-not-found` は PATH に `az` がないこと、`az-cli-not-runnable` は見つかったものの起動できなかったことを示します。サインインしていない場合は `az login` の実行を案内します。原因を解消してから、もう一度 `provision` を実行してください。
 
 非対話環境では `--location`、`--swa-location`、`--approve` を明示してください。CI/CD の secrets は後述の Azure CLI コマンドで取得します。
 

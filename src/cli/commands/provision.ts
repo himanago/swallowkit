@@ -97,8 +97,26 @@ export const provisionCommand = new Command("provision")
     }
     for (const command of plan.commands) console.log(`  ${command}`);
 
+    if (plan.mode === "offline") {
+      console.log([
+        "",
+        "❌ Azure state could not be read, so this plan cannot be applied. Nothing was changed in Azure.",
+        "   The commands above are shown for review only.",
+        "   1. Make sure `az --version` works in this terminal (install: https://aka.ms/azure-cli).",
+        "   2. Sign in with `az login` (and `az account set --subscription <id>` if needed).",
+        "   3. Re-run this provision command.",
+      ].join("\n"));
+      process.exitCode = 1;
+      return;
+    }
+
     if (plan.mode === "adoption-required") {
       throw new Error('Existing resource group requires: migrations init --legacy-baseline, then provision --adopt-existing --baseline 0 --what-if.');
+    }
+
+    if (plan.mode === "noop") {
+      console.log("Azure is already up to date. Nothing to apply.");
+      return;
     }
 
     let approved = options.approve === true;
