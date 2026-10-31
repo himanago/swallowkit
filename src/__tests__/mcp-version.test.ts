@@ -209,7 +209,7 @@ describe("MCP launcher version in .mcp.json", () => {
 });
 
 describe("built MCP entrypoint version delegation", () => {
-  const runEntrypoint = (cwd: string, env: NodeJS.ProcessEnv) =>
+  const runEntrypoint = (cwd: string, env: NodeJS.ProcessEnv, until = /version: .*selection/) =>
     new Promise<{ stderr: string; code: number | null }>((resolve, reject) => {
       const child = spawn(process.execPath, [builtMcpEntrypoint], {
         cwd,
@@ -220,7 +220,7 @@ describe("built MCP entrypoint version delegation", () => {
       const timer = setTimeout(() => child.kill(), 10000);
       child.stderr.on("data", (chunk) => {
         stderr += chunk;
-        if (/version: .*selection/.test(stderr)) child.kill();
+        if (until.test(stderr)) child.kill();
       });
       child.on("error", reject);
       child.on("close", (code) => {
@@ -250,7 +250,7 @@ describe("built MCP entrypoint version delegation", () => {
       const fromOlder = await runEntrypoint(older, { SWALLOWKIT_MCP_VERSION: "latest" });
       expect(fromOlder.stderr).toContain(`version: ${getSwallowKitVersion()} (selection: running-version)`);
       expect(fromOlder.stderr).not.toContain("should-not-run");
-      const pinned = await runEntrypoint(newer, { SWALLOWKIT_MCP_VERSION: getSwallowKitVersion() });
+      const pinned = await runEntrypoint(newer, { SWALLOWKIT_MCP_VERSION: getSwallowKitVersion() }, /mcp-older-than-project/);
       expect(pinned.stderr).toContain("(selection: pinned)");
       expect(pinned.stderr).toContain("mcp-older-than-project");
       expect(pinned.stderr).not.toContain("should-not-run");

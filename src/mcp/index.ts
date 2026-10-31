@@ -541,10 +541,11 @@ export async function runMcpServer(): Promise<void> {
   }
 
   const context = decision.context;
-  console.error(
-    `[swallowkit-mcp] version: ${selfVersion} (selection: ${context.selection}${context.delegatedFrom ? `, delegated from ${context.delegatedFrom}` : ""})`
-  );
-  for (const warning of context.warnings) console.error(`[swallowkit-mcp] warning: ${warning}`);
+  // One write keeps the version line and its warnings together for log readers.
+  console.error([
+    `[swallowkit-mcp] version: ${selfVersion} (selection: ${context.selection}${context.delegatedFrom ? `, delegated from ${context.delegatedFrom}` : ""})`,
+    ...context.warnings.map((warning) => `[swallowkit-mcp] warning: ${warning}`),
+  ].join("\n"));
 
   if (context.selection === "pinned") {
     void fetchPublishedLatest().then((latest) => {
