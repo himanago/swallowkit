@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as childProcess from "child_process";
+import * as ts from "typescript";
 import { EventEmitter } from "events";
 import { runMachineCli } from "../machine";
 import { getCSharpSchemaModelPath } from "../core/scaffold/native-schema-generator";
@@ -317,6 +318,8 @@ describe("plan / apply / drift / verify machine commands", () => {
     ['export { Todo } from "./models/todo";\n', false],
     ["export * from './models/todo';\n", false],
     ["export type { Todo } from './models/todo';\n", true],
+    ["export type { Todo, displayName } from './models/todo';\n", true],
+    ["export { type Todo } from './models/todo';\n", true],
     ["export { Todo as MyTodo } from './models/todo';", true],
   ])("preserves existing exports and handles syntax variations: %s", async (content, append) => {
     createProjectFixture(tempDir);
@@ -326,6 +329,16 @@ describe("plan / apply / drift / verify machine commands", () => {
     expect(plan.response.data.operations.some((op: { path: string; action: string }) =>
       op.path === "shared/index.ts" && op.action === "append")).toBe(append);
     expect(fs.readFileSync(indexPath, "utf-8")).toBe(content);
+
+    const apply = await runMachine(machineArgs("apply", "scaffold", "--plan", plan.response.data.planId));
+    expect(apply.response.ok).toBe(true);
+    // The shared package must still compile: no duplicate Todo binding, and Todo is usable as a value.
+    writeFile(path.join(tempDir, "shared", "consumer.ts"), "import { Todo } from './index';\nexport const parsed: Todo = Todo.parse({ id: '1', name: 'x' });\n");
+    const program = ts.createProgram([indexPath, path.join(tempDir, "shared", "consumer.ts")], {
+      strict: true, noEmit: true, skipLibCheck: true, module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+    });
+    expect(ts.getPreEmitDiagnostics(program).map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"))).toEqual([]);
   });
 
   it("updates a ledger-unregistered legacy manifest without approval and preserves baseline identity", async () => {

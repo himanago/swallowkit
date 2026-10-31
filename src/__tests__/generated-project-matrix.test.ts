@@ -66,7 +66,7 @@ interface AuthSetup {
   providers: Array<{ provider: Provider; scheme?: string }>;
   defaultPolicy?: string;
 }
-type PolicyId = "none" | "roles" | "rw-roles" | "named" | "rw-named";
+type PolicyId = "none" | "roles" | "rw-roles" | "named" | "rw-named" | "read-named-only" | "rw-mixed";
 
 const AUTH_SETUPS: AuthSetup[] = [
   { id: "no-auth", kind: "none", providers: [] },
@@ -91,6 +91,9 @@ const POLICIES: Record<PolicyId, string | null> = {
   "rw-roles": "{ read: ['reader'], write: ['admin'] }",
   named: "{ policy: 'adminOnly' }",
   "rw-named": "{ read: 'readers', write: 'adminOnly' }",
+  // Partially named policies: the unnamed operation falls back to role guards.
+  "read-named-only": "{ read: 'readers' }",
+  "rw-mixed": "{ read: 'readers', write: ['admin'] }",
 };
 
 interface MatrixCase {
@@ -105,11 +108,14 @@ interface MatrixCase {
 
 /** The contract: either a precise prerequisite error, or a project that compiles. */
 function expectedBlock(auth: AuthSetup, policy: PolicyId): string | null {
-  const namedPolicy = policy === "named" || policy === "rw-named" || (policy === "none" && Boolean(auth.defaultPolicy));
+  const referencesNamedPolicy = ["named", "rw-named", "read-named-only", "rw-mixed"].includes(policy) ||
+    (policy === "none" && Boolean(auth.defaultPolicy));
+  // Every operation resolves to a named policy (named schemes only have the multi-scheme router).
+  const fullyNamed = policy === "named" || policy === "rw-named" || (policy === "none" && auth.kind === "named");
   if (auth.kind === "none") return policy === "none" ? null : "auth-policy-without-auth";
-  if (auth.kind === "named" && (policy === "roles" || policy === "rw-roles")) return "auth-policy-requires-named-policy";
+  if (auth.kind === "named" && !fullyNamed) return "auth-policy-requires-named-policy";
   // Named policies are routed by the multi-scheme router, which only exists for named auth.schemes.
-  if (auth.kind === "legacy" && namedPolicy) return "auth-named-policy-requires-named-scheme";
+  if (auth.kind === "legacy" && referencesNamedPolicy) return "auth-named-policy-requires-named-scheme";
   return null;
 }
 

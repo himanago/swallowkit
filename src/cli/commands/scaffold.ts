@@ -355,10 +355,16 @@ export function resolveAuthPolicy(modelInfo: ModelInfo, authConfig: AuthConfig |
     const normalized = normalizeAuthConfig(authConfig);
     const usesNamedPolicy = Boolean(modelInfo.authPolicy.policy ||
       typeof modelInfo.authPolicy.read === "string" || typeof modelInfo.authPolicy.write === "string");
-    if (authConfig?.schemes && !authConfig.provider && !usesNamedPolicy) {
+    // Guards resolve each operation independently: a string selects the named router, an array (or
+    // the roles fallback) selects the single-provider helper. Named schemes only have the router.
+    const operationIsNamed = (selected: string | string[] | undefined) =>
+      typeof selected === "string" || (selected === undefined && Boolean(modelInfo.authPolicy!.policy));
+    const everyOperationNamed = operationIsNamed(modelInfo.authPolicy.read) && operationIsNamed(modelInfo.authPolicy.write) &&
+      !modelInfo.authPolicy.roles;
+    if (authConfig?.schemes && !authConfig.provider && !everyOperationNamed) {
       throw new MachineCommandError(
         "auth-policy-requires-named-policy",
-        `Model '${modelInfo.name}' declares a role-only authPolicy with named authentication schemes. Define auth.authorization.policies and reference one with authPolicy.policy or read/write policy names; no artifacts were written.`,
+        `Model '${modelInfo.name}' declares an authPolicy whose read or write operation does not resolve to a named policy, but authentication uses named schemes. Use authPolicy = { policy: '<name>' } or name both read and write policies (role arrays are not supported with named schemes); no artifacts were written.`,
         { model: modelInfo.name },
         "blocked",
         [{

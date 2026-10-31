@@ -765,7 +765,7 @@ function updateConfigWithAuth(cwd: string, provider: AuthProvider, config: Custo
       provider,
       ...(provider === "custom-jwt" ? { customJwt: { ...config, jwtSecretEnv: config.jwtSecretEnv || "JWT_SECRET", tokenExpiry: config.tokenExpiry || "24h" } } : {}),
       ...(provider === "swa" ? { swa: { allowedProviders: normalizeSwaProviders(allowedProviders), roleSource: "swa-roles" } } : {}),
-      authorization: { defaultPolicy: "authenticated" },
+      authorization: { defaultPolicy: provider === "none" ? "anonymous" : "authenticated" },
     };
     session.writeFile(jsonPath, JSON.stringify(value, null, 2) + "\n", extensionMeta);
     console.log(` Updated: swallowkit.config.json`);
@@ -815,7 +815,8 @@ function updateConfigWithAuth(cwd: string, provider: AuthProvider, config: Custo
     provider: '${provider}',
 ${providerSettings}
     authorization: {
-      defaultPolicy: 'authenticated',
+      // Disabled auth has no scheme to authenticate against; 'authenticated' would fail validateConfig.
+      defaultPolicy: '${provider === "none" ? "anonymous" : "authenticated"}',
     },
   },
 `;

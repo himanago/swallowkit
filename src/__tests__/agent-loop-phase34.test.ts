@@ -631,8 +631,27 @@ describe("agent loop phase 3/4", () => {
     expect(result.checks[0].status).toBe("fail");
     expect(result.checks[0].evidence.diagnostics).toContain('  File "./blueprints/probe_item.py", line 12');
     expect(spawnMock).toHaveBeenCalledWith(python, [
-      "-m", "compileall", "-q", "-x", expect.stringContaining(".codegen-venv"), ".",
+      "-m", "compileall", "-q", "-f", "-x", expect.stringContaining(".codegen-venv"), ".",
     ], expect.objectContaining({ cwd: path.join(tempDir, "functions"), shell: false }));
+  });
+
+  it.each([
+    ["python", "python"],
+    ["unsupported", "typescript"],
+  ])("resolves the backend like generation when SWALLOWKIT_BACKEND_LANGUAGE=%s", async (override, expected) => {
+    createProjectFixture(tempDir); // config file says typescript
+    fs.symlinkSync(path.join(repoRoot, "node_modules", "typescript"), path.join(tempDir, "node_modules", "typescript"), "junction");
+    const spawnMock = childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>;
+    spawnMock.mockReturnValue({ status: 0, stdout: "", stderr: "" });
+    const previous = process.env.SWALLOWKIT_BACKEND_LANGUAGE;
+    process.env.SWALLOWKIT_BACKEND_LANGUAGE = override;
+    try {
+      const result = await runVerify(["backend-build"], tempDir);
+      expect(result.checks[0].evidence.command).toContain(expected === "python" ? "compileall" : "tsc");
+    } finally {
+      if (previous === undefined) delete process.env.SWALLOWKIT_BACKEND_LANGUAGE;
+      else process.env.SWALLOWKIT_BACKEND_LANGUAGE = previous;
+    }
   });
 
   it("reports verification command startup failures as blocked", async () => {

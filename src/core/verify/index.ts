@@ -15,7 +15,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { spawnSync } from "child_process";
-import { loadConfig } from "../config";
+import { loadConfig, loadConfigFromEnv } from "../config";
 import { detectDrift, DriftFinding } from "../project/drift";
 import { saveLastVerifyState } from "../project/state";
 import { ProjectViolation, validateProject } from "../project/validation";
@@ -227,7 +227,9 @@ function runBackendBuildCheck(projectRoot: string): VerifyCheckResult {
   const configPath = ["swallowkit.config.json", "swallowkit.config.js", ".swallowkitrc.json"]
     .map((name) => path.join(projectRoot, name)).find((file) => fs.existsSync(file));
   if (!configPath) return backendUnavailable("SwallowKit configuration not found; backend language is unknown.");
-  const language = loadConfig(configPath, true, true).backend?.language ?? "typescript";
+  // Same effective language as generation (getBackendLanguage): env override, then file, invalid -> typescript.
+  const configured = loadConfigFromEnv().backend?.language ?? loadConfig(configPath, true, true).backend?.language;
+  const language = configured && ["typescript", "csharp", "python"].includes(configured) ? configured : "typescript";
   let command: string;
   let args: string[];
   if (language === "csharp") {
@@ -253,7 +255,8 @@ function runBackendBuildCheck(projectRoot: string): VerifyCheckResult {
     });
     if (!python) return backendUnavailable("Python 3 is not available in functions/.venv or on PATH; Python syntax compilation was skipped.");
     command = python.command;
-    args = [...python.args, "-m", "compileall", "-q", "-x", "[/\\\\](?:\\.venv|\\.codegen-venv|node_modules|__pycache__)(?:[/\\\\]|$)", "."];
+    // -f: never trust cached bytecode, which can survive same-size edits within one mtime second.
+    args = [...python.args, "-m", "compileall", "-q", "-f", "-x", "[/\\\\](?:\\.venv|\\.codegen-venv|node_modules|__pycache__)(?:[/\\\\]|$)", "."];
   } else {
     let tscPath: string;
     try {

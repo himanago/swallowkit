@@ -10,12 +10,12 @@ import {
   generateNamedAuthRouterPython,
   generateNamedAuthRouterTS,
 } from "../core/scaffold/auth-generator";
-import { normalizeAuthConfig } from "../core/config";
+import { normalizeAuthConfig, validateConfig } from "../core/config";
 import { parseAuthPolicy } from "../core/scaffold/model-parser";
 import { createBasicModelInfo } from "./fixtures";
 import { generateCSharpAzureFunctionsCRUD, generateCompactAzureFunctionsCRUD, generatePythonAzureFunctionsCRUD } from "../core/scaffold/functions-generator";
 import { generateAuthLayout, generateNewPage } from "../core/scaffold/ui-generator";
-import { AuthConfig } from "../types";
+import { AuthConfig, SwallowKitConfig } from "../types";
 
 const namedAuthConfig: AuthConfig = {
   schemes: {
@@ -179,6 +179,23 @@ describe("add-auth named scheme CLI", () => {
     await addAuthCommand({ scheme: "admin", provider: "swa" });
     expect(JSON.parse(fs.readFileSync(path.join(root, "swallowkit.config.json"), "utf-8")).auth.schemes.admin.provider).toBe("swa");
     expect(fs.readFileSync(path.join(root, "swallowkit.config.js"), "utf-8")).toBe(js);
+  });
+
+  it.each(["json", "js"] as const)("disables auth in a %s config with an anonymous default that passes validation", async (format) => {
+    fs.rmSync(path.join(root, "swallowkit.config.json"));
+    if (format === "json") fs.writeFileSync(path.join(root, "swallowkit.config.json"), JSON.stringify({ backend: { language: "typescript" } }));
+    else fs.writeFileSync(path.join(root, "swallowkit.config.js"), "module.exports = {\n  backend: { language: 'typescript' },\n}\n");
+    await addAuthCommand({ provider: "none" });
+    let config: SwallowKitConfig;
+    if (format === "json") {
+      config = JSON.parse(fs.readFileSync(path.join(root, "swallowkit.config.json"), "utf-8"));
+    } else {
+      const configModule = { exports: {} as SwallowKitConfig };
+      new Function("module", fs.readFileSync(path.join(root, "swallowkit.config.js"), "utf-8"))(configModule);
+      config = configModule.exports;
+    }
+    expect(config.auth).toMatchObject({ provider: "none", authorization: { defaultPolicy: "anonymous" } });
+    expect(validateConfig(config)).toEqual({ valid: true, errors: [] });
   });
 
   it("records single-provider auth in swallowkit.config.json instead of silently skipping it", async () => {

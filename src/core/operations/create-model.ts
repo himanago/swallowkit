@@ -97,19 +97,52 @@ export function updateSharedIndex(modelPath: string, schemaName: string, session
   const content = session.fileExists(indexPath) ? session.readFile(indexPath) : "";
   const modulePath = `./${path.relative(path.dirname(indexPath), modelPath).replace(/\\/g, "/").replace(/\.ts$/, "")}`;
   const source = ts.createSourceFile(indexPath, content, ts.ScriptTarget.Latest, true);
+  // Text edits that turn a type-only re-export of this schema into nothing (a value export of the same
+  // name also exports its type); keeping both would be a duplicate-identifier error.
+  const edits: Array<{ start: number; end: number; text: string }> = [];
+  let hasValueExport = false;
   for (const statement of source.statements) {
-    if (!ts.isExportDeclaration(statement) || statement.isTypeOnly ||
-        !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    if (!ts.isExportDeclaration(statement) || !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
     const exportedPath = statement.moduleSpecifier.text.replace(/\.(ts|js)$/, "");
     if (exportedPath !== modulePath) continue;
-    if (!statement.exportClause || (ts.isNamedExports(statement.exportClause) &&
-        statement.exportClause.elements.some((element) => !element.isTypeOnly &&
-          element.name.text === schemaName && (element.propertyName?.text ?? element.name.text) === schemaName))) {
-      return false;
+    if (!statement.exportClause) {
+      if (!statement.isTypeOnly) hasValueExport = true;
+      continue;
+    }
+    if (!ts.isNamedExports(statement.exportClause)) continue;
+    const elements = statement.exportClause.elements;
+    const matches = elements.filter((element) =>
+      element.name.text === schemaName && (element.propertyName?.text ?? element.name.text) === schemaName);
+    for (const element of matches) {
+      if (!statement.isTypeOnly && !element.isTypeOnly) {
+        hasValueExport = true;
+      } else if (!statement.isTypeOnly) {
+        // export { type Todo } -> export { Todo }
+        edits.push({ start: element.getStart(source), end: element.getEnd(), text: schemaName });
+        hasValueExport = true;
+      } else if (elements.length === 1) {
+        let end = statement.getEnd();
+        if (content.slice(end, end + 2) === "\r\n") end += 2;
+        else if (content[end] === "\n") end += 1;
+        edits.push({ start: statement.getStart(source), end, text: "" });
+      } else {
+        const index = elements.indexOf(element);
+        const start = index === 0 ? element.getStart(source) : elements[index - 1].getEnd();
+        const end = index === 0 ? elements[index + 1].getStart(source) : element.getEnd();
+        edits.push({ start, end, text: "" });
+      }
     }
   }
-  const exportLine = `export { ${schemaName} } from '${modulePath}';`;
-  session.writeFile(indexPath, `${content}${content && !content.endsWith("\n") ? "\n" : ""}${exportLine}\n`, {
+  let updated = content;
+  for (const edit of edits.sort((left, right) => right.start - left.start)) {
+    updated = `${updated.slice(0, edit.start)}${edit.text}${updated.slice(edit.end)}`;
+  }
+  if (hasValueExport && updated === content) return false;
+  if (!hasValueExport) {
+    const exportLine = `export { ${schemaName} } from '${modulePath}';`;
+    updated = `${updated}${updated && !updated.endsWith("\n") ? "\n" : ""}${exportLine}\n`;
+  }
+  session.writeFile(indexPath, updated, {
     ownership: "extension-point",
     generator: CREATE_MODEL_GENERATOR,
   });
