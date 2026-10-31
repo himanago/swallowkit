@@ -1388,11 +1388,11 @@ pnpm dlx swallowkit provision [options]
 | `--subscription <id>` | | サブスクリプション ID | |
 | `--location <region>` | | Functions / Cosmos DB のリージョン。非対話実行では必須 | |
 | `--swa-location <region>` | | Static Web Apps のリージョン。非対話実行では必須 | |
-| `--what-if` | | Azure what-if を plan に含める | |
+| `--what-if` | | Azure what-if の結果を確認内容に含める | |
 | `--adopt-existing` | | タグなし既存環境を baseline として採用する | |
 | `--baseline <version>` | | adoption の baseline。現在は `0` のみ | |
 | `--reconcile` | | `main.bicep` 全体を明示的に再デプロイする | |
-| `--approve` | | 表示された plan を非対話で承認する | |
+| `--approve` | | 確認を求めずに、表示された Azure コマンドを実行する | |
 
 ### リージョン選択
 

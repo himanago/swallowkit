@@ -5,6 +5,8 @@
  *   ネットワークアクセスや az login を必要とする操作は行わない。
  *   --what-if を明示した場合のみ az deployment group what-if を実行する。
  * - apply provision: 常に承認(--approve)必須。承認なしでは requires-human で停止する。
+ * - 対話的な `swallowkit provision` は同じ計画をメモリ上で作成・表示し、確認後に
+ *   executeProvisionPlan で同じ安全確認を経て実行する(計画ファイルは保存しない)。
  */
 
 import * as crypto from "crypto";
@@ -114,7 +116,7 @@ function validateProvisionInputs(options: PlanProvisionOptions): void {
 
 function azCliUnavailableWarning(availability: Exclude<AzCliAvailability, { available: true }>): string {
   return availability.reason === "not-found"
-    ? "az-cli-not-found: Azure CLI was not found on PATH. Install it (https://aka.ms/azure-cli) or add it to PATH, then re-run the plan."
+    ? "az-cli-not-found: Azure CLI was not found on PATH. Install it (https://aka.ms/azure-cli) or add it to PATH, then try again."
     : `az-cli-not-runnable: Azure CLI was found but could not be started. ${availability.detail}`;
 }
 
@@ -142,7 +144,7 @@ function azQueryError(code: string, message: string, result: AzResult): MachineC
   if (/az login|not logged in|AADSTS|expired/i.test(output)) {
     return new MachineCommandError(
       "az-not-logged-in",
-      `Azure CLI is not signed in (or the session expired). Run "az login", then re-run the plan.\n${output.slice(0, 1000)}`,
+      `Azure CLI is not signed in (or the session expired). Run "az login", then try again.\n${output.slice(0, 1000)}`,
       undefined,
       "requires-human"
     );
@@ -240,7 +242,14 @@ function assertAdoptionWhatIfIsSafe(whatIfResult: string): void {
   }
 }
 
-export async function planProvisionOperation(options: PlanProvisionOptions): Promise<ProvisionPlanData> {
+/**
+ * Builds the provision plan. Machine/MCP callers persist it for a later `apply provision --plan`;
+ * the interactive `swallowkit provision` command keeps it in memory and executes it after confirmation.
+ */
+export async function planProvisionOperation(
+  options: PlanProvisionOptions,
+  planOptions: { persist?: boolean } = {}
+): Promise<ProvisionPlanData> {
   const projectRoot = process.cwd();
   validateProvisionInputs(options);
 
@@ -476,7 +485,7 @@ export async function planProvisionOperation(options: PlanProvisionOptions): Pro
     ...(baselineSnapshotChecksum ? { baselineSnapshotChecksum } : {}),
   };
 
-  savePlanState(plan, projectRoot);
+  if (planOptions.persist !== false) savePlanState(plan, projectRoot);
   return plan;
 }
 
@@ -506,36 +515,39 @@ function readRemoteMigrationState(plan: ProvisionPlanData): { group: RemoteGroup
   return { group, state: tagValue ? decodeMigrationState(tagValue) : null };
 }
 
-function assertPlanRemoteState(plan: ProvisionPlanData, expected: MigrationState | null | undefined): void {
+function assertPlanRemoteState(plan: ProvisionPlanData, expected: MigrationState | null | undefined, retryHint: string): void {
   if (plan.mode === "offline") return;
   const current = readRemoteMigrationState(plan);
   if (plan.mode === "bootstrap") {
     if (current.group.exists) {
-      throw new MachineCommandError("stale-azure-state", "The resource group was created after this plan. Re-run plan provision.", undefined, "blocked");
+      throw new MachineCommandError("stale-azure-state", `The resource group was created after the preview was computed. ${retryHint}`, undefined, "blocked");
     }
     return;
   }
   if (!current.group.exists || !statesEqual(current.state, expected)) {
     throw new MachineCommandError(
       "stale-azure-state",
-      "Azure migration state changed after this plan was created. Re-run plan provision.",
+      `Azure migration state changed after the preview was computed. ${retryHint}`,
       { expected, actual: current.state, resourceGroupExists: current.group.exists },
       "blocked"
     );
   }
 }
 
-function assertTagExpectedState(plan: ProvisionPlanData, expected: MigrationState | null | undefined): void {
+function assertTagExpectedState(plan: ProvisionPlanData, expected: MigrationState | null | undefined, retryHint: string): void {
   const current = readRemoteMigrationState(plan);
   if (!current.group.exists || !statesEqual(current.state, expected)) {
     throw new MachineCommandError(
       "stale-azure-state",
-      "Azure migration state changed before its tag could be updated. Re-run plan provision.",
+      `Azure migration state changed before its tag could be updated. ${retryHint}`,
       { expected, actual: current.state, resourceGroupExists: current.group.exists },
       "blocked"
     );
   }
 }
+
+const MACHINE_RETRY_HINT = "Re-run plan provision.";
+export const INTERACTIVE_PROVISION_RETRY_HINT = 'Run "swallowkit provision" again to review the current state.';
 
 export async function applyProvisionOperation(options: ApplyProvisionOptions): Promise<ApplyProvisionResult> {
   const projectRoot = process.cwd();
@@ -550,6 +562,22 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     );
   }
 
+  const result = await executeProvisionPlan(plan, { approve: options.approve, retryHint: MACHINE_RETRY_HINT, projectRoot });
+  deletePlanState(plan.planId, projectRoot);
+  return result;
+}
+
+/**
+ * Runs an approved provision plan with every safety check: local files and Azure state must still
+ * match the reviewed preview, and each migration/tag step re-checks Azure state before it runs.
+ */
+export async function executeProvisionPlan(
+  plan: ProvisionPlanData,
+  options: { approve?: boolean; retryHint?: string; projectRoot?: string } = {}
+): Promise<ApplyProvisionResult> {
+  const projectRoot = options.projectRoot ?? process.cwd();
+  const retryHint = options.retryHint ?? MACHINE_RETRY_HINT;
+
   // Bicep が plan 後に変更されていないか確認
   const changedFiles: string[] = [];
   for (const [relativePath, expectedHash] of Object.entries(plan.fingerprints)) {
@@ -559,8 +587,8 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
   if (changedFiles.length > 0) {
     throw new MachineCommandError(
       "stale-plan",
-      `Plan "${options.planId}" is stale: ${changedFiles.join(", ")} changed after the plan was created. Re-run "plan provision".`,
-      { planId: options.planId, changedFiles },
+      `${changedFiles.join(", ")} changed after the preview was computed. ${retryHint}`,
+      { planId: plan.planId, changedFiles },
       "blocked"
     );
   }
@@ -569,8 +597,8 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     if (currentBaselineChecksum !== plan.baselineSnapshotChecksum) {
       throw new MachineCommandError(
         "stale-plan",
-        `Plan "${options.planId}" is stale: baseline infrastructure inventory changed after the plan was created.`,
-        { planId: options.planId },
+        `Baseline infrastructure files changed after the preview was computed. ${retryHint}`,
+        { planId: plan.planId },
         "blocked"
       );
     }
@@ -585,12 +613,12 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     );
   }
   if (!plan.mode || !plan.commandSpecs) {
-    throw new MachineCommandError("incompatible-plan", "This provision plan was created by an older SwallowKit version. Re-run plan provision.", undefined, "blocked");
+    throw new MachineCommandError("incompatible-plan", `This provision plan was created by an older SwallowKit version. ${retryHint}`, undefined, "blocked");
   }
   if (plan.mode === "offline") {
     throw new MachineCommandError(
       "online-plan-required",
-      "This plan was created without Azure CLI, so Azure state was not read and it cannot be applied. Make az available and signed in (az login), then create a new plan.",
+      `Azure state was not read because Azure CLI was unavailable, so nothing can be applied. Make az available and signed in (az login). ${retryHint}`,
       { planId: plan.planId, warnings: plan.warnings },
       "blocked"
     );
@@ -614,14 +642,14 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
   const warnings = [...plan.warnings];
   let deploymentOutputs: Record<string, unknown> | undefined;
 
-  assertPlanRemoteState(plan, plan.remoteState);
+  assertPlanRemoteState(plan, plan.remoteState, retryHint);
 
   for (const command of plan.commandSpecs) {
     if (command.kind === "migration") {
-      assertPlanRemoteState(plan, command.expectedState);
+      assertPlanRemoteState(plan, command.expectedState, retryHint);
     }
     if (command.kind === "tag") {
-      assertTagExpectedState(plan, command.expectedState);
+      assertTagExpectedState(plan, command.expectedState, retryHint);
     }
     const result = runAz(command.args);
     const commandText = displayCommand(command);
@@ -647,7 +675,6 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
   if (plan.manifestAfterApply) {
     replaceMigrationManifest(plan.manifestAfterApply, projectRoot);
   }
-  deletePlanState(plan.planId, projectRoot);
 
   return {
     planId: plan.planId,

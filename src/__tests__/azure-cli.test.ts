@@ -10,7 +10,8 @@ import {
   runAzCli,
   setAzCliInvocationForTesting,
 } from "../utils/azure-cli";
-import { planProvisionOperation } from "../core/operations/provision-operations";
+import { INTERACTIVE_PROVISION_RETRY_HINT, executeProvisionPlan, planProvisionOperation } from "../core/operations/provision-operations";
+import { describeProvisionAction } from "../cli/commands/provision";
 import { createMigrationManifest, saveMigrationManifest } from "../core/project/migrations";
 import { formatCliError } from "../cli";
 import { MachineCommandError } from "../machine/errors";
@@ -139,6 +140,39 @@ describe("provision planning with Azure CLI state", () => {
     expect(plan.mode).toBe("bootstrap");
     expect(plan.warnings.filter((warning) => warning.startsWith("az-"))).toEqual([]);
     expect(spawnSyncMock.mock.calls.every((call: unknown[]) => (call[2] as { shell?: boolean }).shell === false)).toBe(true);
+  });
+
+  const plansDir = () => path.join(project, ".swallowkit", "state", "plans");
+  const savedPlans = () => (fs.existsSync(plansDir()) ? fs.readdirSync(plansDir()) : []);
+
+  it("keeps the interactive preview in memory and re-checks Azure before running it", async () => {
+    let groupExists = false;
+    spawnSyncMock.mockImplementation((_command: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: `${groupExists}\n`, stderr: "" };
+      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: {} }), stderr: "" };
+      return { status: 1, stdout: "", stderr: `unexpected ${args.join(" ")}` };
+    });
+    const preview = await planProvisionOperation(options, { persist: false });
+    expect(savedPlans()).toEqual([]);
+    expect(describeProvisionAction(preview)).toBe(
+      "Resource group rg-sample does not exist yet. It will be created in japaneast and the infrastructure in infra/main.bicep will be deployed."
+    );
+
+    groupExists = true;
+    await expect(executeProvisionPlan(preview, { approve: true, retryHint: INTERACTIVE_PROVISION_RETRY_HINT })).rejects.toMatchObject({
+      code: "stale-azure-state",
+      message: 'The resource group was created after the preview was computed. Run "swallowkit provision" again to review the current state.',
+    });
+    expect(spawnSyncMock.mock.calls.some((call: unknown[]) => (call[1] as string[])[0] === "group" && (call[1] as string[])[1] === "create")).toBe(false);
+  });
+
+  it("still saves plans for the machine plan/apply workflow", async () => {
+    spawnSyncMock.mockImplementation((_command: string, args: string[]) => args[0] === "--version"
+      ? { status: 0, stdout: "azure-cli", stderr: "" }
+      : { status: 0, stdout: "false\n", stderr: "" });
+    const plan = await planProvisionOperation(options);
+    expect(savedPlans().some((file) => file.includes(plan.planId))).toBe(true);
   });
 
   it("asks for az login instead of reporting a missing CLI", async () => {

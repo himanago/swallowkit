@@ -1266,11 +1266,11 @@ pnpm dlx swallowkit provision [options]
 | `--subscription <id>` | | Subscription ID | |
 | `--location <region>` | | Functions/Cosmos DB region; required non-interactively | |
 | `--swa-location <region>` | | Static Web Apps region; required non-interactively | |
-| `--what-if` | | Include Azure what-if evidence in the plan | |
+| `--what-if` | | Include Azure what-if evidence in the preview | |
 | `--adopt-existing` | | Adopt an existing untagged environment as a baseline | |
 | `--baseline <version>` | | Adoption baseline; currently only `0` | |
 | `--reconcile` | | Explicitly redeploy all of `main.bicep` | |
-| `--approve` | | Approve the displayed plan non-interactively | |
+| `--approve` | | Run the displayed Azure commands without the confirmation prompt | |
 
 ### Region Selection
 

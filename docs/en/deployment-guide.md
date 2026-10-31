@@ -51,7 +51,7 @@ npx swallowkit provision --resource-group my-app-rg \
   --location japaneast --swa-location eastasia
 ```
 
-If regions are omitted, the command prompts for them. On the first run it verifies that the resource group does not exist, deploys `infra/main.bicep`, and records migration baseline 0 in a resource-group tag. The plan and Azure commands are displayed for approval before anything is applied.
+If regions are omitted, the command prompts for them. On the first run it verifies that the resource group does not exist, deploys `infra/main.bicep`, and records migration baseline 0 in a resource-group tag. Before anything changes, the command reads the current Azure state, explains what will happen, lists the exact Azure CLI commands, and asks for confirmation. Nothing is saved for later; if Azure changes before the commands run, the command stops and asks you to run it again. (Agents use the separate `swallowkit machine plan provision` / `apply provision --plan` workflow.)
 
 This creates using Bicep templates:
 - Azure Static Web Apps
@@ -59,7 +59,7 @@ This creates using Bicep templates:
 - Azure Cosmos DB (the Free Tier or Serverless option selected during initialization)
 - Managed Identity (secure service connections)
 
-If `az` cannot be found or started, the plan is reported as `offline`: the commands are shown for review only, the command exits without asking for approval, and nothing is changed in Azure. A `az-cli-not-found` warning means `az` is not on PATH, and `az-cli-not-runnable` means it was found but failed to start. If you are not signed in, the command asks you to run `az login`. Fix the cause and run `provision` again.
+If `az` cannot be found or started, the command exits without asking for confirmation, and nothing is changed in Azure. A `az-cli-not-found` warning means `az` is not on PATH, and `az-cli-not-runnable` means it was found but failed to start. If you are not signed in, the command asks you to run `az login`. Fix the cause and run `provision` again.
 
 In non-interactive environments, pass `--location`, `--swa-location`, and `--approve`. Obtain CI/CD secrets with the Azure CLI commands later in this guide.
 
