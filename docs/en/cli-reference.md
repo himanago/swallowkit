@@ -61,7 +61,7 @@ npx swallowkit machine <command> <subcommand> [options]
 | `apply auth` | Apply auth code with plan freshness and approval checks |
 | `plan provision` | Inspect Azure state and return a bootstrap, adoption, migration, or reconcile plan |
 | `apply provision` | Apply an approved provisioning plan (always requires `--approve`) |
-| `verify project` | Run structure / drift / typecheck (plus build / lint / test / custom) verification checks; `--compact` suppresses info-severity findings |
+| `verify project` | Run structure / drift / typecheck / backend-build (plus opt-in build / lint / test and custom checks); `--compact` suppresses info-severity findings |
 | `explain failure` | Return evidence and repair actions for the last verify failures |
 
 ### Examples
@@ -407,7 +407,7 @@ export const displayName = 'Todo';
 Key rules:
 - Use the **Zod official pattern**: the schema constant and the TypeScript type share the same name.
 - `id`, `createdAt`, and `updatedAt` are auto-managed by the backend. Mark them as `optional()` in the schema.
-- Always re-export models from `shared/index.ts`.
+- create-model and scaffold append missing model exports to `shared/index.ts`, including manually authored models. Manual exports are allowed; no managed markers exist and existing content is preserved.
 
 ### 3. Azure Functions Own All Business Logic and Data Access
 
@@ -642,7 +642,7 @@ For each model name, the command:
 
 - creates `shared/models/<name>.ts`
 - normalizes the file name to kebab-case and the schema/type name to PascalCase
-- adds a re-export to `shared/index.ts` when that file exists
+- appends a missing re-export to `shared/index.ts` (creating the index if needed), preserving existing content
 - includes `id`, `name`, `createdAt`, and `updatedAt` in the starter schema
 
 Example:
@@ -1131,7 +1131,7 @@ npx swallowkit status [options]
 
 ## swallowkit verify
 
-Run verification checks (structure / drift / typecheck). Exits with code 1 if any check fails.
+Run verification checks (structure / drift / typecheck / backend-build by default, plus configured custom checks). Exits with code 1 if any check fails.
 
 ### Usage
 
@@ -1143,7 +1143,7 @@ npx swallowkit verify [options]
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--checks <ids>` | Comma-separated check ids to run (`structure,drift,typecheck`) | all checks |
+| `--checks <ids>` | Check ids, quoted in PowerShell (e.g. `"structure,drift,typecheck,backend-build,build"`) | default checks + custom checks |
 
 ### Checks
 
@@ -1152,6 +1152,10 @@ npx swallowkit verify [options]
 | `structure` | Project structure conventions (same as `validate project`) |
 | `drift` | Detect divergence between generated artifacts and the current state |
 | `typecheck` | TypeScript type check (uses the `typecheck` script if present, otherwise runs `tsc --noEmit` with the project's package manager) |
+| `backend-build` | Standalone `functions/`: C# `dotnet build`; TypeScript project compiler `tsc --noEmit`; Python 3 `compileall` (syntax only, not imports or types). Uses `functions/.venv` before PATH for Python. |
+| `build` / `lint` / `test` | Opt-in root package scripts; skipped if no corresponding script exists |
+
+Missing backend toolchains are `skip` with a reason, not validation. Restore the toolchain and re-run before claiming backend correctness. Root `build` does not replace `backend-build`. Compiler errors, including file/line evidence, are returned by `machine explain failure`.
 
 Results are saved to `.swallowkit/state/last-verify.json`; use `swallowkit machine explain failure` to get failure details.
 

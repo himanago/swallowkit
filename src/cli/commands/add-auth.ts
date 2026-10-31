@@ -428,7 +428,7 @@ export async function addAuthCommand(options: AddAuthOptions) {
 
   // 10. Install dependencies
   console.log("\n Installing auth dependencies...");
-  await installAuthDependencies(cwd, backendLanguage, rdbProvider, session);
+  installAuthDependenciesSync(cwd, backendLanguage, rdbProvider, session);
   await finalize();
 
   console.log("\n Authentication setup complete!");
@@ -458,7 +458,8 @@ function findObjectEnd(content: string, open: number): number {
 function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: AuthProvider, session: FileOperationSession, allowedProviders?: string[]): void {
   const jsPath = path.join(cwd, "swallowkit.config.js");
   const jsonPath = path.join(cwd, "swallowkit.config.json");
-  const configPath = session.fileExists(jsPath) ? jsPath : jsonPath;
+  // Match loadConfig precedence: swallowkit.config.json wins when both files exist.
+  const configPath = session.fileExists(jsonPath) ? jsonPath : jsPath;
   if (!session.fileExists(configPath)) throw new Error("swallowkit.config.js or swallowkit.config.json is required");
   const swaProviders = provider === "swa" ? normalizeSwaProviders(allowedProviders) : undefined;
   if (configPath.endsWith(".json")) {
@@ -510,6 +511,11 @@ function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, lan
   // Validate/update config before creating files, so duplicate names stop safely.
   updateConfigWithNamedScheme(cwd, scheme, provider, session, allowedProviders);
   const slug = scheme.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
+  if (provider === "custom-jwt") {
+    // The scheme's JWT helper needs the same token/password/driver packages as single-provider custom-jwt.
+    const connector = getConnectorDefinition(defaultCustomJwtConfig().userConnector) as RdbConnectorConfig | undefined;
+    installAuthDependenciesSync(cwd, language, connector?.provider ?? "mysql", session);
+  }
   if (language === "typescript") {
     const dir = path.join(cwd, "functions", "src", "auth", "schemes", slug);
     if (provider === "external-token") writeIfMissing(session, path.join(dir, "verifier.ts"), generateExternalTokenVerifierTS());
@@ -689,9 +695,14 @@ function generateFunctionsAuth(
     const functionAppPath = path.join(functionsDir, "function_app.py");
     if (session.fileExists(functionAppPath)) {
       const content = session.readFile(functionAppPath);
-      const authImport = "from blueprints.auth import bp as auth_bp";
+      const authImport = "from blueprints.auth import auth_bp";
       const authRegister = "app.register_blueprint(auth_bp)";
-      if (!content.includes(authImport)) {
+      // Earlier releases imported a non-existent `bp`; repair it in place when re-running.
+      const legacyImport = "from blueprints.auth import bp as auth_bp";
+      if (content.includes(legacyImport)) {
+        session.writeFile(functionAppPath, content.replace(legacyImport, authImport), extensionMeta);
+        console.log(` Updated: functions/function_app.py (fixed auth blueprint import)`);
+      } else if (!content.includes(authImport)) {
         const marker = "# SwallowKit scaffold registrations";
         if (content.includes(marker)) {
           const updated = content.replace(
@@ -742,6 +753,24 @@ function generateBFFAuth(cwd: string, projectName: string, sharedPackageName: st
 }
 
 function updateConfigWithAuth(cwd: string, provider: AuthProvider, config: CustomJwtConfig, session: FileOperationSession, allowedProviders?: string[]): void {
+  const jsonPath = path.join(cwd, "swallowkit.config.json");
+  if (session.fileExists(jsonPath)) {
+    // loadConfig reads swallowkit.config.json first, so it is the effective configuration.
+    const value = JSON.parse(session.readFile(jsonPath));
+    if (value.auth) {
+      console.log("  'auth' section already exists in swallowkit.config.json");
+      return;
+    }
+    value.auth = {
+      provider,
+      ...(provider === "custom-jwt" ? { customJwt: { ...config, jwtSecretEnv: config.jwtSecretEnv || "JWT_SECRET", tokenExpiry: config.tokenExpiry || "24h" } } : {}),
+      ...(provider === "swa" ? { swa: { allowedProviders: normalizeSwaProviders(allowedProviders), roleSource: "swa-roles" } } : {}),
+      authorization: { defaultPolicy: "authenticated" },
+    };
+    session.writeFile(jsonPath, JSON.stringify(value, null, 2) + "\n", extensionMeta);
+    console.log(` Updated: swallowkit.config.json`);
+    return;
+  }
   const configPath = path.join(cwd, "swallowkit.config.js");
   if (!session.fileExists(configPath)) {
     console.warn("  swallowkit.config.js not found. Please add auth config manually.");
@@ -821,7 +850,7 @@ function updateEnvironmentFiles(cwd: string, session: FileOperationSession): voi
   }
 }
 
-async function installAuthDependencies(cwd: string, backendLanguage: BackendLanguage, provider: "mysql" | "postgres" | "sqlserver" = "mysql", session: FileOperationSession): Promise<void> {
+function installAuthDependenciesSync(cwd: string, backendLanguage: BackendLanguage, provider: "mysql" | "postgres" | "sqlserver" = "mysql", session: FileOperationSession): void {
   if (backendLanguage === "typescript") {
     const funcPkgPath = path.join(cwd, "functions", "package.json");
     if (session.fileExists(funcPkgPath)) {

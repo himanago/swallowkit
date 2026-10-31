@@ -33,8 +33,8 @@ exports[`inspect boundaries convention rules matches the csharp backend 1`] = `
     "zone": "deterministic",
   },
   {
-    "description": "SwallowKit appends model exports; other exports may be added freely.",
-    "editPolicy": "edit-outside-markers",
+    "description": "create-model and scaffold append missing model exports while preserving existing content. No managed markers; manual exports are allowed. Keep exports needed by generated code.",
+    "editPolicy": "free-edit",
     "pattern": "shared/index.ts",
     "zone": "shared",
   },
@@ -80,8 +80,8 @@ exports[`inspect boundaries convention rules matches the python backend 1`] = `
     "zone": "deterministic",
   },
   {
-    "description": "SwallowKit appends model exports; other exports may be added freely.",
-    "editPolicy": "edit-outside-markers",
+    "description": "create-model and scaffold append missing model exports while preserving existing content. No managed markers; manual exports are allowed. Keep exports needed by generated code.",
+    "editPolicy": "free-edit",
     "pattern": "shared/index.ts",
     "zone": "shared",
   },
@@ -139,8 +139,8 @@ exports[`inspect boundaries convention rules matches the typescript backend 1`] 
     "zone": "deterministic",
   },
   {
-    "description": "SwallowKit appends model exports; other exports may be added freely.",
-    "editPolicy": "edit-outside-markers",
+    "description": "create-model and scaffold append missing model exports while preserving existing content. No managed markers; manual exports are allowed. Keep exports needed by generated code.",
+    "editPolicy": "free-edit",
     "pattern": "shared/index.ts",
     "zone": "shared",
   },

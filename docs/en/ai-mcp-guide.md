@@ -170,7 +170,7 @@ pnpm exec swallowkit machine explain failure --check typecheck
 ```
 :::
 
-- `verify project` runs `structure` (project conventions), `drift` (artifact divergence), and `typecheck` (TypeScript), returning per-check evidence (command, exit code, log tail) and `suggestedActions`. `summary.done: true` is the completion signal.
+- `verify project` defaults to `structure`, `drift`, `typecheck`, and `backend-build`, returning evidence and `suggestedActions`. The backend check compiles C#/TypeScript Functions and checks Python syntax (not imports/types). Missing toolchains are skipped with a reason; `summary.done: true` means no failures, not that skipped checks or runtime behavior were verified. For production builds too, use `--checks "structure,drift,typecheck,backend-build,build"` (quote CSV in PowerShell).
 - `--checks` also accepts `build` / `lint` / `test`, which run the matching package.json script when present (and are skipped otherwise).
 - Custom checks defined under `verify.checks` in `swallowkit.config.json` (e.g. `{ "id": "smoke-api", "command": "node scripts/smoke.js" }`) are added to the default set. Ids must match `^[a-z][a-z0-9-]*$` and must not clash with built-in ids.
 - `explain failure` returns the evidence and repair actions for the failing checks from the most recent verify run.
@@ -353,7 +353,7 @@ Responsibility boundary principles:
 | --- | --- | --- |
 | `deterministic` | Never hand-edit; regenerate via plan/apply | `functions/src/*.ts`, `app/api/*/route.ts`, `infra/containers/` |
 | `ai-authored` | AI / developers write freely | `app/**/page.tsx` (after generation), `lib/`, custom code |
-| `shared` | Edit outside SwallowKit markers only | `shared/index.ts`; Python backends also `functions/function_app.py` |
+| `shared` | Follow the path-specific rule | `shared/index.ts` allows manual exports (no markers); Python `functions/function_app.py` requires edits outside registration markers |
 
 Convention rules are resolved for the configured `backend.language`: C# and TypeScript backends have no registration file, so no backend marker rule is reported. Baseline `infra/` files are deterministic because `infra/migrations/manifest.json` records their checksums; add infrastructure as new migrations instead.
 

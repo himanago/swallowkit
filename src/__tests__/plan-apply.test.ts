@@ -212,6 +212,7 @@ describe("plan / apply / drift / verify machine commands", () => {
       }),
       warnings: [],
     });
+
     expect(response.data.diagnostics).toEqual([]);
     expect(response.data.operations).toEqual(
       expect.arrayContaining([
@@ -228,6 +229,103 @@ describe("plan / apply / drift / verify machine commands", () => {
     expect(
       fs.existsSync(path.join(tempDir, ".swallowkit", "state", "plans", `${response.data.planId}.json`))
     ).toBe(true);
+  });
+
+  it.each(["typescript", "csharp", "python"] as const)(
+    "blocks %s scaffold with an explicit authPolicy until authentication is configured",
+    async (language) => {
+      if (language === "typescript") createProjectFixture(tempDir);
+      else createNativeBackendFixture(tempDir, language);
+      fs.appendFileSync(path.join(tempDir, "shared", "models", "todo.ts"), "\nexport const authPolicy = { roles: ['admin'] };\n");
+      const reset = mockSuccessfulNativeCodegen();
+      try {
+        const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only", "--skip-infra"));
+        expect(plan.response).toMatchObject({
+          ok: false, status: "blocked", error: { code: "auth-policy-without-auth" },
+          nextActions: [expect.objectContaining({ command: expect.stringContaining("plan auth") })],
+        });
+        expect(fs.existsSync(path.join(tempDir, ".swallowkit", "state", "plans"))).toBe(false);
+        const generate = await runMachine(machineArgs("generate", "scaffold", "todo", "--api-only", "--skip-infra"));
+        expect(generate.response).toMatchObject({ ok: false, status: "blocked", error: { code: "auth-policy-without-auth" } });
+        expect(fs.existsSync(path.join(tempDir, "functions", "Crud"))).toBe(false);
+        expect(fs.readFileSync(path.join(tempDir, "shared", "index.ts"), "utf-8")).toBe("export {};\n");
+      } finally {
+        reset();
+      }
+    }
+  );
+
+  it("blocks an explicit role policy when the provider is none", async () => {
+    createProjectFixture(tempDir);
+    fs.unlinkSync(path.join(tempDir, "swallowkit.config.js"));
+    writeFile(path.join(tempDir, "swallowkit.config.json"), JSON.stringify({ auth: { provider: "none" } }));
+    fs.appendFileSync(path.join(tempDir, "shared", "models", "todo.ts"), "\nexport const authPolicy = { roles: ['admin'] };\n");
+    const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only", "--skip-infra"));
+    expect(plan.response).toMatchObject({ status: "blocked", error: { code: "auth-policy-without-auth" } });
+  });
+
+  it("appends a manually authored model export during plan/apply scaffold without duplicating it", async () => {
+    createProjectFixture(tempDir);
+    const indexPath = path.join(tempDir, "shared", "index.ts");
+    const originalIndex = "// Custom exports are preserved.\nexport {};\n";
+    fs.writeFileSync(indexPath, originalIndex);
+    const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only", "--skip-infra"));
+    expect(plan.response.data.operations).toContainEqual(expect.objectContaining({
+      path: "shared/index.ts", action: "append", ownership: "extension-point", conflict: false,
+    }));
+    expect(fs.readFileSync(indexPath, "utf-8")).toBe(originalIndex);
+    const apply = await runMachine(machineArgs("apply", "scaffold", "--plan", plan.response.data.planId));
+    expect(apply.response.ok).toBe(true);
+    expect(fs.readFileSync(indexPath, "utf-8")).toBe(`${originalIndex}export { Todo } from './models/todo';\n`);
+    const repeat = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only", "--skip-infra"));
+    expect(repeat.response.data.operations.filter((op: { path: string; action: string }) =>
+      op.path === "shared/index.ts" && op.action !== "skip")).toEqual([]);
+  });
+
+  it.each<["typescript" | "csharp" | "python", "nextjs" | "react"]>([
+    ["typescript", "nextjs"], ["csharp", "react"], ["python", "react"],
+  ])("validates auth prerequisites in %s/%s before plan and apply", async (language, frontend) => {
+    if (language === "typescript") createProjectFixture(tempDir);
+    else createNativeBackendFixture(tempDir, language);
+    fs.unlinkSync(path.join(tempDir, "swallowkit.config.js"));
+    const configPath = path.join(tempDir, "swallowkit.config.json");
+    const config = { backend: { language }, frontend: { framework: frontend },
+      auth: { schemes: { admin: { provider: "swa" } }, authorization: {
+        defaultPolicy: "anonymous", policies: { adminOnly: { schemes: ["admin"], roles: ["admin"] } },
+      } },
+    };
+    writeFile(configPath, JSON.stringify(config));
+    const modelPath = path.join(tempDir, "shared", "models", "todo.ts");
+    writeFile(modelPath, `${createModelSource("Todo")}\nexport const authPolicy = { roles: ['admin'] };`);
+    const reset = mockSuccessfulNativeCodegen();
+    try {
+      const invalid = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only", "--skip-infra"));
+      expect(invalid.response).toMatchObject({ status: "blocked", error: { code: "auth-policy-requires-named-policy" } });
+      writeFile(modelPath, `${createModelSource("Todo")}\nexport const authPolicy = { policy: 'adminOnly' };`);
+      const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only", "--skip-infra"));
+      expect(plan.response.status).toBe("complete");
+      writeFile(configPath, JSON.stringify({ ...config, auth: undefined }));
+      const stale = await runMachine(machineArgs("apply", "scaffold", "--plan", plan.response.data.planId));
+      expect(stale.response).toMatchObject({ status: "blocked", error: { code: "stale-plan" } });
+      const direct = await runMachine(machineArgs("apply", "scaffold", "todo", "--api-only", "--skip-infra"));
+      expect(direct.response).toMatchObject({ status: "blocked", error: { code: "auth-policy-without-auth" } });
+      expect(fs.readFileSync(path.join(tempDir, "shared", "index.ts"), "utf-8")).toBe("export {};\n");
+    } finally { reset(); }
+  });
+
+  it.each([
+    ['export { Todo } from "./models/todo";\n', false],
+    ["export * from './models/todo';\n", false],
+    ["export type { Todo } from './models/todo';\n", true],
+    ["export { Todo as MyTodo } from './models/todo';", true],
+  ])("preserves existing exports and handles syntax variations: %s", async (content, append) => {
+    createProjectFixture(tempDir);
+    const indexPath = path.join(tempDir, "shared", "index.ts");
+    fs.writeFileSync(indexPath, content);
+    const plan = await runMachine(machineArgs("plan", "scaffold", "todo", "--api-only", "--skip-infra"));
+    expect(plan.response.data.operations.some((op: { path: string; action: string }) =>
+      op.path === "shared/index.ts" && op.action === "append")).toBe(append);
+    expect(fs.readFileSync(indexPath, "utf-8")).toBe(content);
   });
 
   it("updates a ledger-unregistered legacy manifest without approval and preserves baseline identity", async () => {

@@ -1019,6 +1019,8 @@ export const authPolicy = { roles: ['admin', 'estimator'] };
 
 `scaffold` が `authPolicy` を検出すると、生成される Functions ハンドラーに認証チェックとロールガードを自動的に注入します。
 
+先に `plan auth` / `apply auth`（または `add-auth`）で認証を設定してください。認証未設定で明示的な `authPolicy` を宣言すると、plan/apply/scaffold はファイルを書き込む前に `auth-policy-without-auth` で blocked になります。空の `{}` は従来どおり明示的なポリシーなしと解釈し、認証を有効にはしません。`nextActions` に従って設定し、再計画してください。宣言されたガードを黙って省くことはありません。また、scaffold は手作業のモデルも含め、不足するエクスポートを `shared/index.ts` に追記し、既存内容を保持します。手動のエクスポート追加も可能で、管理マーカーはありません。
+
 `swallowkit.config.js` で `auth.authorization.defaultPolicy` が `'authenticated'` に設定されている場合、明示的な `authPolicy` エクスポートがなくても、すべての scaffold 生成 Functions はデフォルトで認証が必須になります。
 
 > 💡 セットアップ手順と設定の詳細については **[認証ガイド](./auth-guide)** をご参照ください。

@@ -8,6 +8,21 @@ const builtMcpEntrypoint = path.resolve(__dirname, "..", "..", "dist", "mcp", "i
 const itWhenBuiltEntrypointExists = fs.existsSync(builtMcpEntrypoint) ? it : it.skip;
 
 describe("SwallowKit MCP tool definitions", () => {
+  it("preserves blocked auth prerequisites and nextActions as structured MCP errors", async () => {
+    const nextActions = [{ command: "swallowkit machine plan auth --provider swa", description: "Configure auth first." }];
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({ ok: false, command: "plan-scaffold", status: "blocked",
+        error: { code: "auth-policy-without-auth", message: "Authentication is not configured." }, nextActions }),
+      stderr: "", exitCode: 1,
+    }));
+    const tool = buildSwallowKitToolDefinitions(runner).find(candidate => candidate.name === "swallowkit_plan_scaffold")!;
+    const result = await tool.handler({ model: "probe-item" });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      status: "blocked", error: { code: "auth-policy-without-auth" }, nextActions,
+      metadata: { swallowkitVersion: expect.any(String) },
+    });
+  });
   it("delegates inspect_project to the machine CLI", async () => {
     const runner = jest.fn(async () => ({
       stdout: JSON.stringify({

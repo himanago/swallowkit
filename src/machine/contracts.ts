@@ -23,6 +23,7 @@ export interface MachineErrorResponse {
   ok: false;
   command: string;
   status?: MachineOperationStatus;
+  nextActions?: MachineNextAction[];
   error: {
     code: string;
     message: string;

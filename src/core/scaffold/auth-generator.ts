@@ -117,8 +117,7 @@ export function generateNamedAuthRouterCSharp(config: NormalizedAuthConfig): str
 using System.Text;
 using System.Text.Json;
 using Microsoft.Azure.Functions.Worker.Http;
-using Functions.Auth.Schemes;
-namespace Functions.Auth;
+${externalCases ? "using Functions.Auth.Schemes;\n" : ""}namespace Functions.Auth;
 public record AuthPrincipal(string Subject, string Scheme, string Issuer, string[] Roles, IReadOnlyDictionary<string, object?> Claims)
 {
     [Obsolete("Use Subject")] public string UserId => Subject;
@@ -171,15 +170,15 @@ ${externalCases}
 export function generateNamedAuthRouterPython(config: NormalizedAuthConfig): string {
   const external = Object.entries(config.schemes).filter(([,s])=>s.provider === "external-token");
   const imports = external.map(([n])=>`from auth.schemes.${schemeSlug(n).replace(/-/g,"_")}.verifier import verify_external_token as verify_${safeIdentifier(n)}, ExternalTokenVerificationError as Error_${safeIdentifier(n)}`).join("\n");
-  const cases = external.map(([n], index)=>`        ${index === 0 ? "if" : "elif"} scheme == ${JSON.stringify(n)}:
-            try:
-                value = verify_${safeIdentifier(n)}(bearer)
-            except Error_${safeIdentifier(n)} as exc:
-                raise AuthError(503 if exc.identity_provider_unavailable else 401, "Identity provider unavailable" if exc.identity_provider_unavailable else "Invalid token")
-            except Exception:
-                raise AuthError(503, "External token verifier unavailable")
-            if not value.get("subject") or not isinstance(value.get("roles"), list): raise AuthError(401, "Invalid external principal")
-            principal = {"subject": value["subject"], "scheme": scheme, "issuer": value.get("issuer", scheme), "roles": value["roles"], "claims": value.get("claims", {}), "userId": value["subject"]}`).join("\n");
+  const cases = external.map(([n], index)=>`    ${index === 0 ? "if" : "elif"} scheme == ${JSON.stringify(n)}:
+        try:
+            value = verify_${safeIdentifier(n)}(bearer)
+        except Error_${safeIdentifier(n)} as exc:
+            raise AuthError(503 if exc.identity_provider_unavailable else 401, "Identity provider unavailable" if exc.identity_provider_unavailable else "Invalid token")
+        except Exception:
+            raise AuthError(503, "External token verifier unavailable")
+        if not value.get("subject") or not isinstance(value.get("roles"), list): raise AuthError(401, "Invalid external principal")
+        principal = {"subject": value["subject"], "scheme": scheme, "issuer": value.get("issuer", scheme), "roles": value["roles"], "claims": value.get("claims", {}), "userId": value["subject"]}`).join("\n");
   return `import base64
 import json
 import azure.functions as func
@@ -199,14 +198,14 @@ def require_auth(req: func.HttpRequest, policy_name: str):
     if len(candidates) != 1: raise AuthError(401, "Authentication required" if not candidates else "Ambiguous credentials")
     scheme = candidates[0]
 ${cases}
-        ${external.length ? "elif" : "if"} PROVIDERS[scheme] == "swa":
-            try:
-                value=json.loads(base64.b64decode(swa).decode("utf-8")); roles=[r for r in value.get("userRoles",[]) if isinstance(r,str)]
-                if not value.get("userId") or "authenticated" not in roles: raise ValueError()
-                if ALLOWED_PROVIDERS[scheme] and value.get("identityProvider") not in ALLOWED_PROVIDERS[scheme]: raise ValueError()
-                principal={"subject":value["userId"],"scheme":scheme,"issuer":"swa:"+value.get("identityProvider", "unknown"),"roles":roles,"claims":value,"userId":value["userId"]}
-            except Exception: raise AuthError(401,"Invalid SWA client principal")
-        else: raise AuthError(401,"Authentication adapter is not configured")
+    ${external.length ? "elif" : "if"} PROVIDERS[scheme] == "swa":
+        try:
+            value=json.loads(base64.b64decode(swa).decode("utf-8")); roles=[r for r in value.get("userRoles",[]) if isinstance(r,str)]
+            if not value.get("userId") or "authenticated" not in roles: raise ValueError()
+            if ALLOWED_PROVIDERS[scheme] and value.get("identityProvider") not in ALLOWED_PROVIDERS[scheme]: raise ValueError()
+            principal={"subject":value["userId"],"scheme":scheme,"issuer":"swa:"+value.get("identityProvider", "unknown"),"roles":roles,"claims":value,"userId":value["userId"]}
+        except Exception: raise AuthError(401,"Invalid SWA client principal")
+    else: raise AuthError(401,"Authentication adapter is not configured")
     require_roles(principal, policy.get("roles", [])); return principal
 def require_roles(principal, roles):
     if roles and not any(role in principal.get("roles",[]) for role in roles): raise AuthError(403,"Insufficient permissions")

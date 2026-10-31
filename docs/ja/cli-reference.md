@@ -62,7 +62,7 @@ npx swallowkit machine <command> <subcommand> [options]
 | `apply auth` | plan の鮮度・承認を検証して認証コードを適用する |
 | `plan provision` | Azure 状態を確認し bootstrap / adoption / migration / reconcile の plan を返す |
 | `apply provision` | 承認済み plan を適用する（常に `--approve` 必須） |
-| `verify project` | structure / drift / typecheck（+ build / lint / test / カスタム）チェックを実行する（`--compact` で info-severity findings を抑制） |
+| `verify project` | structure / drift / typecheck / backend-build（+ 明示指定の build / lint / test とカスタム）を実行する（`--compact` で info-severity findings を抑制） |
 | `explain failure` | 直近の verify 失敗の証拠と修復アクションを返す |
 
 ### 例
@@ -425,13 +425,13 @@ export const displayName = 'Todo';
 Key rules:
 - Use the **Zod official pattern**: the schema constant and the TypeScript type share the same name.
 - `id`, `createdAt`, and `updatedAt` are auto-managed by the backend. Mark them as `optional()` in the schema.
-- Always re-export models from `shared/index.ts`.
+- create-model and scaffold append missing model exports to `shared/index.ts`. Manual exports are allowed; no markers exist and existing content is preserved.
 
 <!--
 重要なルール：
 - Zod 公式パターンに従い、スキーマ定数と TypeScript 型は同じ名前にします。
 - `id`、`createdAt`、`updatedAt` はバックエンドで自動管理されます。スキーマでは `optional()` として定義します。
-- モデルは必ず `shared/index.ts` から再エクスポートします。
+- create-model と scaffold は手作業のモデルも含め、不足するエクスポートを `shared/index.ts` に追記します。手で追加しても構いません。管理マーカーはなく、既存の内容は保持されます。
 -->
 
 ### 3. Azure Functions Own All Business Logic and Data Access
@@ -752,7 +752,7 @@ pnpm dlx swallowkit create-model <names...> [options]
 
 - `shared/models/<name>.ts` を生成
 - ファイル名は kebab-case、スキーマ名と型名は PascalCase に正規化
-- `shared/index.ts` が存在する場合は再エクスポートを追加
+- `shared/index.ts` に不足する再エクスポートを追記（なければ作成）。既存内容は保持
 - 初期スキーマに `id`、`name`、`createdAt`、`updatedAt` を含める
 
 例:
@@ -1253,7 +1253,7 @@ npx swallowkit status [options]
 
 ## swallowkit verify
 
-検証チェック（structure / drift / typecheck）を実行します。失敗があると exit code 1 を返します。
+既定で structure / drift / typecheck / backend-build と設定済みのカスタムチェックを実行します。失敗があると exit code 1 を返します。
 
 ### 使用法
 
@@ -1265,7 +1265,7 @@ npx swallowkit verify [options]
 
 | オプション | 説明 | デフォルト |
 | --- | --- | --- |
-| `--checks <ids>` | 実行するチェックをカンマ区切りで指定（`structure,drift,typecheck`） | 全チェック |
+| `--checks <ids>` | カンマ区切りのチェック名。PowerShell では引用符で囲む（例：`"structure,drift,typecheck,backend-build,build"`） | 既定チェック + カスタムチェック |
 
 ### チェック内容
 
@@ -1274,6 +1274,10 @@ npx swallowkit verify [options]
 | `structure` | プロジェクト構造規約（`validate project` と同等） |
 | `drift` | 生成物と現在状態の乖離検出 |
 | `typecheck` | TypeScript 型検査（`typecheck` script があればそれを、なければプロジェクトの package manager で `tsc --noEmit` を実行） |
+| `backend-build` | 独立 `functions/` の検証。C# は `dotnet build`、TypeScript はプロジェクトの `tsc --noEmit`、Python 3 は `compileall`（構文のみ。import や型は検査しない）。Python は PATH より `functions/.venv` を優先 |
+| `build` / `lint` / `test` | 明示指定した場合にルート package scripts を実行。script がなければ skip |
+
+バックエンドのツールチェーンがなければ理由付きで `skip` になります。skip は検証成功ではありません。ツールチェーンを復元して再実行するまで、バックエンドを検証済みと扱わないでください。ルートの `build` は `backend-build` の代わりにはなりません。`machine explain failure` でファイル名・行番号を含むコンパイルエラーを確認できます。
 
 結果は `.swallowkit/state/last-verify.json` に保存され、`swallowkit machine explain failure` で失敗の詳細を取得できます。
 

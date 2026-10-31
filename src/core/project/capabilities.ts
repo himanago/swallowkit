@@ -65,6 +65,7 @@ export interface CapabilitiesContract {
     defaultChecks: string[];
     optInChecks: string[];
     customChecks: string;
+    backendBuild: string;
   };
 }
 
@@ -109,6 +110,11 @@ export function inspectCapabilities(): CapabilitiesContract {
           "Role-based access control metadata applied to the generated CRUD Functions. `roles` guards all operations; `read`/`write` guard per-operation; `policy` references a named authorization policy from swallowkit.config auth.authorization.policies.",
         format:
           "export const authPolicy = { roles: ['admin'] };\n// or per-operation:\nexport const authPolicy = { read: ['user'], write: ['admin'] };\n// or a named policy:\nexport const authPolicy = { policy: 'adminOnly' };",
+        notes: [
+          "An explicit authPolicy without configured authentication blocks plan/apply/generate scaffold with auth-policy-without-auth before any artifacts are written. Run plan auth, apply auth, then re-plan scaffold. An empty {} declaration keeps the existing behavior: no explicit policy.",
+          "With named auth.schemes, define auth.authorization.policies selecting schemes and roles, then reference them via policy or read/write names. A role-only declaration cannot select a named scheme and blocks with auth-policy-requires-named-policy; it is supported by legacy single-provider authentication.",
+          "Conversely, single-provider authentication (auth.provider) supports role lists only. Referencing a named policy (authPolicy.policy, read/write names, or a named auth.authorization.defaultPolicy) blocks with auth-named-policy-requires-named-scheme; add a named scheme first.",
+        ],
       },
       {
         name: "references",
@@ -186,7 +192,7 @@ export function inspectCapabilities(): CapabilitiesContract {
         "Without authentication, plan scaffold reports user-scoped-data-without-auth when the partition key or an owner-like field (userId, learnerId, ownerId, ...) suggests per-user data.",
       ],
       guidance: [
-        "For multi-user data where users may only touch their own records, add ai-authored custom endpoints that derive the scoping key (e.g. learnerId) from the verified principal — never from the request body — and restrict generated write endpoints to admin roles or disable them.",
+        "Configure authentication via plan/apply auth before declaring authPolicy. For multi-user data where users may only touch their own records, add ai-authored custom endpoints that derive the scoping key (e.g. learnerId) from the verified principal — never from the request body — and restrict generated write endpoints to admin roles or disable them.",
       ],
     },
     sharedModels: {
@@ -200,7 +206,7 @@ export function inspectCapabilities(): CapabilitiesContract {
         "String formats (email/uuid/url), refinements, and transforms are not re-implemented natively; the BFF Zod schemas remain the authoritative validation.",
       ],
       buildNote:
-        "verify typecheck resolves the shared package from its built dist/. SwallowKit rebuilds shared automatically during verify; when typechecking manually, build the shared package first (errors like \"no exported member\" usually mean a stale dist).",
+        "create-model and plan/apply scaffold append missing model exports to shared/index.ts, including manually authored models. Manual exports are allowed (no markers); existing content is preserved. verify typecheck resolves the shared package from its built dist/. SwallowKit rebuilds shared automatically during verify; when typechecking manually, build shared first.",
     },
     seeding: {
       createTemplates: "swallowkit create-dev-seeds <environment> — writes dev-seeds/<environment>/<model>.json templates.",
@@ -219,9 +225,10 @@ export function inspectCapabilities(): CapabilitiesContract {
       "(regular CLI) configure-mcp [--version auto|latest|<semver>] — re-select the MCP launcher version in .mcp.json",
     ],
     verifyChecks: {
-      defaultChecks: ["structure", "drift", "typecheck"],
+      defaultChecks: ["structure", "drift", "typecheck", "backend-build"],
       optInChecks: ["build", "lint", "test"],
       customChecks: "swallowkit.config verify.checks: [{ id, command, title?, timeoutMs? }]",
+      backendBuild: "Runs dotnet build in functions/ (C#), the project tsc --noEmit (TypeScript), or Python 3 compileall (syntax only, using functions/.venv before PATH). Missing toolchains are skip with a reason, not proof of validation. Root build scripts do not replace backend-build; use --checks \"structure,drift,typecheck,backend-build,build\" for both.",
     },
   };
 }

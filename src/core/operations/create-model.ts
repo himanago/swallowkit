@@ -1,4 +1,5 @@
 import * as path from "path";
+import * as ts from "typescript";
 import { ensureSwallowKitProject, loadConfig } from "../config";
 import { toPascalCase } from "../scaffold/model-parser";
 import { syncProjectManifest } from "../project/manifest";
@@ -90,21 +91,25 @@ export const connectorConfig = {
 `;
 }
 
-function updateSharedIndex(kebabName: string, pascalName: string, session: FileOperationSession): boolean {
+export function updateSharedIndex(modelPath: string, schemaName: string, session: FileOperationSession): boolean {
   const indexPath = path.join(process.cwd(), "shared", "index.ts");
-
-  if (!session.fileExists(indexPath)) {
-    return false;
+  session.registerInput(indexPath);
+  const content = session.fileExists(indexPath) ? session.readFile(indexPath) : "";
+  const modulePath = `./${path.relative(path.dirname(indexPath), modelPath).replace(/\\/g, "/").replace(/\.ts$/, "")}`;
+  const source = ts.createSourceFile(indexPath, content, ts.ScriptTarget.Latest, true);
+  for (const statement of source.statements) {
+    if (!ts.isExportDeclaration(statement) || statement.isTypeOnly ||
+        !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const exportedPath = statement.moduleSpecifier.text.replace(/\.(ts|js)$/, "");
+    if (exportedPath !== modulePath) continue;
+    if (!statement.exportClause || (ts.isNamedExports(statement.exportClause) &&
+        statement.exportClause.elements.some((element) => !element.isTypeOnly &&
+          element.name.text === schemaName && (element.propertyName?.text ?? element.name.text) === schemaName))) {
+      return false;
+    }
   }
-
-  const content = session.readFile(indexPath);
-  const exportLine = `export { ${pascalName} } from './models/${kebabName}';`;
-
-  if (content.includes(exportLine)) {
-    return false;
-  }
-
-  session.writeFile(indexPath, `${content}${exportLine}\n`, {
+  const exportLine = `export { ${schemaName} } from '${modulePath}';`;
+  session.writeFile(indexPath, `${content}${content && !content.endsWith("\n") ? "\n" : ""}${exportLine}\n`, {
     ownership: "extension-point",
     generator: CREATE_MODEL_GENERATOR,
   });
@@ -172,7 +177,7 @@ export async function createModelOperation(options: CreateModelOperationOptions)
     });
     createdFiles.push(filePath.replace(/\\/g, "/"));
 
-    if (updateSharedIndex(kebabName, pascalName, session)) {
+    if (updateSharedIndex(resolveFromRoot(filePath), pascalName, session)) {
       updatedIndex = true;
     }
   }

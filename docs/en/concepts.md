@@ -57,7 +57,7 @@ Generated artifacts are recorded in `.swallowkit/artifacts.json` (the artifact l
 | `managed` | Fully managed by SwallowKit (Functions CRUD, BFF routes, UI pages, etc.) | Overwritten. Files hand-edited after generation are detected as conflicts and require approval (`--approve`) to overwrite |
 | `generated-once` | Templates generated only on first run | Never overwritten |
 | `user-owned` | Owned by the developer (e.g. model files) | SwallowKit only creates them; subsequent edits belong to you |
-| `extension-point` | Marker-based append points (`shared/index.ts`, Python `function_app.py`, navigation config, etc.) | SwallowKit only appends at the marker; your other edits are preserved |
+| `extension-point` | Append points (`shared/index.ts`, Python `function_app.py`, navigation config, etc.) | Follow path-specific rules. `shared/index.ts` allows manual exports with no markers; Python registrations use a marker. Existing content is preserved |
 | `metadata` | Tooling metadata (under `.swallowkit/`) | Rebuilt entirely by SwallowKit |
 
 Editing a `managed` file is possible, but the change will be lost on regeneration — prefer making permanent changes in models, configuration, or extension points. If you do edit one, `swallowkit status` / `swallowkit machine inspect drift` will detect the divergence, and the plan / apply flow will ask for approval before overwriting.

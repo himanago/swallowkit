@@ -559,6 +559,82 @@ describe("agent loop phase 3/4", () => {
     );
   });
 
+  it("includes standalone C# compilation in default verification and explains source errors", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "swallowkit.config.json"), JSON.stringify({ backend: { language: "csharp" } }));
+    // The fixture's .js config otherwise takes precedence.
+    fs.unlinkSync(path.join(tempDir, "swallowkit.config.js"));
+    fs.mkdirSync(path.join(tempDir, "shared", "models"), { recursive: true });
+    fs.mkdirSync(path.join(tempDir, "app", "api"), { recursive: true });
+    writeFile(path.join(tempDir, "functions", "SwallowKit.Functions.csproj"), "<Project />\n");
+    const spawnMock = childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>;
+    spawnMock.mockImplementation((command: string, args: string[]) => ({
+      status: command === "dotnet" && args[0] === "build" ? 1 : 0,
+      stdout: command === "dotnet" && args[0] === "build"
+        ? `${path.join(tempDir, "functions", "Crud", "ProbeItemCrudFunctions.cs")}(8,7): error CS0246: Functions namespace not found`
+        : "",
+      stderr: "",
+    }));
+    const result = await runVerify(undefined, tempDir);
+    expect(result.summary.done).toBe(false);
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: "backend-build", status: "fail",
+      evidence: expect.objectContaining({ logTail: expect.arrayContaining([expect.stringContaining("(8,7): error CS0246")]) }),
+    }));
+    const explanation = await runMachine(["node", "swallowkit", "machine", "explain", "failure", "--check", "backend-build"]);
+    expect(JSON.stringify(explanation.response)).toContain("(8,7): error CS0246");
+  });
+
+  it.each(["csharp", "python"] as const)("skips %s backend compilation when its toolchain is missing", async (language) => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "swallowkit.config.js"), `module.exports = { backend: { language: '${language}' } };`);
+    const missing = Object.assign(new Error("not found"), { code: "ENOENT" });
+    (childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>).mockReturnValue({ status: null, error: missing });
+    const result = await runVerify(["backend-build"], tempDir);
+    expect(result.checks[0]).toMatchObject({ id: "backend-build", status: "skip" });
+    expect(result.checks[0].evidence.diagnostics?.[0]).toMatch(/not installed|not available/);
+    expect(result.summary).toMatchObject({ skipped: 1, failed: 0 });
+  });
+
+  it("does not hide an installed backend toolchain execution failure as a skip", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "swallowkit.config.js"), "module.exports = { backend: { language: 'csharp' } };");
+    const denied = Object.assign(new Error("spawn EPERM"), { code: "EPERM" });
+    (childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>).mockReturnValue({ status: null, error: denied });
+    const result = await runVerify(["backend-build"], tempDir);
+    expect(result.checks[0]).toMatchObject({ status: "error", evidence: { errorCode: "verification-command-unavailable" } });
+  });
+
+  it("uses the project's compiler and functions tsconfig for TypeScript backend verification", async () => {
+    createProjectFixture(tempDir);
+    fs.symlinkSync(path.join(repoRoot, "node_modules", "typescript"), path.join(tempDir, "node_modules", "typescript"), "junction");
+    const spawnMock = childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>;
+    spawnMock.mockReturnValue({ status: 2, stdout: "src/probe-item.ts(9,3): error TS2322: Invalid type", stderr: "" });
+    const result = await runVerify(["backend-build"], tempDir);
+    expect(result.summary.done).toBe(false);
+    expect(result.checks[0].evidence.diagnostics).toContain("src/probe-item.ts(9,3): error TS2322: Invalid type");
+    expect(spawnMock).toHaveBeenCalledWith(process.execPath, [
+      expect.stringContaining(path.join("typescript", "bin", "tsc")), "--project", "tsconfig.json", "--noEmit",
+    ], expect.objectContaining({ cwd: path.join(tempDir, "functions"), shell: false }));
+  });
+
+  it("prefers the existing Python dev virtualenv and includes source syntax errors", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "swallowkit.config.js"), "module.exports = { backend: { language: 'python' } };");
+    const python = path.join(tempDir, "functions", ".venv", ...(process.platform === "win32" ? ["Scripts", "python.exe"] : ["bin", "python"]));
+    writeFile(python, "mock interpreter");
+    const spawnMock = childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>;
+    spawnMock.mockImplementation((_command: string, args: string[]) => args.includes("compileall")
+      ? { status: 1, stdout: '*** Error compiling "./blueprints/probe_item.py"...\n  File "./blueprints/probe_item.py", line 12\nSyntaxError: invalid syntax', stderr: "" }
+      : { status: 0, stdout: "", stderr: "" });
+    const result = await runVerify(["backend-build"], tempDir);
+    expect(result.checks[0].status).toBe("fail");
+    expect(result.checks[0].evidence.diagnostics).toContain('  File "./blueprints/probe_item.py", line 12');
+    expect(spawnMock).toHaveBeenCalledWith(python, [
+      "-m", "compileall", "-q", "-x", expect.stringContaining(".codegen-venv"), ".",
+    ], expect.objectContaining({ cwd: path.join(tempDir, "functions"), shell: false }));
+  });
+
   it("reports verification command startup failures as blocked", async () => {
     createProjectFixture(tempDir);
     writeFile(path.join(tempDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { noEmit: true } }));

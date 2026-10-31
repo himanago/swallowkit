@@ -1,4 +1,4 @@
-﻿import * as fs from "fs";
+import * as fs from "fs";
 import * as path from "path";
 import { spawn, execSync } from "child_process";
 import prompts from "prompts";
@@ -1214,7 +1214,7 @@ export async function register() {
   createAiAgentFiles(projectDir, projectName, backendLanguage, pm, frontend);
 }
 
-async function createSharedPackage(projectDir: string, projectName: string) {
+export async function createSharedPackage(projectDir: string, projectName: string) {
   console.log('📦 Creating shared workspace package for Zod models...\n');
 
   const sharedDir = path.join(projectDir, 'shared');
@@ -1254,7 +1254,7 @@ async function createSharedPackage(projectDir: string, projectName: string) {
   // shared/index.ts (empty re-export file, scaffold will add entries)
   fs.writeFileSync(
     path.join(sharedDir, 'index.ts'),
-    `// Shared Zod models — auto-managed by SwallowKit scaffold command\n// Do not edit the export list below manually\n`
+    `// Shared Zod models. SwallowKit create-model/scaffold append missing model exports.\n// You may add exports manually; existing exports and comments are preserved. No managed markers.\n`
   );
 
   // shared/.gitignore
@@ -1266,7 +1266,7 @@ async function createSharedPackage(projectDir: string, projectName: string) {
   console.log('✅ Shared package created\n');
 }
 
-async function createAzureFunctionsProject(
+export async function createAzureFunctionsProject(
   projectDir: string,
   pm: PackageManager = 'pnpm',
   backendLanguage: BackendLanguage = 'typescript'

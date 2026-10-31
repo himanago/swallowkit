@@ -58,6 +58,7 @@ function writeMachineError(command: string, error: unknown): void {
     ok: false,
     command,
     status: resolveMachineErrorStatus(error),
+    ...(error instanceof MachineCommandError && error.nextActions?.length ? { nextActions: error.nextActions } : {}),
     error: toMachineError(error),
   };
   writeMachineResponse(response);
@@ -567,10 +568,10 @@ function createMachineProgram(): Command {
   const verify = new Command("verify");
   verify
     .command("project")
-    .description("Run verification checks (structure, drift, typecheck) with machine-readable evidence")
+    .description("Run verification checks (structure, drift, typecheck, backend-build) with machine-readable evidence")
     .option(
       "--checks <ids>",
-      "Comma-separated check ids to run (structure,drift,typecheck,build,lint,test, plus custom ids from swallowkit.config verify.checks)"
+      "Comma-separated check ids to run (structure,drift,typecheck,backend-build,build,lint,test, plus custom ids from swallowkit.config verify.checks); quote CSV values in PowerShell"
     )
     .option("--compact", "Suppress info-severity findings/violations from evidence to keep agent-facing output small", false)
     .action(async (options: { checks?: string; compact?: boolean }) => {

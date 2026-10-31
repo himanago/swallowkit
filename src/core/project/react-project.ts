@@ -407,7 +407,7 @@ live in \`functions/local.settings.json\`. Keep their secrets out of source cont
 \`\`\`sh
 ${pm} run build
 ${cmd.exec} swallowkit machine verify project
-${cmd.exec} swallowkit machine verify project --checks structure,drift,typecheck,build
+${cmd.exec} swallowkit machine verify project --checks "structure,drift,typecheck,backend-build,build"
 \`\`\`
 
 The build compiles shared schemas, checks the SPA, builds static assets, and

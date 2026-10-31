@@ -5,7 +5,7 @@ import * as path from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
-import type { MachineNextAction, MachineOperationStatus, MachineResponse } from "../machine/contracts";
+import type { MachineErrorResponse, MachineNextAction, MachineOperationStatus, MachineResponse } from "../machine/contracts";
 import { getSwallowKitVersion } from "../version";
 import { detectFromProject, getCommands } from "../utils/package-manager";
 import {
@@ -25,7 +25,12 @@ interface MachineSuccessPayload<TData> {
 }
 
 type MachineCliRunner = (args: string[]) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
-type ToolContentResult = { content: Array<{ type: "text"; text: string }> };
+type ToolContentResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+class MachineCliError extends Error {
+  constructor(message: string, readonly response: MachineErrorResponse) {
+    super(message);
+  }
+}
 type ToolDefinition = {
   name: string;
   description: string;
@@ -73,7 +78,7 @@ async function executeMachineCommand<TData>(
     const detailsSuffix =
       parsed.error.details !== undefined ? `\ndetails: ${JSON.stringify(parsed.error.details)}` : "";
     const statusSuffix = parsed.status ? ` (status: ${parsed.status})` : "";
-    throw new Error(`[${parsed.error.code}] ${parsed.error.message}${statusSuffix}${detailsSuffix}`);
+    throw new MachineCliError(`[${parsed.error.code}] ${parsed.error.message}${statusSuffix}${detailsSuffix}`, parsed);
   }
 
   return parsed;
@@ -308,7 +313,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_verify_project",
-      description: "Run verification checks (structure, drift, typecheck by default; build, lint, test and custom checks from swallowkit.config verify.checks are also available) and return machine-readable evidence. summary.done=true means the project passed all checks. Set compact=true to suppress info-severity findings and keep the output small.",
+      description: "Run verification checks (structure, drift, typecheck, backend-build by default; build, lint, test and custom checks from swallowkit.config verify.checks are also available) and return machine-readable evidence. backend-build compiles standalone C#/TypeScript Functions or checks Python syntax; unavailable toolchains are skipped with a reason. summary.done=true means no checks failed, not that skipped checks were validated or runtime/auth flows work. Set compact=true to suppress info-severity findings and keep the output small.",
       inputSchema: z.object({
         checks: z.array(z.string()).optional(),
         compact: z.boolean().optional(),
@@ -452,8 +457,16 @@ export function buildSwallowKitToolDefinitions(
   return definitions.map((definition) => ({
     ...definition,
     handler: async (input: unknown) => {
-      const result = await definition.handler(input);
-      return jsonTextContent(withSwallowKitMetadata(JSON.parse(result.content[0].text)));
+      try {
+        const result = await definition.handler(input);
+        return jsonTextContent(withSwallowKitMetadata(JSON.parse(result.content[0].text)));
+      } catch (error) {
+        // Prerequisite failures carry nextActions; keep them structured so agents can follow them.
+        if (error instanceof MachineCliError && error.response.nextActions?.length) {
+          return { ...jsonTextContent(withSwallowKitMetadata(error.response)), isError: true };
+        }
+        throw error;
+      }
     },
   }));
 }

@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { spawnSync } from "child_process";
 import { addAuthCommand } from "../cli/commands/add-auth";
 import { createUIAuthOptions } from "../cli/commands/scaffold";
 import {
@@ -57,10 +58,24 @@ describe("named authentication routers", () => {
   it("generates valid branch structure for an SWA-only Python router", () => {
     const swaOnly = normalizeAuthConfig({ schemes: { admin: { provider: "swa", swa: { allowedProviders: ["github"] } } }, authorization: { defaultPolicy: "anonymous", policies: { adminOnly: { schemes: ["admin"] } } } })!;
     const python = generateNamedAuthRouterPython(swaOnly);
-    expect(python).toContain('        if PROVIDERS[scheme] == "swa":');
-    expect(python).not.toContain('        elif PROVIDERS[scheme] == "swa":');
+    expect(python).toContain('\n    if PROVIDERS[scheme] == "swa":');
+    expect(python).not.toContain('\n    elif PROVIDERS[scheme] == "swa":');
     expect(python).toContain("ALLOWED_PROVIDERS");
     expect(generateNamedAuthRouterCSharp(swaOnly)).toContain("AllowedProviders[scheme]");
+    expect(generateNamedAuthRouterCSharp(swaOnly)).not.toContain("using Functions.Auth.Schemes;");
+  });
+
+  const pythonCommand = ["python3", "python"].find(command => spawnSync(command, ["--version"], { encoding: "utf-8" }).status === 0);
+  (pythonCommand ? it : it.skip).each([false, true])("compiles named Python auth router syntax (external schemes: %s)", (external) => {
+    const config = external ? auth : normalizeAuthConfig({
+      schemes: { admin: { provider: "swa" } },
+      authorization: { defaultPolicy: "anonymous", policies: { adminOnly: { schemes: ["admin"] } } },
+    })!;
+    const result = spawnSync(pythonCommand!, ["-c", "import ast,sys; ast.parse(sys.stdin.read())"], {
+      encoding: "utf-8", input: generateNamedAuthRouterPython(config),
+    });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
   });
 
   it("emits Array.Empty<string>() instead of untyped new[] { } for empty C# arrays (CS0826)", () => {
@@ -156,5 +171,84 @@ describe("add-auth named scheme CLI", () => {
     const configModule = { exports: {} as Record<string, unknown> };
     new Function("module", content)(configModule);
     expect((configModule.exports as { auth: { schemes: { admin: { provider: string } } } }).auth.schemes.admin.provider).toBe("swa");
+  });
+
+  it("writes named schemes to swallowkit.config.json when both config files exist (loadConfig precedence)", async () => {
+    const js = "module.exports = { backend: { language: 'typescript' } };\n";
+    fs.writeFileSync(path.join(root, "swallowkit.config.js"), js);
+    await addAuthCommand({ scheme: "admin", provider: "swa" });
+    expect(JSON.parse(fs.readFileSync(path.join(root, "swallowkit.config.json"), "utf-8")).auth.schemes.admin.provider).toBe("swa");
+    expect(fs.readFileSync(path.join(root, "swallowkit.config.js"), "utf-8")).toBe(js);
+  });
+
+  it("records single-provider auth in swallowkit.config.json instead of silently skipping it", async () => {
+    fs.writeFileSync(path.join(root, "swallowkit.config.json"), JSON.stringify({ backend: { language: "typescript" } }));
+    fs.mkdirSync(path.join(root, "app"), { recursive: true });
+    fs.writeFileSync(path.join(root, "app", "layout.tsx"), "export default function L({ children }: any) { return <html><body>{children}</body></html>; }\n");
+    await addAuthCommand({ provider: "swa", allowedProviders: ["github"] });
+    expect(JSON.parse(fs.readFileSync(path.join(root, "swallowkit.config.json"), "utf-8")).auth).toEqual({
+      provider: "swa",
+      swa: { allowedProviders: ["github"], roleSource: "swa-roles" },
+      authorization: { defaultPolicy: "authenticated" },
+    });
+  });
+
+  it.each(["typescript", "csharp", "python"] as const)("declares %s backend dependencies for a named custom-jwt scheme", async (language) => {
+    fs.writeFileSync(path.join(root, "swallowkit.config.json"), JSON.stringify({ backend: { language } }));
+    fs.mkdirSync(path.join(root, "functions"), { recursive: true });
+    if (language === "typescript") fs.writeFileSync(path.join(root, "functions", "package.json"), JSON.stringify({ name: "functions", dependencies: {} }));
+    if (language === "csharp") fs.writeFileSync(path.join(root, "functions", "App.Functions.csproj"), "<Project>\n  <ItemGroup>\n  </ItemGroup>\n</Project>\n");
+    if (language === "python") fs.writeFileSync(path.join(root, "functions", "requirements.txt"), "azure-functions\n");
+    await addAuthCommand({ scheme: "staff", provider: "custom-jwt" });
+    if (language === "typescript") {
+      expect(JSON.parse(fs.readFileSync(path.join(root, "functions", "package.json"), "utf-8")).dependencies).toEqual(expect.objectContaining({ jsonwebtoken: expect.any(String), bcryptjs: expect.any(String) }));
+    } else if (language === "csharp") {
+      const csproj = fs.readFileSync(path.join(root, "functions", "App.Functions.csproj"), "utf-8");
+      expect(csproj).toContain('Include="System.IdentityModel.Tokens.Jwt"');
+      expect(csproj).toContain('Include="BCrypt.Net-Next"');
+    } else {
+      expect(fs.readFileSync(path.join(root, "functions", "requirements.txt"), "utf-8")).toMatch(/PyJWT[\s\S]*bcrypt/);
+    }
+  });
+});
+
+describe("Python custom-jwt blueprint registration", () => {
+  const originalCwd = process.cwd();
+  let root: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-py-auth-"));
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture" }));
+    fs.writeFileSync(path.join(root, "swallowkit.config.json"), JSON.stringify({ backend: { language: "python" } }));
+    fs.mkdirSync(path.join(root, "shared"), { recursive: true });
+    fs.writeFileSync(path.join(root, "shared", "package.json"), JSON.stringify({ name: "@fixture/shared" }));
+    fs.mkdirSync(path.join(root, "functions"), { recursive: true });
+    fs.mkdirSync(path.join(root, "app"), { recursive: true });
+    fs.writeFileSync(path.join(root, "app", "layout.tsx"), "export default function L({ children }: any) { return <html><body>{children}</body></html>; }\n");
+    process.chdir(root);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const register = (body: string) => fs.writeFileSync(path.join(root, "functions", "function_app.py"), body);
+
+  it("imports the blueprint object the generated module actually defines", async () => {
+    register("import azure.functions as func\napp = func.FunctionApp()\n# SwallowKit scaffold registrations\n");
+    await addAuthCommand({ provider: "custom-jwt" });
+    const blueprint = fs.readFileSync(path.join(root, "functions", "blueprints", "auth.py"), "utf-8");
+    const app = fs.readFileSync(path.join(root, "functions", "function_app.py"), "utf-8");
+    expect(blueprint).toMatch(/^auth_bp = func\.Blueprint\(\)$/m);
+    expect(app).toContain("from blueprints.auth import auth_bp\napp.register_blueprint(auth_bp)");
+  });
+
+  it("repairs the broken import written by earlier releases without duplicating the registration", async () => {
+    register("import azure.functions as func\napp = func.FunctionApp()\nfrom blueprints.auth import bp as auth_bp\napp.register_blueprint(auth_bp)\n# SwallowKit scaffold registrations\n");
+    await addAuthCommand({ provider: "custom-jwt" });
+    const app = fs.readFileSync(path.join(root, "functions", "function_app.py"), "utf-8");
+    expect(app).not.toContain("import bp as auth_bp");
+    expect(app.match(/app\.register_blueprint\(auth_bp\)/g)).toHaveLength(1);
   });
 });
