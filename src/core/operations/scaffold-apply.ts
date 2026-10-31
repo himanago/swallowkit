@@ -19,6 +19,7 @@ export interface ApplyScaffoldOptions {
   functionsDir?: string;
   apiDir?: string;
   apiOnly?: boolean;
+  skipInfra?: boolean;
 }
 
 export interface ApplyScaffoldResult extends MachineScaffoldOperationResult {
@@ -70,6 +71,7 @@ export async function applyScaffoldOperation(options: ApplyScaffoldOptions): Pro
     functionsDir: options.functionsDir ?? basePlan?.options.functionsDir,
     apiDir: options.apiDir ?? basePlan?.options.apiDir,
     apiOnly: options.apiOnly ?? basePlan?.options.apiOnly,
+    skipInfra: options.skipInfra ?? basePlan?.options.skipInfra,
   };
 
   // 常に最新状態で collect し、競合を検出する(plan 指定時も現況を再確認)

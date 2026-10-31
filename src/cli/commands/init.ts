@@ -27,6 +27,7 @@ import {
 } from "../../core/scaffold/native-schema-generator";
 import { DEFAULT_AZURE_PYTHON_VERSION } from "../../utils/python-uv";
 import { buildHomePage } from "../../core/project/home-page";
+import { MCP_LATEST, McpPinDecision, lookupPublishedLatestVersion, resolveMcpPinVersion } from "../../core/project/mcp-config";
 
 interface InitOptions {
   name: string;
@@ -802,7 +803,7 @@ export function ensureNextTailwindPostcssConfig(projectDir: string): void {
 `);
 }
 
-export function buildSwallowKitMcpProjectConfigSource(pm: PackageManager = 'pnpm'): string {
+export function buildSwallowKitMcpProjectConfigSource(pm: PackageManager = 'pnpm', mcpVersion: string = MCP_LATEST): string {
   const { name } = getSwallowKitPackageMetadata();
   return JSON.stringify(
     {
@@ -814,7 +815,7 @@ export function buildSwallowKitMcpProjectConfigSource(pm: PackageManager = 'pnpm
             : ["--yes", "--package", `${name}@\${SWALLOWKIT_MCP_VERSION}`, "swallowkit-mcp"],
           cwd: ".",
           env: {
-            SWALLOWKIT_MCP_VERSION: "latest",
+            SWALLOWKIT_MCP_VERSION: mcpVersion,
           },
         },
       },
@@ -822,6 +823,15 @@ export function buildSwallowKitMcpProjectConfigSource(pm: PackageManager = 'pnpm
     null,
     2
   );
+}
+
+/** latest by default; pinned to this CLI version only when it is newer than published latest. */
+export function selectInitialMcpVersion(
+  lookupLatest: (packageName: string) => string | null = lookupPublishedLatestVersion
+): McpPinDecision {
+  const { name, version } = getSwallowKitPackageMetadata();
+  if (version === MCP_LATEST) return { version: MCP_LATEST, reason: "SwallowKit package metadata is unavailable." };
+  return resolveMcpPinVersion(version, lookupLatest(name));
 }
 
 async function addSwallowKitFiles(
@@ -1939,11 +1949,16 @@ function createAiAgentFiles(
   console.log('  ✅ .github/copilot-instructions.md (GitHub Copilot adapter)');
   console.log('  ✅ .github/instructions/ (path-specific instructions)');
 
+  const mcpVersion = selectInitialMcpVersion();
   fs.writeFileSync(
     path.join(projectDir, '.mcp.json'),
-    buildSwallowKitMcpProjectConfigSource(pm)
+    buildSwallowKitMcpProjectConfigSource(pm, mcpVersion.version)
   );
-  console.log('  ✅ .mcp.json (project-scoped MCP bootstrap)');
+  console.log(
+    mcpVersion.version === MCP_LATEST
+      ? '  ✅ .mcp.json (project-scoped MCP bootstrap, resolves latest)'
+      : `  ✅ .mcp.json (project-scoped MCP bootstrap, pinned to ${mcpVersion.version}: ${mcpVersion.reason} Run "${runCmd} swallowkit configure-mcp" to re-select later.)`
+  );
 
   writeWorkflowDocs(projectDir, runCmd);
   console.log('  ✅ .swallowkit/workflows/ (agent-agnostic autonomous-loop runbooks)');

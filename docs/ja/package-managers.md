@@ -18,7 +18,7 @@ Node.js 22.14 以上、pnpm 11／12 または npm 10 以上を使います。SWA
 
 root の install で `shared/`、TypeScript backend なら `functions/` も導入します。選択した lockfile だけをコミットしてください。pnpm は `pnpm-workspace.yaml`、npm は npm workspaces と `package-lock.json` を使います。Functions の CI は選択した manager で root の frozen install を実行します。Next.js の SWA デプロイは内部の npm/Oryx に合わせ、CI の checkout だけ npm 用に変換する例外です（後述）。React の SWA デプロイはビルド済みの成果物を使います。`devEngines.packageManager` は対応範囲を指定し、pnpm は選択した版を lockfile に保存します。patch 固定を生成しません。[pnpm 11 の仕様](https://github.com/pnpm/pnpm.io/blob/main/blog/releases/11.0.md)も参照してください。
 
-MCP は最新情報を使うため、選択した manager で意図的に `swallowkit@latest` を解決します。`.mcp.json` は pnpm の package/dlx または npm の `npx --yes --package` を使います。通常のローカル CLI とは独立して更新されるため、beta のバージョン差が生じる可能性があります。未キャッシュの版にはネットワークが必要です。オフライン・再現性が必要な場合は `.mcp.json` 内の `SWALLOWKIT_MCP_VERSION` を指定して事前にキャッシュするか、ローカル machine CLI を使います。npm project の MCP に pnpm は不要です。
+MCP は最新情報を使うため、選択した manager で意図的に `swallowkit@latest` を解決します。`.mcp.json` は pnpm の package/dlx または npm の `npx --yes --package` を使います。通常のローカル CLI とは独立して更新されるため、beta のバージョン差が生じる可能性があります。未キャッシュの版にはネットワークが必要です。オフライン・再現性が必要な場合は `.mcp.json` 内の `SWALLOWKIT_MCP_VERSION` を指定して事前にキャッシュするか、ローカル machine CLI を使います。npm project の MCP に pnpm は不要です。`latest` より新しいプレリリース版のプロジェクトはその版に固定されます。選び直す場合は `swallowkit configure-mcp` を実行してください（[AI/MCP ガイド](./ai-mcp-guide.md#mcp-のバージョン選択)を参照）。
 
 Azure Functions Core Tools v4 と各 backend runtime は別途必要な開発環境です。そのバイナリ installer は CLI の依存に含めません。frontend 単独なら `dev --no-functions --no-swa` を利用できます。
 

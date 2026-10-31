@@ -26,6 +26,8 @@ Bootstrap: `pnpm dlx swallowkit init my-app` or `npx swallowkit init my-app`. In
 - [swallowkit create-dev-seeds](#swallowkit-create-dev-seeds)
 - [swallowkit migrations init](#swallowkit-migrations-init)
 - [swallowkit create-migration](#swallowkit-create-migration)
+- [swallowkit migrations add-model](#swallowkit-migrations-add-model)
+- [swallowkit configure-mcp](#swallowkit-configure-mcp)
 - [swallowkit provision](#swallowkit-provision)
 
 ## swallowkit machine
@@ -993,6 +995,7 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 | `--functions-dir <dir>` | Azure Functions directory | `functions` |
 | `--api-dir <dir>` | BFF directory | `app/api` (Next.js), `bff` (React) |
 | `--api-only` | Skip UI components only. Functions, BFF routes, OpenAPI, and native schema assets are still updated. | `false` |
+| `--skip-infra` | Do not create or update anything under `infra/`. The container migration is reported as pending (`infra-skipped`); add it later with `migrations add-model`. Also available on `machine plan/apply/generate scaffold` and MCP (`skipInfra`). | `false` |
 | `--dry-run` | Show planned file changes and conflicts without writing anything | `false` |
 
 ### Connector model behavior
@@ -1220,6 +1223,29 @@ npx swallowkit create-dev-seeds local --from-emulator --force
 npx swallowkit dev --seed-env local
 ```
 
+## swallowkit migrations add-model
+
+Generate only the Cosmos DB container migration for a model, for example after `scaffold --skip-infra`:
+
+```bash
+npx swallowkit migrations add-model probe-item --dry-run
+npx swallowkit migrations add-model probe-item
+```
+
+It writes `infra/migrations/<version>-create-<model>-container/main.bicep` and appends it to `infra/migrations/manifest.json`. Running it again for the same model changes nothing. Connector models have no container.
+
+## swallowkit configure-mcp
+
+Re-select the SwallowKit version launched by `.mcp.json`. Only `SWALLOWKIT_MCP_VERSION` is changed.
+
+```bash
+npx swallowkit configure-mcp                 # auto: latest unless the project is newer
+npx swallowkit configure-mcp --version latest
+npx swallowkit configure-mcp --version 2.0.0-alpha.3
+```
+
+Restart the MCP server afterwards. See [MCP version selection](./ai-mcp-guide.md#mcp-version-selection).
+
 ## swallowkit provision
 
 Inspect Azure state and either bootstrap the environment or apply pending infrastructure migrations. Existing environments do not normally redeploy `main.bicep`.
@@ -1240,11 +1266,11 @@ pnpm dlx swallowkit provision [options]
 | `--subscription <id>` | | Subscription ID | |
 | `--location <region>` | | Functions/Cosmos DB region; required non-interactively | |
 | `--swa-location <region>` | | Static Web Apps region; required non-interactively | |
-| `--what-if` | | Include Azure what-if evidence in the plan | |
+| `--what-if` | | Include Azure what-if evidence in the preview | |
 | `--adopt-existing` | | Adopt an existing untagged environment as a baseline | |
 | `--baseline <version>` | | Adoption baseline; currently only `0` | |
 | `--reconcile` | | Explicitly redeploy all of `main.bicep` | |
-| `--approve` | | Approve the displayed plan non-interactively | |
+| `--approve` | | Run the displayed Azure commands without the confirmation prompt | |
 
 ### Region Selection
 

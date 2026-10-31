@@ -1,4 +1,4 @@
-import { FieldInfo, ModelInfo, toCamelCase } from "./model-parser";
+import { FieldInfo, ModelInfo, toCamelCase, toPascalCase } from "./model-parser";
 
 type OpenApiSchema =
   | {
@@ -11,9 +11,59 @@ type OpenApiSchema =
       additionalProperties?: boolean;
       nullable?: boolean;
       $ref?: string;
+      minLength?: number;
+      maxLength?: number;
+      pattern?: string;
+      minimum?: number;
+      maximum?: number;
+      exclusiveMinimum?: boolean;
+      exclusiveMaximum?: boolean;
+      minItems?: number;
+      maxItems?: number;
     };
 
+/**
+ * Promote inline `z.object({...})` fields to named models (e.g. ProbeItem.nested -> ProbeItemNested)
+ * so OpenAPI components and native classes keep their shape. Expanded fields reference the new model.
+ */
+export function expandInlineObjectModels(models: ModelInfo[]): ModelInfo[] {
+  const names = new Set(models.map((model) => model.name));
+  const synthetic: ModelInfo[] = [];
+
+  const expand = (owner: ModelInfo): ModelInfo => ({
+    ...owner,
+    fields: owner.fields.map((field) => {
+      if (!field.objectFields || field.isNestedSchema) return field;
+      let name = `${owner.name}${toPascalCase(field.name)}`;
+      while (names.has(name)) name = `${name}Object`;
+      names.add(name);
+      const nested = expand({
+        ...owner,
+        name,
+        displayName: name,
+        schemaName: name,
+        fields: field.objectFields,
+        hasId: field.objectFields.some((child) => child.name === "id"),
+        hasCreatedAt: field.objectFields.some((child) => child.name === "createdAt"),
+        hasUpdatedAt: field.objectFields.some((child) => child.name === "updatedAt"),
+        nestedSchemaRefs: [],
+        partitionKey: "/id",
+        connectorConfig: undefined,
+        authPolicy: undefined,
+      });
+      synthetic.push(nested);
+      const rest = { ...field };
+      delete rest.objectFields;
+      return { ...rest, isNestedSchema: true, nestedModelName: name };
+    }),
+  });
+
+  const expanded = models.map(expand);
+  return [...expanded, ...synthetic];
+}
+
 function toScalarSchema(field: FieldInfo): OpenApiSchema {
+  const constraints = field.constraints ?? {};
   if (field.enumValues?.length) {
     return {
       type: "string",
@@ -25,7 +75,10 @@ function toScalarSchema(field: FieldInfo): OpenApiSchema {
     case "string":
       return {
         type: "string",
-        format: field.name.toLowerCase().endsWith("at") ? "date-time" : undefined,
+        ...(field.format && field.format !== "time" ? { format: field.format } : {}),
+        ...(constraints.minLength !== undefined ? { minLength: constraints.minLength } : {}),
+        ...(constraints.maxLength !== undefined ? { maxLength: constraints.maxLength } : {}),
+        ...(constraints.pattern !== undefined ? { pattern: constraints.pattern } : {}),
       };
     case "date":
       return {
@@ -34,7 +87,11 @@ function toScalarSchema(field: FieldInfo): OpenApiSchema {
       };
     case "number":
       return {
-        type: "number",
+        ...(field.isInteger ? { type: "integer", format: "int64" } : { type: "number", format: "double" }),
+        ...(constraints.minimum !== undefined ? { minimum: constraints.minimum } : {}),
+        ...(constraints.exclusiveMinimum ? { exclusiveMinimum: true } : {}),
+        ...(constraints.maximum !== undefined ? { maximum: constraints.maximum } : {}),
+        ...(constraints.exclusiveMaximum ? { exclusiveMaximum: true } : {}),
       };
     case "boolean":
       return {
@@ -59,6 +116,8 @@ function toFieldSchema(field: FieldInfo): OpenApiSchema {
     return {
       type: "array",
       items: schema,
+      ...(field.constraints?.minItems !== undefined ? { minItems: field.constraints.minItems } : {}),
+      ...(field.constraints?.maxItems !== undefined ? { maxItems: field.constraints.maxItems } : {}),
     };
   }
 
@@ -82,11 +141,10 @@ function createComponentSchema(model: ModelInfo): OpenApiSchema {
     required,
   };
 }
-
 export function generateOpenApiDocument(models: ModelInfo[], rootModel: ModelInfo): string {
   const rootModelRoute = toCamelCase(rootModel.name);
   const components = Object.fromEntries(
-    models.map((model) => [model.name, createComponentSchema(model)])
+    expandInlineObjectModels(models).map((model) => [model.name, createComponentSchema(model)])
   );
 
   const document = {

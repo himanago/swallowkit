@@ -3,7 +3,7 @@
  * CRUD 画面（一覧、詳細、新規作成、編集）を生成する
  */
 
-import { ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
+import { FieldInfo, ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
 import { ModelAuthPolicy } from "../../types";
 
 /** auth が有効かつ authPolicy が存在する場合に渡されるオプション */
@@ -18,6 +18,21 @@ export interface UIAuthOptions {
 /**
  * 認証付きCRUDルートを、ページ側のuseAuthと同じAuthProviderで囲むレイアウトを生成する。
  */
+/** Lookup state and fetches are per referenced model; several fields may reference the same model. */
+function uniqueByReferencedModel(fields: FieldInfo[]): FieldInfo[] {
+  const seen = new Set<string>();
+  return fields.filter((field) => {
+    if (!field.referencedModel || seen.has(field.referencedModel)) return false;
+    seen.add(field.referencedModel);
+    return true;
+  });
+}
+
+/** Untyped or inline z.object fields (not references to another model) are edited and shown as JSON. */
+function isJsonField(f: FieldInfo): boolean {
+  return f.type === "object" && !f.isNestedSchema;
+}
+
 export function generateAuthLayout(model: ModelInfo, authOptions?: UIAuthOptions): string | undefined {
   if (!authOptions) return undefined;
 
@@ -59,14 +74,14 @@ export function generateListPage(model: ModelInfo, sharedPackageName: string, au
   const hasForeignKeys = foreignKeyFields.length > 0;
   
   // 外部キー用のstate定義を生成
-  const foreignKeyStates = foreignKeyFields.map(f => {
+  const foreignKeyStates = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
     const refModelCamel = toCamelCase(refModel);
     return `  const [${refModelCamel}Map, set${refModel}Map] = useState<Record<string, string>>({});`;
   }).join('\n');
   
   // 外部キーデータのフェッチロジックを生成
-  const foreignKeyFetches = foreignKeyFields.map(f => {
+  const foreignKeyFetches = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
     const refModelCamel = toCamelCase(refModel);
     return `    fetch('/api/${refModelCamel}')
@@ -234,6 +249,10 @@ ${displayFields.map(f => {
     return `                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
                     {${refModelCamel}Map[item.${f.name}] || item.${f.name}}
                   </td>`;
+  } else if (isJsonField(f)) {
+    return `                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                    {item.${f.name} === undefined ? '-' : JSON.stringify(item.${f.name})}
+                  </td>`;
   } else {
     return `                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
                     {String(item.${f.name})}
@@ -305,14 +324,14 @@ export function generateDetailPage(model: ModelInfo, sharedPackageName: string, 
   const hasForeignKeys = foreignKeyFields.length > 0;
   
   // 外部キー用のstate定義を生成
-  const foreignKeyStates = foreignKeyFields.map(f => {
+  const foreignKeyStates = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
     const refModelCamel = toCamelCase(refModel);
     return `  const [${refModelCamel}Map, set${refModel}Map] = useState<Record<string, string>>({});`;
   }).join('\n');
   
   // 外部キーデータのフェッチロジックを生成
-  const foreignKeyFetches = foreignKeyFields.map(f => {
+  const foreignKeyFetches = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
     const refModelCamel = toCamelCase(refModel);
     return `    fetch('/api/${refModelCamel}')
@@ -476,6 +495,11 @@ ${model.fields.map(f => {
               <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">${refModel}</dt>
               <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{${refModelCamel}Map[${modelCamel}.${f.name}] || ${modelCamel}.${f.name}}</dd>
             </div>`;
+  } else if (isJsonField(f)) {
+    return `            <div>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">${f.name}</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100"><pre className="whitespace-pre-wrap">{${modelCamel}.${f.name} === undefined ? '-' : JSON.stringify(${modelCamel}.${f.name}, null, 2)}</pre></dd>
+            </div>`;
   } else {
     return `            <div>
               <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">${f.name}</dt>
@@ -573,7 +597,7 @@ export default function ${modelName}Form({ initialData, isEdit = false }: ${mode
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-${hasForignKeys ? foreignKeyFields.map(f => `  const [${toCamelCase(f.referencedModel!)}Options, set${f.referencedModel}Options] = useState<Array<{ id: string; name: string }>>([]);`).join('\n') : ''}
+${hasForignKeys ? uniqueByReferencedModel(foreignKeyFields).map(f => `  const [${toCamelCase(f.referencedModel!)}Options, set${f.referencedModel}Options] = useState<Array<{ id: string; name: string }>>([]);`).join('\n') : ''}
 ${hasNestedSchemas ? nestedSchemaStates : ''}
   
   const [formData, setFormData] = useState({
@@ -587,6 +611,11 @@ ${formFields.map(f => {
     }
   }
   
+  // インラインオブジェクトは JSON テキストとして編集する
+  if (isJsonField(f)) {
+    return `    ${f.name}: initialData?.${f.name} !== undefined ? JSON.stringify(initialData.${f.name}, null, 2) : '',`;
+  }
+
   let defaultValue = "''";
   if (f.isArray) {
     // Array の場合は空文字列（カンマ区切りで入力するため）
@@ -612,7 +641,7 @@ ${formFields.map(f => {
 ${needsUseEffect ? `
   // 参照データの選択肢を取得
   useEffect(() => {
-${hasForignKeys ? foreignKeyFields.map(f => `    // ${f.referencedModel} の一覧を取得
+${hasForignKeys ? uniqueByReferencedModel(foreignKeyFields).map(f => `    // ${f.referencedModel} の一覧を取得
     fetch('/api/${toKebabCase(f.referencedModel!)}')
       .then(res => res.json())
       .then(data => set${f.referencedModel}Options(data.map((item: Record<string, string>) => ({ id: item.id, name: item.name || item.title || item.id }))))
@@ -628,7 +657,19 @@ ${hasNestedSchemas ? nestedSchemaFetches : ''}
     try {
       // Array フィールドをカンマ区切りから配列に変換
       const submitData: Record<string, unknown> = { ...formData };
-${formFields.filter(f => f.isArray && !f.isNestedSchema).map(f => `      if (typeof submitData.${f.name} === 'string') {
+${formFields.filter(isJsonField).length > 0 ? `      // JSON フィールド（インラインオブジェクト）を解析
+${formFields.filter(isJsonField).map(f => `      if (submitData.${f.name} === '') {
+        submitData.${f.name} = undefined;
+      } else if (typeof submitData.${f.name} === 'string') {
+        try {
+          submitData.${f.name} = JSON.parse(submitData.${f.name});
+        } catch {
+          setErrors({ ${f.name}: 'Invalid JSON' });
+          setLoading(false);
+          return;
+        }
+      }`).join('\n')}
+` : ''}${formFields.filter(f => f.isArray && !f.isNestedSchema && !isJsonField(f)).map(f => `      if (typeof submitData.${f.name} === 'string') {
         submitData.${f.name} = submitData.${f.name}.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
       }`).join('\n')}
 ${formFields.filter(f => f.enumValues && f.enumValues.length > 0).length > 0 ? `
@@ -833,6 +874,27 @@ ${f.enumValues.map(v => `          <option value="${v}">${v}</option>`).join('\n
       </div>`;
   }
   
+  // インラインオブジェクトは JSON テキストエリア
+  if (isJsonField(f)) {
+    return `      <div>
+        <label htmlFor="${f.name}" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+          ${f.name}${!f.isOptional ? ' *' : ''} <span className="text-xs text-gray-500">(JSON)</span>
+        </label>
+        <textarea
+          id="${f.name}"
+          name="${f.name}"
+          rows={4}
+          value={formData.${f.name}}
+          onChange={(e) => setFormData({ ...formData, ${f.name}: e.target.value })}
+          className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm px-3 py-2 font-mono focus:border-blue-500 focus:ring-blue-500 dark:focus:border-blue-400 dark:focus:ring-blue-400"
+          ${!f.isOptional ? 'required' : ''}
+        />
+        {errors.${f.name} && (
+          <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.${f.name}}</p>
+        )}
+      </div>`;
+  }
+
   // Array の場合はカンマ区切りテキスト
   if (f.isArray) {
     return `      <div>

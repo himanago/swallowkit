@@ -305,6 +305,18 @@ MCP 層は framework ロジックを持たず、各 Tool 呼び出しを machine
 
 生成される instruction files（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）は、MCP Tool が使えるときはそれを優先し、使えないときは `swallowkit machine ...` にフォールバックするよう案内します。MCP は選択した package manager を使い、npm project に pnpm は不要です。npm 用 launcher は `npx --yes --package swallowkit@${SWALLOWKIT_MCP_VERSION} swallowkit-mcp` です。未キャッシュのバージョンにはネットワークが必要です。
 
+### MCP のバージョン選択
+
+`latest` の参照は意図的な設計です。古いリリースで作成したプロジェクトでも、現在の安定版ツールを使えるようにしています。ただし、プレリリース版のプロジェクトは `latest` より新しいことがあるため、次の規則で版を選びます。
+
+- `init` は通常 `latest` を使います。init に使った SwallowKit が公開済みの `latest` より新しい場合（例：`latest` が `1.1.2` のときの `2.0.0-alpha.3`）だけ、`SWALLOWKIT_MCP_VERSION` をその版に固定します。
+- `latest`（または版の指定なし）で起動した MCP は、自身とプロジェクトにインストールされた `swallowkit` を semver の優先順位で比較します。プロジェクトのほうが新しければ、プロジェクトの `swallowkit-mcp` に処理を委譲します。`latest` が追い付いた時点（例：`2.0.0` と `2.0.0-alpha.3`）で、再び `latest` を使います。
+- `latest` 以外を明示した `SWALLOWKIT_MCP_VERSION` は常に優先します。固定した版がプロジェクトより古い場合は `mcp-older-than-project`、公開済みの `latest` が固定版に追い付いた場合は `mcp-pin-outdated` の警告を出します。
+- MCP の応答には必ず `metadata.swallowkitVersion` と `metadata.mcp`（`version`、`requestedVersion`、`projectVersion`、`selection`、`delegated`、`delegatedFrom`）が含まれます。版に関する警告は `metadata.warnings` に入り、対処方法を `nextActions` で示します。
+- `swallowkit configure-mcp [--version auto|latest|<semver>]` は `.mcp.json` の版だけを書き換えます。既定の `auto` は、プロジェクトのほうが新しい場合を除き `latest` を選びます。
+
+委譲は、それを含む版が `latest` として公開されて初めて機能します。そのような安定版が出るまでは、`init` や `configure-mcp` が書き込む固定値によって、プレリリース版のプロジェクトでも同じ版の MCP を使います。生成される AI 向け指示でも、MCP がプロジェクトより古い版を報告した場合は `swallowkit machine ...` を優先するよう案内しています。
+
 ### Agent Skills（agentskills.io 標準）
 
 `init` は自律ループのランブックを [Agent Skills](https://agentskills.io/) 標準のスキルとしても `.github/skills/` に生成します。Skills 対応エージェント（GitHub Copilot の VS Code / CLI / cloud agent など）は frontmatter の `name` / `description` だけを常駐ロードし、タスクが合致したときだけ本文を読み込みます（progressive disclosure）。
@@ -341,7 +353,9 @@ inspect project → plan scaffold → apply scaffold --plan <id> → verify proj
 | --- | --- | --- |
 | `deterministic` | 手編集せず plan/apply で再生成 | `functions/src/*.ts`, `app/api/*/route.ts`, `infra/containers/` |
 | `ai-authored` | AI / 開発者が自由に記述 | `app/**/page.tsx`（生成後）, `lib/`, 独自コード |
-| `shared` | マーカー外のみ編集可 | `infra/main.bicep`, `functions/function_app.py`, `shared/index.ts` |
+| `shared` | マーカー外のみ編集可 | `shared/index.ts`。Python バックエンドでは `functions/function_app.py` も対象 |
+
+規則は `backend.language` に応じて出し分けます。C# と TypeScript のバックエンドには登録用ファイルがないため、バックエンドのマーカー規則は出力しません。`infra/` のベースラインは `infra/migrations/manifest.json` がチェックサムを記録しているため deterministic です。インフラの追加は新しい migration で行ってください。
 
 編集前に `inspect boundaries`（または `swallowkit_inspect_boundaries`）で契約を取得し、`deterministic` 領域への変更はモデル編集 + plan/apply に置き換えてください。
 # machine/MCP出力の認証情報

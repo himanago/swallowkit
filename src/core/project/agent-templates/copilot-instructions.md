@@ -13,7 +13,9 @@ Key rules:
 - Inspect current SwallowKit capabilities instead of assuming them.
 - Answer repository- and SwallowKit-inspectable questions before asking the human.
 - Prefer `swallowkit_*` MCP tools when available.
-- Otherwise use `{{runCmd}} swallowkit machine ...`.
+- Otherwise use `{{runCmd}} swallowkit machine ...`. Also use it when an MCP
+  response's `metadata.swallowkitVersion` is older than the project's SwallowKit
+  or `metadata.warnings` contains `mcp-older-than-project`.
 - Inspect responsibility boundaries before editing framework-related files.
 - Never hand-edit deterministic SwallowKit-managed artifacts.
 - Add auth schemes only via plan/apply auth; never hand-write `auth.schemes`

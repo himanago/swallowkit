@@ -26,7 +26,7 @@ SwallowKit プロジェクトの Azure リソースをプロビジョニング�
 ## 前提条件
 
 - Azure アカウント
-- Azure CLI (`az`) のインストール
+- Azure CLI (`az`) のインストールとサインイン（`az login`）。SwallowKit を実行するターミナルで `az --version` が動作する必要があります。Windows では MSI / winget でインストールした `az.cmd` に対応しています。
 - GitHub アカウント（GitHub Actions を使用する場合）
 - Azure DevOps アカウント（Azure Pipelines を使用する場合）
 
@@ -50,13 +50,15 @@ npx swallowkit provision --resource-group my-app-rg \
   --location japaneast --swa-location eastasia
 ```
 
-リージョンを省略した場合は対話式に選択します。初回実行では Resource Group が存在しないことを確認して `infra/main.bicep` をデプロイし、migration baseline 0 を Resource Group タグへ記録します。実行前には plan と Azure コマンドが表示され、承認が必要です。
+リージョンを省略した場合は対話式に選択します。初回実行では Resource Group が存在しないことを確認して `infra/main.bicep` をデプロイし、migration baseline 0 を Resource Group タグへ記録します。変更の前に Azure の現在の状態を確認し、何が行われるかと実行する Azure CLI コマンドを表示して、確認を求めます。後で使うための計画ファイルは保存しません。コマンド実行までに Azure 側の状態が変わった場合は停止し、再実行を案内します（エージェント向けには `swallowkit machine plan provision` / `apply provision --plan` という別の手順があります）。
 
 このコマンドは Bicep テンプレートを使用して以下を作成します:
 - Azure Static Web Apps
 - Azure Functions (Flex Consumption)
 - Azure Cosmos DB（初期化時に選択した Free Tier または Serverless）
 - マネージド ID（サービス間の安全な接続）
+
+`az` が見つからないか起動できない場合は、確認を求めずに終了し、Azure には何も変更を加えません。`az-cli-not-found` は PATH に `az` がないこと、`az-cli-not-runnable` は見つかったものの起動できなかったことを示します。サインインしていない場合は `az login` の実行を案内します。原因を解消してから、もう一度 `provision` を実行してください。
 
 非対話環境では `--location`、`--swa-location`、`--approve` を明示してください。CI/CD の secrets は後述の Azure CLI コマンドで取得します。
 

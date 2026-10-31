@@ -1,7 +1,27 @@
 import { Command } from "commander";
 import prompts from "prompts";
 import { ensureSwallowKitProject } from "../../core/config";
-import { applyProvisionOperation, planProvisionOperation } from "../../core/operations/provision-operations";
+import {
+  INTERACTIVE_PROVISION_RETRY_HINT,
+  ProvisionPlanData,
+  executeProvisionPlan,
+  planProvisionOperation,
+} from "../../core/operations/provision-operations";
+
+export function describeProvisionAction(plan: Pick<ProvisionPlanData, "mode" | "resourceGroup" | "location" | "pendingMigrations">): string {
+  switch (plan.mode) {
+    case "bootstrap":
+      return `Resource group ${plan.resourceGroup} does not exist yet. It will be created in ${plan.location} and the infrastructure in infra/main.bicep will be deployed.`;
+    case "migrate":
+      return `${plan.pendingMigrations.length} infrastructure migration(s) will be deployed to ${plan.resourceGroup}: ${plan.pendingMigrations.map((migration) => `${migration.version}-${migration.slug}`).join(", ")}.`;
+    case "adopt":
+      return `The existing resource group ${plan.resourceGroup} will be recorded as SwallowKit baseline 0. Nothing will be deployed.`;
+    case "reconcile":
+      return `infra/main.bicep will be redeployed to ${plan.resourceGroup}. Template-managed settings may be reset.`;
+    default:
+      return `Resource group ${plan.resourceGroup}:`;
+  }
+}
 
 const PRIMARY_REGIONS = [
   { title: "Japan East (japaneast)", value: "japaneast" },
@@ -70,16 +90,17 @@ export const provisionCommand = new Command("provision")
   .option("--subscription <id>", "Azure subscription ID")
   .option("--location <region>", "Primary location for Functions and Cosmos DB")
   .option("--swa-location <region>", "Static Web App location")
-  .option("--what-if", "Include Azure what-if evidence", false)
+  .option("--what-if", "Include Azure what-if evidence in the preview", false)
   .option("--adopt-existing", "Adopt an existing untagged resource group without deploying main.bicep", false)
   .option("--baseline <version>", "Baseline version for adoption (currently 0)")
   .option("--reconcile", "Explicitly redeploy infra/main.bicep", false)
-  .option("--approve", "Apply the displayed plan without an interactive confirmation", false)
+  .option("--approve", "Run the displayed Azure commands without the confirmation prompt", false)
   .action(async (options: ProvisionCliOptions) => {
     ensureSwallowKitProject("provision");
     const locations = await resolveLocations(options);
     const baseline = options.baseline === undefined ? undefined : Number(options.baseline);
-    const plan = await planProvisionOperation({
+    // Preview in memory: the same Azure checks as the agent workflow, but no saved plan file.
+    const preview = await planProvisionOperation({
       resourceGroup: options.resourceGroup,
       subscription: options.subscription,
       location: locations.location,
@@ -88,37 +109,52 @@ export const provisionCommand = new Command("provision")
       adoptExisting: options.adoptExisting,
       baseline,
       reconcile: options.reconcile,
-    });
+    }, { persist: false });
 
-    console.log(`Provision mode: ${plan.mode}`);
-    for (const warning of plan.warnings) console.warn(`Warning: ${warning}`);
-    if (plan.pendingMigrations.length > 0) {
-      console.log(`Pending migrations: ${plan.pendingMigrations.map((migration) => `${migration.version}-${migration.slug}`).join(", ")}`);
+    for (const warning of preview.warnings) console.warn(`Warning: ${warning}`);
+
+    if (preview.mode === "offline") {
+      console.log([
+        "",
+        "❌ Azure CLI is unavailable, so the current state of Azure could not be checked. Nothing was changed in Azure.",
+        "   1. Make sure `az --version` works in this terminal (install: https://aka.ms/azure-cli).",
+        "   2. Sign in with `az login` (and `az account set --subscription <id>` if needed).",
+        "   3. Run this command again.",
+      ].join("\n"));
+      process.exitCode = 1;
+      return;
     }
-    for (const command of plan.commands) console.log(`  ${command}`);
 
-    if (plan.mode === "adoption-required") {
+    if (preview.mode === "adoption-required") {
       throw new Error('Existing resource group requires: migrations init --legacy-baseline, then provision --adopt-existing --baseline 0 --what-if.');
     }
+
+    if (preview.mode === "noop") {
+      console.log(`Resource group ${preview.resourceGroup} is already up to date. Nothing to do.`);
+      return;
+    }
+
+    console.log(`\n${describeProvisionAction(preview)}`);
+    console.log("The following Azure CLI commands will run:");
+    for (const command of preview.commands) console.log(`  ${command}`);
 
     let approved = options.approve === true;
     if (!approved) {
       if (!process.stdin.isTTY || !process.stdout.isTTY) {
-        throw new Error("Non-interactive provision requires --approve after reviewing the plan.");
+        throw new Error("Non-interactive provision requires --approve after reviewing the commands above.");
       }
       const answer = await prompts({
         type: "confirm",
         name: "approved",
-        message: `Apply the ${plan.mode} plan?`,
+        message: "Run these Azure commands? This may create billable resources.",
         initial: false,
       });
       approved = answer.approved === true;
     }
     if (!approved) {
-      console.log("Provision cancelled.");
+      console.log("Provision cancelled. Nothing was changed in Azure.");
       return;
     }
 
-    const result = await applyProvisionOperation({ planId: plan.planId, approve: true });
-    console.log(`Provision completed (${plan.mode}). ${result.executedCommands.length} command(s) executed.`);
-  });
+    const result = await executeProvisionPlan(preview, { approve: true, retryHint: INTERACTIVE_PROVISION_RETRY_HINT });
+    console.log(`✅ Provisioning completed. ${result.executedCommands.length} Azure CLI command(s) ran.`);  });

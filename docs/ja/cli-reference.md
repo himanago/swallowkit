@@ -27,6 +27,8 @@ SwallowKit CLI の全コマンドとオプションです。
 - [swallowkit create-dev-seeds](#swallowkit-create-dev-seeds)
 - [swallowkit migrations init](#swallowkit-migrations-init)
 - [swallowkit create-migration](#swallowkit-create-migration)
+- [swallowkit migrations add-model](#swallowkit-migrations-add-model)
+- [swallowkit configure-mcp](#swallowkit-configure-mcp)
 - [swallowkit provision](#swallowkit-provision)
 
 ## swallowkit machine
@@ -1103,6 +1105,7 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 | `--functions-dir <dir>` | Azure Functions ディレクトリ | `functions` |
 | `--api-dir <dir>` | BFF ディレクトリ | Next.js: `app/api`、React: `bff` |
 | `--api-only` | UI コンポーネントのみをスキップします。Functions、BFF ルート、OpenAPI、ネイティブスキーマ資産は更新されます。 | `false` |
+| `--skip-infra` | `infra/` 配下を一切作成・変更しません。コンテナー用 migration は未生成として報告され（`infra-skipped`）、後から `migrations add-model` で追加できます。`machine plan/apply/generate scaffold` と MCP（`skipInfra`）でも使えます。 | `false` |
 | `--dry-run` | 書き込まずに変更予定のファイル一覧と競合を表示します | `false` |
 
 ### Connector モデルの動作
@@ -1342,6 +1345,29 @@ npx swallowkit create-dev-seeds local --from-emulator --force
 npx swallowkit dev --seed-env local
 ```
 
+## swallowkit migrations add-model
+
+モデルの Cosmos DB コンテナー用 migration だけを生成します。`scaffold --skip-infra` の後に使います。
+
+```bash
+npx swallowkit migrations add-model probe-item --dry-run
+npx swallowkit migrations add-model probe-item
+```
+
+`infra/migrations/<version>-create-<model>-container/main.bicep` を作成し、`infra/migrations/manifest.json` に追記します。同じモデルで再実行しても変更はありません。コネクターモデルにはコンテナーがありません。
+
+## swallowkit configure-mcp
+
+`.mcp.json` で起動する SwallowKit の版を選び直します。変更するのは `SWALLOWKIT_MCP_VERSION` だけです。
+
+```bash
+npx swallowkit configure-mcp                 # auto: プロジェクトのほうが新しい場合を除き latest
+npx swallowkit configure-mcp --version latest
+npx swallowkit configure-mcp --version 2.0.0-alpha.3
+```
+
+変更後は MCP サーバーを再起動してください。詳しくは [MCP のバージョン選択](./ai-mcp-guide.md#mcp-のバージョン選択)を参照してください。
+
 ## swallowkit provision
 
 Azure の状態を確認し、初回構築または未適用の Infrastructure Migration を実行します。既存環境では通常 `main.bicep` を再デプロイしません。
@@ -1362,11 +1388,11 @@ pnpm dlx swallowkit provision [options]
 | `--subscription <id>` | | サブスクリプション ID | |
 | `--location <region>` | | Functions / Cosmos DB のリージョン。非対話実行では必須 | |
 | `--swa-location <region>` | | Static Web Apps のリージョン。非対話実行では必須 | |
-| `--what-if` | | Azure what-if を plan に含める | |
+| `--what-if` | | Azure what-if の結果を確認内容に含める | |
 | `--adopt-existing` | | タグなし既存環境を baseline として採用する | |
 | `--baseline <version>` | | adoption の baseline。現在は `0` のみ | |
 | `--reconcile` | | `main.bicep` 全体を明示的に再デプロイする | |
-| `--approve` | | 表示された plan を非対話で承認する | |
+| `--approve` | | 確認を求めずに、表示された Azure コマンドを実行する | |
 
 ### リージョン選択
 

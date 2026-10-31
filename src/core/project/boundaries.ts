@@ -10,7 +10,9 @@
  * - shared:        マーカー区切りの共有領域。マーカー内は SwallowKit、外は自由。
  */
 
+import { getBackendLanguage } from "../config";
 import { ArtifactOwnership } from "../operations/file-session";
+import { BackendLanguage } from "../../types";
 import { inspectArtifacts } from "./artifacts";
 
 export type BoundaryZone = "deterministic" | "ai-authored" | "shared";
@@ -48,6 +50,8 @@ export interface BoundaryArtifact {
 export interface BoundariesContract {
   contractVersion: number;
   summary: string;
+  /** backend.language the convention rules were resolved for */
+  backendLanguage: BackendLanguage;
   ownershipPolicies: OwnershipPolicy[];
   /** 台帳に載っていないパスの既定規約 */
   conventionRules: BoundaryPathRule[];
@@ -92,7 +96,7 @@ export const OWNERSHIP_POLICIES: OwnershipPolicy[] = [
   },
 ];
 
-export const CONVENTION_RULES: BoundaryPathRule[] = [
+const COMMON_LEADING_RULES: BoundaryPathRule[] = [
   {
     pattern: ".swallowkit/",
     zone: "deterministic",
@@ -107,16 +111,25 @@ export const CONVENTION_RULES: BoundaryPathRule[] = [
       "Zod model schemas — the single source of truth. AI/developers author these freely; deterministic generation derives everything else from them.",
   },
   {
-    pattern: "infra/main.bicep",
-    zone: "shared",
-    editPolicy: "edit-outside-markers",
-    description: "SwallowKit inserts container modules; other infrastructure edits are free.",
+    pattern: "infra/migrations/manifest.json",
+    zone: "deterministic",
+    editPolicy: "never-hand-edit",
+    description:
+      "Infrastructure migration ledger with baseline checksums. Updated by scaffold, `swallowkit migrations add-model`, and `swallowkit create-migration`.",
   },
   {
-    pattern: "functions/function_app.py",
-    zone: "shared",
-    editPolicy: "edit-outside-markers",
-    description: "SwallowKit appends blueprint registrations under its marker; other edits are free.",
+    pattern: "infra/migrations/",
+    zone: "ai-authored",
+    editPolicy: "free-edit",
+    description:
+      "Versioned Bicep migrations. Edit a migration only before it is provisioned; never change an applied migration — add a new one with `swallowkit create-migration <slug>`.",
+  },
+  {
+    pattern: "infra/",
+    zone: "deterministic",
+    editPolicy: "never-hand-edit",
+    description:
+      "Baseline infrastructure (main.bicep and modules) whose checksums are recorded in infra/migrations/manifest.json. Hand edits block scaffold with baseline-drift; add resources through a new migration instead.",
   },
   {
     pattern: "shared/index.ts",
@@ -124,14 +137,39 @@ export const CONVENTION_RULES: BoundaryPathRule[] = [
     editPolicy: "edit-outside-markers",
     description: "SwallowKit appends model exports; other exports may be added freely.",
   },
-  {
-    pattern: "*",
-    zone: "ai-authored",
-    editPolicy: "free-edit",
-    description:
-      "Any path not recorded in the artifact ledger is AI/developer-authored. Business logic, custom pages, custom Functions, and tests belong here.",
-  },
 ];
+
+/** Backend files that SwallowKit appends to; C# and TypeScript discover functions without a registration file. */
+const BACKEND_EXTENSION_RULES: Record<BackendLanguage, BoundaryPathRule[]> = {
+  python: [
+    {
+      pattern: "functions/function_app.py",
+      zone: "shared",
+      editPolicy: "edit-outside-markers",
+      description: "SwallowKit appends blueprint registrations under its marker; other edits are free.",
+    },
+    {
+      pattern: "functions/requirements.txt",
+      zone: "shared",
+      editPolicy: "free-edit",
+      description: "SwallowKit appends connector driver requirements when connector models are scaffolded; keep those lines and edit other requirements freely.",
+    },
+  ],
+  csharp: [],
+  typescript: [],
+};
+
+const FALLBACK_RULE: BoundaryPathRule = {
+  pattern: "*",
+  zone: "ai-authored",
+  editPolicy: "free-edit",
+  description:
+    "Any path not recorded in the artifact ledger is AI/developer-authored. Business logic, custom pages, custom Functions, and tests belong here.",
+};
+
+export function buildConventionRules(backendLanguage: BackendLanguage): BoundaryPathRule[] {
+  return [...COMMON_LEADING_RULES, ...BACKEND_EXTENSION_RULES[backendLanguage], FALLBACK_RULE];
+}
 
 const POLICY_BY_OWNERSHIP = new Map(OWNERSHIP_POLICIES.map((policy) => [policy.ownership, policy] as const));
 
@@ -143,7 +181,10 @@ export const BOUNDARY_GUIDANCE: string[] = [
   "Run `swallowkit machine verify project` after applying changes; use `explain failure` to get repair evidence.",
 ];
 
-export function inspectBoundaries(projectRoot: string = process.cwd()): BoundariesContract {
+export function inspectBoundaries(
+  projectRoot: string = process.cwd(),
+  backendLanguage: BackendLanguage = getBackendLanguage()
+): BoundariesContract {
   const inspected = inspectArtifacts(projectRoot);
 
   const artifacts: BoundaryArtifact[] = inspected.artifacts.map((artifact) => {
@@ -162,8 +203,9 @@ export function inspectBoundaries(projectRoot: string = process.cwd()): Boundari
     contractVersion: 1,
     summary:
       "SwallowKit separates deterministic generation (models → CRUD/BFF/UI/infra via plan/apply) from AI free-form authoring (models, business logic, custom code). This contract tells agents which files belong to which side.",
+    backendLanguage,
     ownershipPolicies: OWNERSHIP_POLICIES,
-    conventionRules: CONVENTION_RULES,
+    conventionRules: buildConventionRules(backendLanguage),
     artifacts,
     guidance: BOUNDARY_GUIDANCE,
   };

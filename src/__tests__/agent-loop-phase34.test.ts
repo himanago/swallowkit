@@ -17,6 +17,7 @@ import { inspectInfra } from "../core/project/infra";
 import { loadCustomVerifyChecks, compactVerifyResult, runVerify, VerifyResult } from "../core/verify";
 import { buildAgentSkills, buildWorkflowDocs, writeAgentSkills, writeWorkflowDocs } from "../core/project/workflows";
 import { applyProvisionOperation, planProvisionOperation } from "../core/operations/provision-operations";
+import { resetAzCliInvocationCache, setAzCliInvocationForTesting } from "../utils/azure-cli";
 import { createCustomMigration, initializeLegacyMigrations } from "../core/operations/migration-generator";
 import { createMigrationManifest, encodeMigrationState, getMigrationTagKey, saveMigrationManifest } from "../core/project/migrations";
 
@@ -126,9 +127,12 @@ describe("agent loop phase 3/4", () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-p34-"));
     process.chdir(tempDir);
     (childProcess.spawnSync as unknown as any).mockReturnValue({ status: 1, stdout: "", stderr: "" });
+    // Platform-independent az invocation; the Windows wrapper resolution is covered in azure-cli.test.ts.
+    setAzCliInvocationForTesting({ command: "az", prefixArgs: [], source: "az" });
   });
 
   afterEach(() => {
+    resetAzCliInvocationCache();
     process.chdir(originalCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
     jest.clearAllMocks();
@@ -269,6 +273,7 @@ describe("agent loop phase 3/4", () => {
     createProjectFixture(tempDir);
     writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
     writeFile(path.join(tempDir, "infra", "main.parameters.json"), "{}\n");
+    setAzCliInvocationForTesting(null);
 
     const plan = await runMachine([
       "node", "swallowkit", "machine", "plan", "provision",
@@ -506,6 +511,30 @@ describe("agent loop phase 3/4", () => {
       expectedArgs,
       expect.objectContaining({ cwd: tempDir })
     );
+  });
+
+  it.each<[string, string[]]>([
+    ["pnpm", ["exec", "next", "typegen"]],
+    ["npm", ["exec", "--", "next", "typegen"]],
+  ])("generates Next.js route types with %s before typechecking", async (packageManager, typegenArgs) => {
+    writeFile(
+      path.join(tempDir, "package.json"),
+      JSON.stringify({ name: "sample-app", devEngines: { packageManager: { name: packageManager, version: ">=10", onFail: "error" } } })
+    );
+    writeFile(path.join(tempDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { noEmit: true } }));
+    writeFile(path.join(tempDir, "next.config.ts"), "export default {};\n");
+    writeFile(path.join(tempDir, "node_modules", "next", "package.json"), JSON.stringify({ name: "next", version: "16.0.0" }));
+    const spawnSyncMock = childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>;
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "typegen failed" })
+      .mockReturnValueOnce({ status: 2, stdout: "app/layout.tsx: Cannot find name 'LayoutProps'.", stderr: "" });
+
+    const result = await runVerify(["typecheck"], tempDir);
+
+    expect(spawnSyncMock.mock.calls[0].slice(0, 2)).toEqual([packageManager, typegenArgs]);
+    expect(result.checks[0].status).toBe("fail");
+    expect(result.checks[0].evidence.logTail?.[0]).toMatch(/^next typegen did not complete \(exit 1\)/);
   });
 
   it("uses the existing typecheck script when present", async () => {

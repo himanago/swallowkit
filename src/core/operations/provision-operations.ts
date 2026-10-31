@@ -5,12 +5,14 @@
  *   ネットワークアクセスや az login を必要とする操作は行わない。
  *   --what-if を明示した場合のみ az deployment group what-if を実行する。
  * - apply provision: 常に承認(--approve)必須。承認なしでは requires-human で停止する。
+ * - 対話的な `swallowkit provision` は同じ計画をメモリ上で作成・表示し、確認後に
+ *   executeProvisionPlan で同じ安全確認を経て実行する(計画ファイルは保存しない)。
  */
 
 import * as crypto from "crypto";
 import * as fs from "fs";
+import { AzCliAvailability, checkAzCliAvailability, runAzCli } from "../../utils/azure-cli";
 import * as path from "path";
-import { spawnSync } from "child_process";
 import { MachineCommandError } from "../../machine/errors";
 import { getSwallowKitVersion } from "../../version";
 import { inspectInfra, InfraInspection } from "../project/infra";
@@ -30,7 +32,6 @@ import {
   getMigrationTagKey,
   loadMigrationManifest,
   replaceMigrationManifest,
-  resolveMigrations,
   selectPendingMigrations,
 } from "../project/migrations";
 
@@ -113,13 +114,10 @@ function validateProvisionInputs(options: PlanProvisionOptions): void {
   }
 }
 
-function isAzCliAvailable(): boolean {
-  try {
-    const result = spawnSync("az", ["--version"], { shell: false, stdio: "ignore", timeout: 30_000 });
-    return result.status === 0;
-  } catch {
-    return false;
-  }
+function azCliUnavailableWarning(availability: Exclude<AzCliAvailability, { available: true }>): string {
+  return availability.reason === "not-found"
+    ? "az-cli-not-found: Azure CLI was not found on PATH. Install it (https://aka.ms/azure-cli) or add it to PATH, then try again."
+    : `az-cli-not-runnable: Azure CLI was found but could not be started. ${availability.detail}`;
 }
 
 function displayCommand(command: ProvisionCommand): string {
@@ -133,12 +131,25 @@ interface AzResult {
 }
 
 function runAz(args: string[], timeout = 300_000): AzResult {
-  const result = spawnSync("az", args, { shell: false, encoding: "utf-8", timeout });
+  const result = runAzCli(args, { timeout });
   return {
     status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stdout: result.stdout,
+    stderr: result.stderr || (result.error ? result.error.message : ""),
   };
+}
+
+function azQueryError(code: string, message: string, result: AzResult): MachineCommandError {
+  const output = (result.stderr || result.stdout || "").trim();
+  if (/az login|not logged in|AADSTS|expired/i.test(output)) {
+    return new MachineCommandError(
+      "az-not-logged-in",
+      `Azure CLI is not signed in (or the session expired). Run "az login", then try again.\n${output.slice(0, 1000)}`,
+      undefined,
+      "requires-human"
+    );
+  }
+  return new MachineCommandError(code, `${message}: ${output}`, undefined, "blocked");
 }
 
 function subscriptionArgs(subscription?: string): string[] {
@@ -176,12 +187,12 @@ interface RemoteGroupState {
 function inspectRemoteGroup(options: PlanProvisionOptions): RemoteGroupState {
   const existsResult = runAz(["group", "exists", "--name", options.resourceGroup, ...subscriptionArgs(options.subscription)], 60_000);
   if (existsResult.status !== 0) {
-    throw new MachineCommandError("azure-state-query-failed", `Could not query resource group: ${(existsResult.stderr || existsResult.stdout || "").trim()}`, undefined, "blocked");
+    throw azQueryError("azure-state-query-failed", "Could not query resource group", existsResult);
   }
   if ((existsResult.stdout || "").trim() !== "true") return { exists: false, tags: {} };
   const showResult = runAz(["group", "show", "--name", options.resourceGroup, ...subscriptionArgs(options.subscription), "--query", "{id:id,tags:tags}", "-o", "json"], 60_000);
   if (showResult.status !== 0) {
-    throw new MachineCommandError("azure-state-query-failed", `Could not read resource group tags: ${(showResult.stderr || showResult.stdout || "").trim()}`, undefined, "blocked");
+    throw azQueryError("azure-state-query-failed", "Could not read resource group tags", showResult);
   }
   const parsed = JSON.parse(showResult.stdout || "{}");
   return { exists: true, id: parsed.id, tags: parsed.tags ?? {} };
@@ -231,7 +242,14 @@ function assertAdoptionWhatIfIsSafe(whatIfResult: string): void {
   }
 }
 
-export async function planProvisionOperation(options: PlanProvisionOptions): Promise<ProvisionPlanData> {
+/**
+ * Builds the provision plan. Machine/MCP callers persist it for a later `apply provision --plan`;
+ * the interactive `swallowkit provision` command keeps it in memory and executes it after confirmation.
+ */
+export async function planProvisionOperation(
+  options: PlanProvisionOptions,
+  planOptions: { persist?: boolean } = {}
+): Promise<ProvisionPlanData> {
   const projectRoot = process.cwd();
   validateProvisionInputs(options);
 
@@ -250,9 +268,10 @@ export async function planProvisionOperation(options: PlanProvisionOptions): Pro
     warnings.push("infra/main.parameters.json not found; deployment will fail until it is created.");
   }
 
-  const azCliAvailable = isAzCliAvailable();
-  if (!azCliAvailable) {
-    warnings.push("az-cli-not-found: Azure CLI is not installed. Install it before applying: https://aka.ms/azure-cli");
+  const azCli = checkAzCliAvailability();
+  const azCliAvailable = azCli.available;
+  if (!azCli.available) {
+    warnings.push(azCliUnavailableWarning(azCli));
   }
 
   const mainBicepPath = path.join(projectRoot, "infra", "main.bicep");
@@ -396,7 +415,13 @@ export async function planProvisionOperation(options: PlanProvisionOptions): Pro
       }
     }
   } else if (options.whatIf || options.adoptExisting || options.reconcile) {
-    throw new MachineCommandError("az-cli-not-found", "Azure CLI is required for --what-if, --adopt-existing, and --reconcile.", undefined, "blocked");
+    const detail = azCli.available ? "" : ` ${azCliUnavailableWarning(azCli)}`;
+    throw new MachineCommandError(
+      !azCli.available && azCli.reason === "not-runnable" ? "az-cli-not-runnable" : "az-cli-not-found",
+      `Azure CLI is required for --what-if, --adopt-existing, and --reconcile.${detail}`,
+      undefined,
+      "blocked"
+    );
   }
 
   const fingerprints: Record<string, string | null> = {
@@ -460,7 +485,7 @@ export async function planProvisionOperation(options: PlanProvisionOptions): Pro
     ...(baselineSnapshotChecksum ? { baselineSnapshotChecksum } : {}),
   };
 
-  savePlanState(plan, projectRoot);
+  if (planOptions.persist !== false) savePlanState(plan, projectRoot);
   return plan;
 }
 
@@ -490,36 +515,39 @@ function readRemoteMigrationState(plan: ProvisionPlanData): { group: RemoteGroup
   return { group, state: tagValue ? decodeMigrationState(tagValue) : null };
 }
 
-function assertPlanRemoteState(plan: ProvisionPlanData, expected: MigrationState | null | undefined): void {
+function assertPlanRemoteState(plan: ProvisionPlanData, expected: MigrationState | null | undefined, retryHint: string): void {
   if (plan.mode === "offline") return;
   const current = readRemoteMigrationState(plan);
   if (plan.mode === "bootstrap") {
     if (current.group.exists) {
-      throw new MachineCommandError("stale-azure-state", "The resource group was created after this plan. Re-run plan provision.", undefined, "blocked");
+      throw new MachineCommandError("stale-azure-state", `The resource group was created after the preview was computed. ${retryHint}`, undefined, "blocked");
     }
     return;
   }
   if (!current.group.exists || !statesEqual(current.state, expected)) {
     throw new MachineCommandError(
       "stale-azure-state",
-      "Azure migration state changed after this plan was created. Re-run plan provision.",
+      `Azure migration state changed after the preview was computed. ${retryHint}`,
       { expected, actual: current.state, resourceGroupExists: current.group.exists },
       "blocked"
     );
   }
 }
 
-function assertTagExpectedState(plan: ProvisionPlanData, expected: MigrationState | null | undefined): void {
+function assertTagExpectedState(plan: ProvisionPlanData, expected: MigrationState | null | undefined, retryHint: string): void {
   const current = readRemoteMigrationState(plan);
   if (!current.group.exists || !statesEqual(current.state, expected)) {
     throw new MachineCommandError(
       "stale-azure-state",
-      "Azure migration state changed before its tag could be updated. Re-run plan provision.",
+      `Azure migration state changed before its tag could be updated. ${retryHint}`,
       { expected, actual: current.state, resourceGroupExists: current.group.exists },
       "blocked"
     );
   }
 }
+
+const MACHINE_RETRY_HINT = "Re-run plan provision.";
+export const INTERACTIVE_PROVISION_RETRY_HINT = 'Run "swallowkit provision" again to review the current state.';
 
 export async function applyProvisionOperation(options: ApplyProvisionOptions): Promise<ApplyProvisionResult> {
   const projectRoot = process.cwd();
@@ -534,6 +562,22 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     );
   }
 
+  const result = await executeProvisionPlan(plan, { approve: options.approve, retryHint: MACHINE_RETRY_HINT, projectRoot });
+  deletePlanState(plan.planId, projectRoot);
+  return result;
+}
+
+/**
+ * Runs an approved provision plan with every safety check: local files and Azure state must still
+ * match the reviewed preview, and each migration/tag step re-checks Azure state before it runs.
+ */
+export async function executeProvisionPlan(
+  plan: ProvisionPlanData,
+  options: { approve?: boolean; retryHint?: string; projectRoot?: string } = {}
+): Promise<ApplyProvisionResult> {
+  const projectRoot = options.projectRoot ?? process.cwd();
+  const retryHint = options.retryHint ?? MACHINE_RETRY_HINT;
+
   // Bicep が plan 後に変更されていないか確認
   const changedFiles: string[] = [];
   for (const [relativePath, expectedHash] of Object.entries(plan.fingerprints)) {
@@ -543,8 +587,8 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
   if (changedFiles.length > 0) {
     throw new MachineCommandError(
       "stale-plan",
-      `Plan "${options.planId}" is stale: ${changedFiles.join(", ")} changed after the plan was created. Re-run "plan provision".`,
-      { planId: options.planId, changedFiles },
+      `${changedFiles.join(", ")} changed after the preview was computed. ${retryHint}`,
+      { planId: plan.planId, changedFiles },
       "blocked"
     );
   }
@@ -553,8 +597,8 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     if (currentBaselineChecksum !== plan.baselineSnapshotChecksum) {
       throw new MachineCommandError(
         "stale-plan",
-        `Plan "${options.planId}" is stale: baseline infrastructure inventory changed after the plan was created.`,
-        { planId: options.planId },
+        `Baseline infrastructure files changed after the preview was computed. ${retryHint}`,
+        { planId: plan.planId },
         "blocked"
       );
     }
@@ -569,10 +613,15 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     );
   }
   if (!plan.mode || !plan.commandSpecs) {
-    throw new MachineCommandError("incompatible-plan", "This provision plan was created by an older SwallowKit version. Re-run plan provision.", undefined, "blocked");
+    throw new MachineCommandError("incompatible-plan", `This provision plan was created by an older SwallowKit version. ${retryHint}`, undefined, "blocked");
   }
   if (plan.mode === "offline") {
-    throw new MachineCommandError("online-plan-required", "Provision apply requires a fresh plan created while Azure CLI is available and authenticated.", undefined, "blocked");
+    throw new MachineCommandError(
+      "online-plan-required",
+      `Azure state was not read because Azure CLI was unavailable, so nothing can be applied. Make az available and signed in (az login). ${retryHint}`,
+      { planId: plan.planId, warnings: plan.warnings },
+      "blocked"
+    );
   }
 
   if (plan.mode === "adoption-required") {
@@ -584,27 +633,23 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     );
   }
 
-  if (!isAzCliAvailable()) {
-    throw new MachineCommandError(
-      "az-cli-not-found",
-      "Azure CLI is not installed. Install it first: https://aka.ms/azure-cli",
-      undefined,
-      "blocked"
-    );
+  const azCli = checkAzCliAvailability();
+  if (!azCli.available) {
+    throw new MachineCommandError(azCli.reason === "not-found" ? "az-cli-not-found" : "az-cli-not-runnable", azCliUnavailableWarning(azCli), undefined, "blocked");
   }
 
   const executedCommands: string[] = [];
   const warnings = [...plan.warnings];
   let deploymentOutputs: Record<string, unknown> | undefined;
 
-  assertPlanRemoteState(plan, plan.remoteState);
+  assertPlanRemoteState(plan, plan.remoteState, retryHint);
 
   for (const command of plan.commandSpecs) {
     if (command.kind === "migration") {
-      assertPlanRemoteState(plan, command.expectedState);
+      assertPlanRemoteState(plan, command.expectedState, retryHint);
     }
     if (command.kind === "tag") {
-      assertTagExpectedState(plan, command.expectedState);
+      assertTagExpectedState(plan, command.expectedState, retryHint);
     }
     const result = runAz(command.args);
     const commandText = displayCommand(command);
@@ -630,7 +675,6 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
   if (plan.manifestAfterApply) {
     replaceMigrationManifest(plan.manifestAfterApply, projectRoot);
   }
-  deletePlanState(plan.planId, projectRoot);
 
   return {
     planId: plan.planId,

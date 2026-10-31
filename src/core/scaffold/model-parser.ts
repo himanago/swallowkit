@@ -35,6 +35,22 @@ export interface ModelInfo {
   semanticFingerprint: string;
 }
 
+export type FieldFormat = "date-time" | "date" | "time" | "email" | "uuid" | "uri";
+
+/** Zod validation constraints that native backends can enforce. For arrays, length bounds are minItems/maxItems and other values apply to each element. */
+export interface FieldConstraints {
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  patternFlags?: string;
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: boolean;
+  exclusiveMaximum?: boolean;
+  minItems?: number;
+  maxItems?: number;
+}
+
 export interface FieldInfo {
   name: string;
   type: string; // "string" | "number" | "boolean" | "date" | "object" | "array"
@@ -42,6 +58,10 @@ export interface FieldInfo {
   isNullable?: boolean;
   isArray: boolean;
   enumValues?: string[]; // enum の場合の選択肢
+  format?: FieldFormat; // 明示された文字列形式（z.iso.datetime() など）
+  isInteger?: boolean; // z.number().int() / z.int()
+  constraints?: FieldConstraints;
+  objectFields?: FieldInfo[]; // インライン z.object({...}) の形
   isForeignKey?: boolean; // 外部キーかどうか
   referencedModel?: string; // 参照先のモデル名（例: "Category"）
   isNestedSchema?: boolean; // ネストしたスキーマ参照かどうか
@@ -113,6 +133,10 @@ export async function parseModelFile(modelPath: string, options: ModelParserOpti
   // フィールド情報を抽出（動的インポートを使用）
   const parsedSchema = await extractFieldsFromSchema(modelPath, schemaName, options.executeNode ?? execFileSync);
   const fields = parsedSchema.fields;
+  const parserWarnings = [...parsedSchema.warnings];
+
+  // 外部キーは参照先モデルが shared/models に実在する場合だけ推測する
+  applyForeignKeys(fields, modelName, modelPath, parseReferences(content), parserWarnings);
   
   // ネストスキーマ情報をフィールドにマージ
   mergeNestedSchemaInfo(fields, nestedSchemaRefs);
@@ -147,7 +171,7 @@ export async function parseModelFile(modelPath: string, options: ModelParserOpti
     ...(connectorConfig ? { connectorConfig } : {}),
     ...(authPolicy ? { authPolicy } : {}),
     parserMode: parsedSchema.mode,
-    parserWarnings: parsedSchema.warnings,
+    parserWarnings,
     semanticFingerprint: "",
   };
   modelInfo.semanticFingerprint = createModelSemanticFingerprint(modelInfo);
@@ -396,6 +420,16 @@ interface ParsedSchemaFields {
   warnings: string[];
 }
 
+const STRING_FORMATS: Record<string, FieldFormat> = {
+  email: "email",
+  url: "uri",
+  uuid: "uuid",
+  guid: "uuid",
+  datetime: "date-time",
+  date: "date",
+  time: "time",
+};
+
 function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] | null {
   const source = ts.createSourceFile(modelPath, fs.readFileSync(modelPath, "utf-8"), ts.ScriptTarget.Latest, true);
   const constants = new Map<string, ts.Expression>();
@@ -444,7 +478,137 @@ function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] |
     return values;
   };
 
-  const parseExpression = (expression: ts.Expression): Omit<FieldInfo, "name"> | null => {
+  type ParsedField = Omit<FieldInfo, "name">;
+
+  const numericArgument = (expression: ts.Expression | undefined): number | null => {
+    if (!expression) return null;
+    if (ts.isNumericLiteral(expression)) return Number(expression.text);
+    if (ts.isPrefixUnaryExpression(expression) && expression.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(expression.operand)) {
+      return -Number(expression.operand.text);
+    }
+    if (ts.isIdentifier(expression)) {
+      const resolved = constants.get(expression.text);
+      return resolved ? numericArgument(resolved) : null;
+    }
+    return null;
+  };
+
+  const withConstraints = (field: ParsedField, update: FieldConstraints): ParsedField => ({
+    ...field,
+    constraints: { ...(field.constraints ?? {}), ...update },
+  });
+
+  const lowerBound = (field: ParsedField, key: "minLength" | "minimum" | "minItems", value: number, exclusive = false): ParsedField => {
+    const current = field.constraints?.[key];
+    if (current !== undefined && current > value) return field;
+    const constraints: FieldConstraints = { ...(field.constraints ?? {}), [key]: value };
+    if (key === "minimum") {
+      // An equal bound stays exclusive if either check was exclusive (gt(0).min(0) still rejects 0).
+      if (exclusive || (current === value && field.constraints?.exclusiveMinimum)) constraints.exclusiveMinimum = true;
+      else delete constraints.exclusiveMinimum;
+    }
+    return { ...field, constraints };
+  };
+
+  const upperBound = (field: ParsedField, key: "maxLength" | "maximum" | "maxItems", value: number, exclusive = false): ParsedField => {
+    const current = field.constraints?.[key];
+    if (current !== undefined && current < value) return field;
+    const constraints: FieldConstraints = { ...(field.constraints ?? {}), [key]: value };
+    if (key === "maximum") {
+      if (exclusive || (current === value && field.constraints?.exclusiveMaximum)) constraints.exclusiveMaximum = true;
+      else delete constraints.exclusiveMaximum;
+    }
+    return { ...field, constraints };
+  };
+
+  const applyCheck = (inner: ParsedField, method: string, args: ts.NodeArray<ts.Expression>): ParsedField | null => {
+    const lengthTarget = inner.isArray ? "items" : inner.type === "string" ? "length" : inner.type === "number" ? "value" : null;
+    const value = numericArgument(args[0]);
+    switch (method) {
+      case "optional":
+      case "default":
+        return { ...inner, isOptional: true };
+      case "nullable":
+        return { ...inner, isNullable: true };
+      case "nullish":
+        return { ...inner, isOptional: true, isNullable: true };
+      case "describe":
+      case "trim":
+      case "toLowerCase":
+      case "toUpperCase":
+      case "strict":
+      case "strip":
+      case "passthrough":
+      case "loose":
+        return inner;
+      case "int":
+        return inner.type === "number" && !inner.isArray ? { ...inner, isInteger: true } : null;
+      case "positive":
+        return inner.type === "number" && !inner.isArray ? lowerBound(inner, "minimum", 0, true) : null;
+      case "nonnegative":
+        return inner.type === "number" && !inner.isArray ? lowerBound(inner, "minimum", 0) : null;
+      case "negative":
+        return inner.type === "number" && !inner.isArray ? upperBound(inner, "maximum", 0, true) : null;
+      case "nonpositive":
+        return inner.type === "number" && !inner.isArray ? upperBound(inner, "maximum", 0) : null;
+      case "gt":
+      case "gte":
+        return inner.type === "number" && !inner.isArray && value !== null ? lowerBound(inner, "minimum", value, method === "gt") : null;
+      case "lt":
+      case "lte":
+        return inner.type === "number" && !inner.isArray && value !== null ? upperBound(inner, "maximum", value, method === "lt") : null;
+      case "min":
+        if (value === null || !lengthTarget) return null;
+        return lowerBound(inner, lengthTarget === "items" ? "minItems" : lengthTarget === "length" ? "minLength" : "minimum", value);
+      case "max":
+        if (value === null || !lengthTarget) return null;
+        return upperBound(inner, lengthTarget === "items" ? "maxItems" : lengthTarget === "length" ? "maxLength" : "maximum", value);
+      case "length":
+        if (value === null || (lengthTarget !== "items" && lengthTarget !== "length")) return null;
+        return lengthTarget === "items"
+          ? upperBound(lowerBound(inner, "minItems", value), "maxItems", value)
+          : upperBound(lowerBound(inner, "minLength", value), "maxLength", value);
+      case "nonempty":
+        if (lengthTarget !== "items" && lengthTarget !== "length") return null;
+        return lowerBound(inner, lengthTarget === "items" ? "minItems" : "minLength", 1);
+      case "regex": {
+        const literal = args[0];
+        if (!literal || !ts.isRegularExpressionLiteral(literal) || inner.type !== "string" || inner.isArray) return null;
+        const text = literal.text;
+        const separator = text.lastIndexOf("/");
+        return withConstraints(inner, {
+          pattern: text.slice(1, separator),
+          ...(text.slice(separator + 1) ? { patternFlags: text.slice(separator + 1) } : {}),
+        });
+      }
+      case "email":
+      case "url":
+      case "uuid":
+      case "guid":
+      case "datetime":
+      case "date":
+      case "time":
+        if (inner.type !== "string" || inner.isArray) return null;
+        return { ...inner, format: STRING_FORMATS[method] };
+      default:
+        return null;
+    }
+  };
+
+  const parseObjectFields = (literal: ts.ObjectLiteralExpression): FieldInfo[] | null => {
+    const objectFields: FieldInfo[] = [];
+    for (const property of literal.properties) {
+      if (!ts.isPropertyAssignment(property)) return null;
+      const name = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? property.name.text : null;
+      if (!name) return null;
+      const parsed = parseExpression(property.initializer);
+      if (!parsed) return null;
+      objectFields.push({ name, ...parsed });
+    }
+    return objectFields;
+  };
+
+  function parseExpression(expression: ts.Expression): ParsedField | null {
     if (ts.isIdentifier(expression)) {
       const resolved = constants.get(expression.text);
       if (resolved) return parseExpression(resolved);
@@ -455,54 +619,48 @@ function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] |
     if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression)) return null;
     const method = expression.expression.name.text;
     const receiver = expression.expression.expression;
-    const wrappers = new Set(["optional", "nullable", "default", "min", "max", "int", "positive", "negative", "nonnegative", "nonpositive", "regex", "email", "url", "uuid", "trim"]);
-    if (wrappers.has(method)) {
+    const base = (type: string, extra: Partial<ParsedField> = {}): ParsedField => ({ type, isOptional: false, isNullable: false, isArray: false, ...extra });
+
+    // z.iso.datetime() / z.iso.date() / z.iso.time()
+    if (ts.isPropertyAccessExpression(receiver) && ts.isIdentifier(receiver.expression) && receiver.expression.text === "z" && receiver.name.text === "iso") {
+      return method === "datetime" || method === "date" || method === "time" ? base("string", { format: STRING_FORMATS[method] }) : null;
+    }
+    if (!(ts.isIdentifier(receiver) && receiver.text === "z")) {
       const inner = parseExpression(receiver);
-      if (!inner) return null;
-      if (method === "optional" || method === "default") inner.isOptional = true;
-      if (method === "nullable") inner.isNullable = true;
-      return inner;
+      return inner ? applyCheck(inner, method, expression.arguments) : null;
     }
-    if (!ts.isIdentifier(receiver) || receiver.text !== "z") return null;
-    if (["string", "number", "boolean", "date"].includes(method)) {
-      return { type: method, isOptional: false, isNullable: false, isArray: false };
+    if (["string", "boolean", "date"].includes(method)) return base(method);
+    if (method === "number") return base("number");
+    if (method === "int") return base("number", { isInteger: true });
+    if (method === "email" || method === "url" || method === "uuid" || method === "guid") return base("string", { format: STRING_FORMATS[method] });
+    if (method === "object") {
+      const literal = expression.arguments[0];
+      if (!literal || !ts.isObjectLiteralExpression(literal)) return null;
+      // Unsupported members keep the previous untyped-object behavior instead of failing the whole model.
+      const objectFields = parseObjectFields(literal);
+      return objectFields ? base("object", { objectFields }) : base("object");
     }
-    if (method === "object") return { type: "object", isOptional: false, isNullable: false, isArray: false };
     if (method === "array" && expression.arguments[0]) {
       const element = parseExpression(expression.arguments[0]);
       return element ? { ...element, isArray: true } : null;
     }
     if (method === "enum" && expression.arguments[0]) {
       const enumValues = literalValues(expression.arguments[0]);
-      return enumValues ? { type: "string", isOptional: false, isNullable: false, isArray: false, enumValues } : null;
+      return enumValues ? base("string", { enumValues }) : null;
     }
     if (method === "literal" && expression.arguments[0]) {
       const value = expression.arguments[0];
       if (ts.isStringLiteral(value) || ts.isNumericLiteral(value)) {
-        return { type: ts.isNumericLiteral(value) ? "number" : "string", isOptional: false, isNullable: false, isArray: false, enumValues: [value.text] };
+        return base(ts.isNumericLiteral(value) ? "number" : "string", { enumValues: [value.text] });
       }
       if (value.kind === ts.SyntaxKind.TrueKeyword || value.kind === ts.SyntaxKind.FalseKeyword) {
-        return { type: "boolean", isOptional: false, isNullable: false, isArray: false, enumValues: [value.kind === ts.SyntaxKind.TrueKeyword ? "true" : "false"] };
+        return base("boolean", { enumValues: [value.kind === ts.SyntaxKind.TrueKeyword ? "true" : "false"] });
       }
     }
     return null;
-  };
-
-  const fields: FieldInfo[] = [];
-  for (const property of schema.arguments[0].properties) {
-    if (!ts.isPropertyAssignment(property)) return null;
-    const name = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? property.name.text : null;
-    if (!name) return null;
-    const parsed = parseExpression(property.initializer);
-    if (!parsed) return null;
-    const isForeignKey = name.endsWith("Id") && name.length > 2 && parsed.type === "string";
-    fields.push({
-      name,
-      ...parsed,
-      ...(isForeignKey ? { isForeignKey: true, referencedModel: name.slice(0, -2).replace(/^./, char => char.toUpperCase()) } : {}),
-    });
   }
-  return fields;
+
+  return parseObjectFields(schema.arguments[0] as ts.ObjectLiteralExpression);
 }
 
 async function extractFieldsFromSchema(
@@ -532,110 +690,160 @@ async function extractFieldsFromSchema(
     const scriptCode = `
   import { ${schemaName} as schema } from './${path.basename(compiledModel)}';
 
-// Zod v3とv4の両方に対応
-const isObject = (schema && schema._def && 
-  (schema._def.typeName === 'ZodObject' || schema.constructor?.name === 'ZodObject' || typeof schema._def.shape === 'function'));
+// Zod v3 (_def.typeName) と v4 (_zod.def.type) の両方に対応
+const FORMATS = { email: 'email', url: 'uri', uuid: 'uuid', guid: 'uuid', datetime: 'date-time', date: 'date', time: 'time' };
+const v4 = (s) => (s && s._zod && s._zod.def) || null;
+const v3Name = (s) => (s && s._def && s._def.typeName) || '';
 
-if (isObject) {
-  const shape = typeof schema._def.shape === 'function' ? schema._def.shape() : schema._def.shape;
-  const fields = Object.keys(shape).map(key => {
-    const field = shape[key];
-    let type = undefined;
-    let isOptional = false;
-    let isNullable = false;
-    let isArray = false;
-    let enumValues = undefined;
-    
-    // ZodOptional, ZodNullable, ZodDefault, ZodEffects を unwrap
-    let fieldDef = field;
-    const getTypeName = (def) => def?._def?.typeName || def?.constructor?.name || '';
-    
-    // 繰り返し unwrap（複数のラッパーがある場合に対応）
-    let unwrapped = false;
-    do {
-      unwrapped = false;
-      const typeName = getTypeName(fieldDef);
-      
-      if (typeName === 'ZodOptional') {
-        isOptional = true;
-        fieldDef = fieldDef._def.innerType;
-        unwrapped = true;
-      } else if (typeName === 'ZodNullable') {
-        isNullable = true;
-        fieldDef = fieldDef._def.innerType;
-        unwrapped = true;
-      } else if (typeName === 'ZodDefault') {
-        // .default() は optional と同様に扱う
-        isOptional = true;
-        fieldDef = fieldDef._def.innerType;
-        unwrapped = true;
-      } else if (typeName === 'ZodEffects') {
-        // .min(), .max(), .regex() などの Effects を unwrap
-        fieldDef = fieldDef._def.schema;
-        unwrapped = true;
-      }
-    } while (unwrapped);
-    
-    // ZodArray をチェック
-    if (getTypeName(fieldDef) === 'ZodArray') {
-      isArray = true;
-      fieldDef = fieldDef._def.element || fieldDef._def.type;
-    }
-    
-    // 基本型を判定
-    const typeName = getTypeName(fieldDef);
-    if (typeName === 'ZodString') type = 'string';
-    else if (typeName === 'ZodNumber') type = 'number';
-    else if (typeName === 'ZodBoolean') type = 'boolean';
-    else if (typeName === 'ZodDate') type = 'date';
-    else if (typeName === 'ZodObject') type = 'object';
-    else if (typeName === 'ZodEnum' || typeName === 'ZodNativeEnum') {
-      type = 'string';
-      // enum の選択肢を取得（複数のZodバージョンに対応）
-      if (fieldDef.options) {
-        // Zod v3.23+ では options プロパティを使用
-        enumValues = Array.isArray(fieldDef.options) 
-          ? fieldDef.options 
-          : Object.values(fieldDef.options);
-      } else if (fieldDef._def.values) {
-        // 古いバージョンでは _def.values を使用
-        enumValues = Array.isArray(fieldDef._def.values) 
-          ? fieldDef._def.values 
-          : Object.values(fieldDef._def.values);
-      } else if (fieldDef._def.entries) {
-        // さらに古いバージョンでは _def.entries を使用
-        enumValues = Array.isArray(fieldDef._def.entries)
-          ? fieldDef._def.entries
-          : Object.values(fieldDef._def.entries);
-      }
-    } else if (typeName === 'ZodLiteral') {
-      const rawLiteralValues = fieldDef.values || fieldDef._def.values ||
-        (fieldDef._def.value !== undefined ? [fieldDef._def.value] : undefined);
-      const literalValues = rawLiteralValues instanceof Set ? Array.from(rawLiteralValues) : rawLiteralValues;
-      if (Array.isArray(literalValues) && literalValues.length > 0) {
-        const literalValue = literalValues[0];
-        type = typeof literalValue === 'number' ? 'number' : typeof literalValue === 'boolean' ? 'boolean' : 'string';
-        enumValues = literalValues.map(value => String(value));
-      }
-    }
+function lower(c, key, value, exclusive) {
+  if (typeof value !== 'number' || (c[key] !== undefined && c[key] > value)) return;
+  const keepExclusive = c[key] === value && c.exclusiveMinimum;
+  c[key] = value;
+  if (key === 'minimum') { if (exclusive || keepExclusive) c.exclusiveMinimum = true; else delete c.exclusiveMinimum; }
+}
+function upper(c, key, value, exclusive) {
+  if (typeof value !== 'number' || (c[key] !== undefined && c[key] < value)) return;
+  const keepExclusive = c[key] === value && c.exclusiveMaximum;
+  c[key] = value;
+  if (key === 'maximum') { if (exclusive || keepExclusive) c.exclusiveMaximum = true; else delete c.exclusiveMaximum; }
+}
 
-    if (!type || ((typeName === 'ZodEnum' || typeName === 'ZodNativeEnum') && (!enumValues || enumValues.length === 0))) {
-      throw new Error('Unsupported or ambiguous Zod field "' + key + '" (' + (typeName || 'unknown') + ')');
+function unwrap(s, info) {
+  for (;;) {
+    const d = v4(s);
+    if (d) {
+      if (d.type === 'optional' || d.type === 'default' || d.type === 'prefault') { info.isOptional = true; s = d.innerType; continue; }
+      if (d.type === 'nullable') { info.isNullable = true; s = d.innerType; continue; }
+      if (d.type === 'readonly' || d.type === 'nonoptional' || d.type === 'catch') { s = d.innerType; continue; }
+      return s;
     }
-    
-    // 外部キー検出: フィールド名が <ModelName>Id のパターンの場合
-    let isForeignKey = false;
-    let referencedModel = undefined;
-    if (key.endsWith('Id') && key.length > 2 && type === 'string') {
-      // categoryId -> Category, userId -> User など
-      const modelName = key.slice(0, -2); // "Id" を除去
-      referencedModel = modelName.charAt(0).toUpperCase() + modelName.slice(1); // 先頭を大文字に
-      isForeignKey = true;
+    const name = v3Name(s);
+    if (name === 'ZodOptional' || name === 'ZodDefault') { info.isOptional = true; s = s._def.innerType; continue; }
+    if (name === 'ZodNullable') { info.isNullable = true; s = s._def.innerType; continue; }
+    if (name === 'ZodEffects') { s = s._def.schema; continue; }
+    if (name === 'ZodReadonly' || name === 'ZodCatch') { s = s._def.innerType; continue; }
+    return s;
+  }
+}
+
+function describe(key, input) {
+  const info = { name: key, type: undefined, isOptional: false, isNullable: false, isArray: false };
+  const constraints = {};
+  let s = unwrap(input, info);
+
+  const arrayDef = v4(s);
+  if ((arrayDef && arrayDef.type === 'array') || v3Name(s) === 'ZodArray') {
+    info.isArray = true;
+    if (arrayDef) {
+      for (const check of arrayDef.checks || []) {
+        const cd = check._zod.def;
+        if (cd.check === 'min_length') lower(constraints, 'minItems', cd.minimum);
+        if (cd.check === 'max_length') upper(constraints, 'maxItems', cd.maximum);
+        if (cd.check === 'length_equals') { lower(constraints, 'minItems', cd.length); upper(constraints, 'maxItems', cd.length); }
+      }
+      s = arrayDef.element;
+    } else {
+      const ad = s._def;
+      if (ad.minLength) lower(constraints, 'minItems', ad.minLength.value);
+      if (ad.maxLength) upper(constraints, 'maxItems', ad.maxLength.value);
+      if (ad.exactLength) { lower(constraints, 'minItems', ad.exactLength.value); upper(constraints, 'maxItems', ad.exactLength.value); }
+      s = ad.type;
     }
-    
-    return { name: key, type, isOptional, isNullable, isArray, enumValues, isForeignKey, referencedModel };
-  });
-  
+    s = unwrap(s, {});
+  }
+
+  const d = v4(s);
+  const name = v3Name(s);
+  let enumValues;
+  if (d) {
+    if (d.type === 'string') {
+      info.type = 'string';
+      if (d.format && FORMATS[d.format]) info.format = FORMATS[d.format];
+      if (d.format === 'regex' && d.pattern) { constraints.pattern = d.pattern.source; if (d.pattern.flags) constraints.patternFlags = d.pattern.flags; }
+    } else if (d.type === 'number') {
+      info.type = 'number';
+      if (d.format && /int/.test(d.format)) info.isInteger = true;
+    } else if (d.type === 'boolean') info.type = 'boolean';
+    else if (d.type === 'date') info.type = 'date';
+    else if (d.type === 'object') {
+      info.type = 'object';
+      const shape = typeof d.shape === 'function' ? d.shape() : d.shape;
+      info.objectFields = Object.keys(shape).map((child) => describe(child, shape[child]));
+    } else if (d.type === 'enum') {
+      info.type = 'string';
+      enumValues = Object.values(d.entries || {}).map(String);
+    } else if (d.type === 'literal') {
+      const values = Array.isArray(d.values) ? d.values : Array.from(d.values || []);
+      if (values.length > 0) {
+        info.type = typeof values[0] === 'number' ? 'number' : typeof values[0] === 'boolean' ? 'boolean' : 'string';
+        enumValues = values.map(String);
+      }
+    }
+    for (const check of d.checks || []) {
+      const cd = check._zod.def;
+      const lengthKey = info.type === 'string';
+      if (cd.check === 'min_length' && lengthKey) lower(constraints, 'minLength', cd.minimum);
+      if (cd.check === 'max_length' && lengthKey) upper(constraints, 'maxLength', cd.maximum);
+      if (cd.check === 'length_equals' && lengthKey) { lower(constraints, 'minLength', cd.length); upper(constraints, 'maxLength', cd.length); }
+      if (cd.check === 'greater_than') lower(constraints, 'minimum', Number(cd.value), !cd.inclusive);
+      if (cd.check === 'less_than') upper(constraints, 'maximum', Number(cd.value), !cd.inclusive);
+      if (cd.check === 'number_format' && /int/.test(cd.format || '')) info.isInteger = true;
+      if (cd.check === 'string_format') {
+        if (cd.format === 'regex' && cd.pattern) { constraints.pattern = cd.pattern.source; if (cd.pattern.flags) constraints.patternFlags = cd.pattern.flags; }
+        else if (FORMATS[cd.format]) info.format = FORMATS[cd.format];
+      }
+    }
+  } else {
+    const def = s && s._def;
+    if (name === 'ZodString') {
+      info.type = 'string';
+      for (const check of def.checks || []) {
+        if (check.kind === 'min') lower(constraints, 'minLength', check.value);
+        if (check.kind === 'max') upper(constraints, 'maxLength', check.value);
+        if (check.kind === 'length') { lower(constraints, 'minLength', check.value); upper(constraints, 'maxLength', check.value); }
+        if (check.kind === 'regex') { constraints.pattern = check.regex.source; if (check.regex.flags) constraints.patternFlags = check.regex.flags; }
+        if (FORMATS[check.kind]) info.format = FORMATS[check.kind];
+      }
+    } else if (name === 'ZodNumber') {
+      info.type = 'number';
+      for (const check of def.checks || []) {
+        if (check.kind === 'int') info.isInteger = true;
+        if (check.kind === 'min') lower(constraints, 'minimum', check.value, !check.inclusive);
+        if (check.kind === 'max') upper(constraints, 'maximum', check.value, !check.inclusive);
+      }
+    } else if (name === 'ZodBoolean') info.type = 'boolean';
+    else if (name === 'ZodDate') info.type = 'date';
+    else if (name === 'ZodObject') {
+      info.type = 'object';
+      const shape = typeof def.shape === 'function' ? def.shape() : def.shape;
+      info.objectFields = Object.keys(shape).map((child) => describe(child, shape[child]));
+    } else if (name === 'ZodEnum' || name === 'ZodNativeEnum') {
+      info.type = 'string';
+      const values = s.options || def.values || def.entries;
+      enumValues = (Array.isArray(values) ? values : Object.values(values || {})).map(String);
+    } else if (name === 'ZodLiteral') {
+      const value = def.value;
+      info.type = typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string';
+      enumValues = [String(value)];
+    }
+  }
+
+  const typeLabel = (d && d.type) || name || 'unknown';
+  if (!info.type || ((typeLabel === 'enum' || name === 'ZodEnum' || name === 'ZodNativeEnum') && (!enumValues || enumValues.length === 0))) {
+    throw new Error('Unsupported or ambiguous Zod field "' + key + '" (' + typeLabel + ')');
+  }
+  if (enumValues) info.enumValues = enumValues;
+  if (Object.keys(constraints).length > 0) info.constraints = constraints;
+  return info;
+}
+
+const root = unwrap(schema, {});
+const rootDef = v4(root);
+const rootShape = rootDef && rootDef.type === 'object'
+  ? (typeof rootDef.shape === 'function' ? rootDef.shape() : rootDef.shape)
+  : v3Name(root) === 'ZodObject' ? (typeof root._def.shape === 'function' ? root._def.shape() : root._def.shape) : null;
+if (rootShape) {
+  const fields = Object.keys(rootShape).map((key) => describe(key, rootShape[key]));
   console.log(JSON.stringify(fields));
 } else {
   throw new Error('Exported schema is not a Zod object');
@@ -860,6 +1068,82 @@ export function parseAuthPolicy(content: string): ModelAuthPolicy | undefined {
     ...(namedWrite ? { write: namedWrite } : write ? { write } : {}),
     ...(namedPolicy ? { policy: namedPolicy } : {}),
   };
+}
+
+/**
+ * `export const references = { userId: 'User', legacyId: false }` を静的に抽出する。
+ * 値が false / null の場合は名前からの推測を無効にする。
+ */
+export function parseReferences(content: string): Record<string, string | false> {
+  const source = ts.createSourceFile("model.ts", content, ts.ScriptTarget.Latest, true);
+  const references: Record<string, string | false> = {};
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== "references" || !declaration.initializer) continue;
+      let initializer = declaration.initializer;
+      while (ts.isAsExpression(initializer) || ts.isSatisfiesExpression(initializer)) initializer = initializer.expression;
+      if (!ts.isObjectLiteralExpression(initializer)) continue;
+      for (const property of initializer.properties) {
+        if (!ts.isPropertyAssignment(property)) continue;
+        const key = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? property.name.text : null;
+        if (!key) continue;
+        const value = property.initializer;
+        if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) references[key] = value.text;
+        else if (value.kind === ts.SyntaxKind.FalseKeyword || value.kind === ts.SyntaxKind.NullKeyword) references[key] = false;
+      }
+    }
+  }
+  return references;
+}
+
+function listModelNames(modelPath: string): Set<string> {
+  const directory = path.dirname(modelPath);
+  const names = new Set<string>();
+  for (const entry of fs.readdirSync(directory)) {
+    if (!entry.endsWith(".ts") || entry.endsWith(".d.ts") || entry === "index.ts") continue;
+    names.add(toPascalCase(path.basename(entry, ".ts")));
+  }
+  return names;
+}
+
+function applyForeignKeys(
+  fields: FieldInfo[],
+  modelName: string,
+  modelPath: string,
+  references: Record<string, string | false>,
+  warnings: string[]
+): void {
+  const models = listModelNames(modelPath);
+  for (const field of fields) {
+    delete field.isForeignKey;
+    delete field.referencedModel;
+  }
+
+  for (const [fieldName, target] of Object.entries(references)) {
+    const field = fields.find((candidate) => candidate.name === fieldName);
+    if (!field) {
+      warnings.push(`reference-field-not-found: ${modelName}.references declares ${fieldName}, but the schema has no such field.`);
+    } else if (target !== false && (field.type !== "string" || field.isArray || field.enumValues?.length)) {
+      warnings.push(`reference-field-unsupported: ${modelName}.${fieldName} must be a single string id to reference ${target}.`);
+    } else if (target !== false && !models.has(target)) {
+      warnings.push(`reference-model-not-found: ${modelName}.${fieldName} references ${target}, but shared/models has no ${target} model; it is treated as a plain field.`);
+    }
+  }
+
+  for (const field of fields) {
+    if (field.type !== "string" || field.isArray || field.enumValues?.length || field.isNestedSchema) continue;
+    const declared = references[field.name];
+    if (declared === false) continue;
+    const inferred = field.name.length > 2 && field.name.endsWith("Id")
+      ? field.name.slice(0, -2).replace(/^./, (char) => char.toUpperCase())
+      : undefined;
+    const target = declared ?? inferred;
+    if (target && models.has(target)) {
+      field.isForeignKey = true;
+      field.referencedModel = target;
+    }
+  }
 }
 
 /**

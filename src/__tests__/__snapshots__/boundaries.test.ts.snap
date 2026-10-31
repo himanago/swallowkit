@@ -1,0 +1,154 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`inspect boundaries convention rules matches the csharp backend 1`] = `
+[
+  {
+    "description": "SwallowKit metadata (manifest, artifact ledger, plan state). Managed by tooling only.",
+    "editPolicy": "never-hand-edit",
+    "pattern": ".swallowkit/",
+    "zone": "deterministic",
+  },
+  {
+    "description": "Zod model schemas — the single source of truth. AI/developers author these freely; deterministic generation derives everything else from them.",
+    "editPolicy": "free-edit",
+    "pattern": "shared/models/",
+    "zone": "ai-authored",
+  },
+  {
+    "description": "Infrastructure migration ledger with baseline checksums. Updated by scaffold, \`swallowkit migrations add-model\`, and \`swallowkit create-migration\`.",
+    "editPolicy": "never-hand-edit",
+    "pattern": "infra/migrations/manifest.json",
+    "zone": "deterministic",
+  },
+  {
+    "description": "Versioned Bicep migrations. Edit a migration only before it is provisioned; never change an applied migration — add a new one with \`swallowkit create-migration <slug>\`.",
+    "editPolicy": "free-edit",
+    "pattern": "infra/migrations/",
+    "zone": "ai-authored",
+  },
+  {
+    "description": "Baseline infrastructure (main.bicep and modules) whose checksums are recorded in infra/migrations/manifest.json. Hand edits block scaffold with baseline-drift; add resources through a new migration instead.",
+    "editPolicy": "never-hand-edit",
+    "pattern": "infra/",
+    "zone": "deterministic",
+  },
+  {
+    "description": "SwallowKit appends model exports; other exports may be added freely.",
+    "editPolicy": "edit-outside-markers",
+    "pattern": "shared/index.ts",
+    "zone": "shared",
+  },
+  {
+    "description": "Any path not recorded in the artifact ledger is AI/developer-authored. Business logic, custom pages, custom Functions, and tests belong here.",
+    "editPolicy": "free-edit",
+    "pattern": "*",
+    "zone": "ai-authored",
+  },
+]
+`;
+
+exports[`inspect boundaries convention rules matches the python backend 1`] = `
+[
+  {
+    "description": "SwallowKit metadata (manifest, artifact ledger, plan state). Managed by tooling only.",
+    "editPolicy": "never-hand-edit",
+    "pattern": ".swallowkit/",
+    "zone": "deterministic",
+  },
+  {
+    "description": "Zod model schemas — the single source of truth. AI/developers author these freely; deterministic generation derives everything else from them.",
+    "editPolicy": "free-edit",
+    "pattern": "shared/models/",
+    "zone": "ai-authored",
+  },
+  {
+    "description": "Infrastructure migration ledger with baseline checksums. Updated by scaffold, \`swallowkit migrations add-model\`, and \`swallowkit create-migration\`.",
+    "editPolicy": "never-hand-edit",
+    "pattern": "infra/migrations/manifest.json",
+    "zone": "deterministic",
+  },
+  {
+    "description": "Versioned Bicep migrations. Edit a migration only before it is provisioned; never change an applied migration — add a new one with \`swallowkit create-migration <slug>\`.",
+    "editPolicy": "free-edit",
+    "pattern": "infra/migrations/",
+    "zone": "ai-authored",
+  },
+  {
+    "description": "Baseline infrastructure (main.bicep and modules) whose checksums are recorded in infra/migrations/manifest.json. Hand edits block scaffold with baseline-drift; add resources through a new migration instead.",
+    "editPolicy": "never-hand-edit",
+    "pattern": "infra/",
+    "zone": "deterministic",
+  },
+  {
+    "description": "SwallowKit appends model exports; other exports may be added freely.",
+    "editPolicy": "edit-outside-markers",
+    "pattern": "shared/index.ts",
+    "zone": "shared",
+  },
+  {
+    "description": "SwallowKit appends blueprint registrations under its marker; other edits are free.",
+    "editPolicy": "edit-outside-markers",
+    "pattern": "functions/function_app.py",
+    "zone": "shared",
+  },
+  {
+    "description": "SwallowKit appends connector driver requirements when connector models are scaffolded; keep those lines and edit other requirements freely.",
+    "editPolicy": "free-edit",
+    "pattern": "functions/requirements.txt",
+    "zone": "shared",
+  },
+  {
+    "description": "Any path not recorded in the artifact ledger is AI/developer-authored. Business logic, custom pages, custom Functions, and tests belong here.",
+    "editPolicy": "free-edit",
+    "pattern": "*",
+    "zone": "ai-authored",
+  },
+]
+`;
+
+exports[`inspect boundaries convention rules matches the typescript backend 1`] = `
+[
+  {
+    "description": "SwallowKit metadata (manifest, artifact ledger, plan state). Managed by tooling only.",
+    "editPolicy": "never-hand-edit",
+    "pattern": ".swallowkit/",
+    "zone": "deterministic",
+  },
+  {
+    "description": "Zod model schemas — the single source of truth. AI/developers author these freely; deterministic generation derives everything else from them.",
+    "editPolicy": "free-edit",
+    "pattern": "shared/models/",
+    "zone": "ai-authored",
+  },
+  {
+    "description": "Infrastructure migration ledger with baseline checksums. Updated by scaffold, \`swallowkit migrations add-model\`, and \`swallowkit create-migration\`.",
+    "editPolicy": "never-hand-edit",
+    "pattern": "infra/migrations/manifest.json",
+    "zone": "deterministic",
+  },
+  {
+    "description": "Versioned Bicep migrations. Edit a migration only before it is provisioned; never change an applied migration — add a new one with \`swallowkit create-migration <slug>\`.",
+    "editPolicy": "free-edit",
+    "pattern": "infra/migrations/",
+    "zone": "ai-authored",
+  },
+  {
+    "description": "Baseline infrastructure (main.bicep and modules) whose checksums are recorded in infra/migrations/manifest.json. Hand edits block scaffold with baseline-drift; add resources through a new migration instead.",
+    "editPolicy": "never-hand-edit",
+    "pattern": "infra/",
+    "zone": "deterministic",
+  },
+  {
+    "description": "SwallowKit appends model exports; other exports may be added freely.",
+    "editPolicy": "edit-outside-markers",
+    "pattern": "shared/index.ts",
+    "zone": "shared",
+  },
+  {
+    "description": "Any path not recorded in the artifact ledger is AI/developer-authored. Business logic, custom pages, custom Functions, and tests belong here.",
+    "editPolicy": "free-edit",
+    "pattern": "*",
+    "zone": "ai-authored",
+  },
+]
+`;

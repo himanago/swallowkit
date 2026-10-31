@@ -253,6 +253,8 @@ function runTypecheckCheck(projectRoot: string): VerifyCheckResult {
 
   const scripts = readPackageScripts(projectRoot);
   const pm = detectFromProject(projectRoot);
+  // Next.js App Router templates use generated route types (e.g. LayoutProps); create them before tsc.
+  const typegenNotes = runNextTypegenIfPresent(projectRoot, pm);
   let command: string;
   let args: string[];
   if (typeof scripts.typecheck === "string") {
@@ -263,13 +265,33 @@ function runTypecheckCheck(projectRoot: string): VerifyCheckResult {
     args = pm === "pnpm" ? ["exec", "tsc", "--noEmit"] : ["exec", "tsc", "--", "--noEmit"];
   }
 
-  return runCommandCheck(projectRoot, {
+  const result = runCommandCheck(projectRoot, {
     id: "typecheck",
     title: "TypeScript type check",
     command,
     args,
     failAction: "Fix the TypeScript errors listed in evidence.logTail, then re-run verify.",
   });
+  if (result.status !== "pass" && typegenNotes.length > 0) {
+    result.evidence.logTail = [...typegenNotes, ...(result.evidence.logTail ?? [])];
+  }
+  return result;
+}
+
+const NEXT_CONFIG_FILES = ["next.config.ts", "next.config.js", "next.config.mjs", "next.config.cjs"];
+
+function runNextTypegenIfPresent(projectRoot: string, pm: ReturnType<typeof detectFromProject>): string[] {
+  if (!NEXT_CONFIG_FILES.some((file) => fs.existsSync(path.join(projectRoot, file)))) return [];
+  if (!fs.existsSync(path.join(projectRoot, "node_modules", "next", "package.json"))) return [];
+  const args = pm === "pnpm" ? ["exec", "next", "typegen"] : ["exec", "--", "next", "typegen"];
+  const result = spawnSync(getCommands(pm).name, args, {
+    cwd: projectRoot,
+    shell: true,
+    encoding: "utf-8",
+    timeout: 2 * 60 * 1000,
+  });
+  if (!result.error && result.status === 0) return [];
+  return [`next typegen did not complete (${result.error?.message ?? `exit ${result.status}`}); route types such as LayoutProps may be missing.`];
 }
 
 const SCRIPT_CHECK_TITLES: Record<string, string> = {
