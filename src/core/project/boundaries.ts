@@ -86,7 +86,7 @@ export const OWNERSHIP_POLICIES: OwnershipPolicy[] = [
     zone: "shared",
     editPolicy: "edit-outside-markers",
     howToChange:
-      "SwallowKit appends only inside marked sections (e.g. `# SwallowKit scaffold registrations`). Edit anywhere outside the markers freely; do not remove the markers.",
+      "SwallowKit appends at the file-specific extension point: marked sections (e.g. `# SwallowKit scaffold registrations`) or append-only files such as shared/index.ts. Follow the path rule; preserve existing generated entries and any markers.",
   },
   {
     ownership: "metadata",
@@ -134,8 +134,8 @@ const COMMON_LEADING_RULES: BoundaryPathRule[] = [
   {
     pattern: "shared/index.ts",
     zone: "shared",
-    editPolicy: "edit-outside-markers",
-    description: "SwallowKit appends model exports; other exports may be added freely.",
+    editPolicy: "free-edit",
+    description: "create-model and scaffold append missing model exports while preserving existing content. No managed markers; manual exports are allowed. Keep exports needed by generated code.",
   },
 ];
 

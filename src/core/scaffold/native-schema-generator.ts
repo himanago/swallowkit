@@ -939,6 +939,21 @@ function ensurePythonCodegenProjectFiles(
   return requirementsPath;
 }
 
+/** Generated backend_models import pydantic v2 at runtime, so the deployed Functions app must install it. */
+export const PYTHON_SCHEMA_RUNTIME_REQUIREMENT = "pydantic>=2.6,<3";
+
+function ensurePythonRuntimeRequirement(functionsRoot: string, session: FileOperationSession): void {
+  const requirementsPath = path.join(functionsRoot, "requirements.txt");
+  const current = session.fileExists(requirementsPath) ? session.readFile(requirementsPath) : "";
+  const declared = current.split(/\r?\n/).some((line) => line.trim().split(/[<>=!~;[ ]/)[0].toLowerCase() === "pydantic");
+  if (declared) return;
+  const prefix = current && !current.endsWith("\n") ? `${current}\n` : current;
+  session.writeFile(requirementsPath, `${prefix}${PYTHON_SCHEMA_RUNTIME_REQUIREMENT}\n`, {
+    ownership: "extension-point",
+    generator: "native-schema",
+  });
+}
+
 async function ensureProjectLocalUvCommand(projectRoot: string): Promise<{ command: string; env: NodeJS.ProcessEnv }> {
   const uvEnv = { ...process.env };
   const { localUvExecutable } = getProjectLocalUvPaths(projectRoot);
@@ -1082,6 +1097,7 @@ async function generatePythonSchemaArtifacts(
   sourceModel: string
 ): Promise<void> {
   ensurePythonCodegenProjectFiles(functionsRoot, session, sourceModel);
+  ensurePythonRuntimeRequirement(functionsRoot, session);
 
   const packageRoot = path.join(outputDir, "backend_models");
   const modelsRoot = path.join(packageRoot, "models");

@@ -31,6 +31,11 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install dependencies
         run: npm ci
 
@@ -39,6 +44,9 @@ jobs:
 
       - name: Test
         run: npm test
+        env:
+          # The generated-project matrix compiles C# and checks Python; fail instead of skipping if either is missing.
+          SWALLOWKIT_REQUIRE_TOOLCHAINS: '1'
 
   consumer-compatibility:
     runs-on: ubuntu-latest

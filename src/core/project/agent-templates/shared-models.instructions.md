@@ -18,8 +18,9 @@ source-of-truth models, subject to the current result of
 - `createdAt` and `updatedAt` are **optional** string fields
   (`z.string().optional()`). The backend manages their values.
 - Export a `displayName` string for UI display.
-- Re-export every model from `shared/index.ts`, outside managed markers where
-  applicable.
+- create-model and plan/apply scaffold append missing model exports to
+  `shared/index.ts`, including manually authored models. Manual exports are
+  allowed; there are no managed markers and existing content is preserved.
 - For relationships, use nested schemas rather than duplicating model shapes.
 
 ## Optional model declarations (exact formats)
@@ -30,7 +31,7 @@ These are the only declarations SwallowKit parses from a model file:
 // Cosmos DB partition key (default '/id'). Must reference a schema field.
 export const partitionKey = '/learnerId';
 
-// Role-based access control on generated CRUD.
+// Role-based access control on generated CRUD (requires plan/apply auth first).
 export const authPolicy = { roles: ['admin'] };
 // or: { read: ['user'], write: ['admin'] } or: { policy: 'adminOnly' }
 
@@ -47,6 +48,13 @@ export const connectorConfig = {
 
 The full machine-readable contract:
 `{{runCmd}} swallowkit machine inspect capabilities`
+
+An explicit `authPolicy` without authentication blocks plan/apply/scaffold with
+`auth-policy-without-auth` before writing files. Follow `nextActions` to configure
+auth, then re-plan. Do not drop a required guard to bypass the prerequisite.
+For named `auth.schemes`, use named authorization policies selecting schemes
+and roles, referenced by `policy` or read/write names. Role-only declarations
+block with `auth-policy-requires-named-policy` rather than emitting missing helpers.
 
 After changing a model, do not manually patch generated artifacts.
 

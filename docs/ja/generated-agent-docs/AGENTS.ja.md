@@ -293,6 +293,16 @@ multi-user データでは、検証済み principal から scoping key (例: `le
 ai-authored custom endpoint を追加し (request body からは決して導出しない)、
 generated write endpoint は admin role に制限してください。
 
+`authPolicy` を宣言する前に `plan auth` / `apply auth` で認証を設定してください。
+認証未設定の明示的なポリシーは、書き込み前に
+`auth-policy-without-auth` で blocked になります。`nextActions` に従い、再計画します。
+空の `{}` は従来どおり明示的なポリシーなしと解釈し、認証を有効にはしません。
+名前付き `auth.schemes` では、スキームとロールを選ぶ名前付き認可ポリシーを
+`authPolicy.policy` または read/write 名で参照します。ロールのみの宣言は
+`auth-policy-requires-named-policy` で blocked になります。逆に、単一プロバイダーの
+`auth.provider` ではロールの配列だけを使えます。名前付きポリシー（名前付きの
+`defaultPolicy` も含む）は `auth-named-policy-requires-named-scheme` で blocked になります。
+
 <!-- source-section: Verification Is a Completion Gate -->
 ## Verification は completion gate
 
@@ -304,8 +314,15 @@ Agent-driven implementation を完了とみなす前に SwallowKit verification 
 
 または同等の MCP operation を使用します。
 
-verification は SwallowKit structural correctness、drift、type correctness、configured project
-check を対象とします。
+既定チェックは `structure` / `drift` / `typecheck` / `backend-build` と設定済みの
+カスタムチェックです。`backend-build` は独立 `functions/` を検証します。
+C# は `dotnet build`、TypeScript はプロジェクトの `tsc --noEmit`、
+Python 3 は `compileall`（構文のみ。import や型は対象外）で、Python は
+PATH より `functions/.venv` を優先します。ツールチェーンがなければ理由付きで
+skip になります。skip はバックエンドの検証成功ではありません。復元して再実行してください。
+本番フロントエンドビルドも含める場合は
+`--checks "structure,drift,typecheck,backend-build,build"` を指定します。
+PowerShell ではカンマ区切り値を引用符で囲みます。
 
 verification が失敗した場合は structured failure explanation を使用します。
 
@@ -451,7 +468,9 @@ backend が `id`、`createdAt`、`updatedAt` を所有します。client-sent va
 - Model schema file は `shared/models/{kebab-case}.ts` を使用します。
 - Zod schema constant と inferred TypeScript type は同じ PascalCase name を使用します:
   `export const Todo = z.object(...); export type Todo = z.infer<typeof Todo>`。
-- model を `shared/index.ts` から re-export します。
+- create-model と plan/apply scaffold は、手作業のモデルも含め、不足する
+  エクスポートを `shared/index.ts` に追記します。手動の追記も可能です。
+  管理マーカーはなく、既存内容は保持されます。
 - `id` は必須の `z.string()` です。optional な backend-managed field は
   `createdAt` / `updatedAt` のみです。
 - model は `partitionKey`、`authPolicy`、`displayName`、`connectorConfig` を exported constant

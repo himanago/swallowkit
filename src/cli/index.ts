@@ -223,8 +223,8 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
 
   program
     .command("verify")
-    .description("Run verification checks (structure, drift, typecheck)")
-    .option("--checks <ids>", "Comma-separated check ids to run (structure,drift,typecheck)")
+    .description("Run verification checks (structure, drift, typecheck, backend-build)")
+    .option("--checks <ids>", "Comma-separated check ids (structure,drift,typecheck,backend-build,build,lint,test); quote CSV values in PowerShell")
     .action(async (options) => {
       await runVerifyCommand({ checks: options.checks });
     });

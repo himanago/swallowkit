@@ -24,6 +24,10 @@ Key rules:
 - Use plan/apply for deterministic generation.
 - Respect `requires-human` states and other human approval gates.
 - Run SwallowKit verification before completion.
+- Default verification includes `backend-build` for standalone Functions.
+  Skipped toolchains are not validation; Python compilation checks syntax only.
+- Configure auth via plan/apply auth before adding `authPolicy`; otherwise
+  scaffold blocks before file writes. Scaffold appends missing shared model exports.
 
 Task-specific SwallowKit Agent Skills live under `.github/skills/`.
 Agent-agnostic equivalents live under `.swallowkit/workflows/`.

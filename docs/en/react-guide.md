@@ -151,7 +151,7 @@ remain limited to the operations declared on the model.
 ```sh
 npm run build
 npx swallowkit machine verify project
-npx swallowkit machine verify project --checks structure,drift,typecheck,build
+npx swallowkit machine verify project --checks "structure,drift,typecheck,backend-build,build"
 ```
 
 Build compiles shared schemas, typechecks/builds the SPA, copies SWA config to

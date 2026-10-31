@@ -1,16 +1,18 @@
-import type { MachineOperationStatus } from "./contracts";
+import type { MachineNextAction, MachineOperationStatus } from "./contracts";
 
 export class MachineCommandError extends Error {
   readonly code: string;
   readonly details?: unknown;
   readonly status?: MachineOperationStatus;
+  readonly nextActions?: MachineNextAction[];
 
-  constructor(code: string, message: string, details?: unknown, status?: MachineOperationStatus) {
+  constructor(code: string, message: string, details?: unknown, status?: MachineOperationStatus, nextActions?: MachineNextAction[]) {
     super(message);
     this.name = "MachineCommandError";
     this.code = code;
     this.details = details;
     this.status = status;
+    this.nextActions = nextActions;
   }
 }
 

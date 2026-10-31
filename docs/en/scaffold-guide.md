@@ -1019,6 +1019,8 @@ export const authPolicy = { roles: ['admin', 'estimator'] };
 
 When `scaffold` detects `authPolicy`, it automatically injects authentication checks and role guards into the generated Functions handlers.
 
+Authentication must be configured first with `plan auth` / `apply auth` (or `add-auth`). An explicit `authPolicy` without authentication blocks plan/apply/scaffold with `auth-policy-without-auth` before file writes. An empty `{}` retains the existing meaning of no explicit policy; it does not enable authentication. Follow `nextActions`, then re-plan; declared guards are never silently dropped. Scaffold also appends missing exports to `shared/index.ts` for manually authored models, preserving existing content. Manual exports are allowed; there are no managed markers.
+
 If `auth.authorization.defaultPolicy` is set to `'authenticated'` in `swallowkit.config.js`, all scaffolded Functions require authentication by default — even without an explicit `authPolicy` export.
 
 > 💡 See the **[Authentication Guide](./auth-guide.md)** for full setup instructions and configuration details.

@@ -5,16 +5,17 @@
  * - structure:  プロジェクト構造規約 (validateProject)
  * - drift:      生成物と現在状態の乖離 (detectDrift)
  * - typecheck:  TypeScript 型チェック (tsc --noEmit / typecheck script)
+ * - backend-build: standalone Functions のコンパイル (C#/TypeScript) または構文検証 (Python)
  * - build/lint/test: package.json scripts に同名 script がある場合のみ実行 (なければ skip)
  * - custom:     swallowkit.config の verify.checks で定義されたプロジェクト固有チェック
  *
- * 既定実行セットは structure/drift/typecheck + custom。build/lint/test は --checks で明示指定。
+ * 既定実行セットは structure/drift/typecheck/backend-build + custom。build/lint/test は --checks で明示指定。
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import { spawnSync } from "child_process";
-import { loadConfig } from "../config";
+import { loadConfig, loadConfigFromEnv } from "../config";
 import { detectDrift, DriftFinding } from "../project/drift";
 import { saveLastVerifyState } from "../project/state";
 import { ProjectViolation, validateProject } from "../project/validation";
@@ -60,11 +61,11 @@ export interface VerifyResult {
   verifiedAt: string;
 }
 
-export const AVAILABLE_VERIFY_CHECKS = ["structure", "drift", "typecheck", "build", "lint", "test"] as const;
+export const AVAILABLE_VERIFY_CHECKS = ["structure", "drift", "typecheck", "backend-build", "build", "lint", "test"] as const;
 export type VerifyCheckId = (typeof AVAILABLE_VERIFY_CHECKS)[number];
 
 /** 既定で実行される built-in チェック。build/lint/test は明示指定時のみ。 */
-export const DEFAULT_VERIFY_CHECKS = ["structure", "drift", "typecheck"] as const;
+export const DEFAULT_VERIFY_CHECKS = ["structure", "drift", "typecheck", "backend-build"] as const;
 
 async function runStructureCheck(projectRoot: string): Promise<VerifyCheckResult> {
   const startedAt = Date.now();
@@ -137,6 +138,7 @@ interface CommandCheckSpec {
   args: string[];
   timeoutMs?: number;
   failAction: string;
+  shell?: boolean;
 }
 
 function runCommandCheck(projectRoot: string, spec: CommandCheckSpec): VerifyCheckResult {
@@ -145,9 +147,10 @@ function runCommandCheck(projectRoot: string, spec: CommandCheckSpec): VerifyChe
   try {
     const result = spawnSync(spec.command, spec.args, {
       cwd: projectRoot,
-      shell: true,
+      shell: spec.shell ?? true,
       encoding: "utf-8",
       timeout: spec.timeoutMs ?? 5 * 60 * 1000,
+      maxBuffer: 10 * 1024 * 1024,
     });
 
     const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
@@ -180,6 +183,11 @@ function runCommandCheck(projectRoot: string, spec: CommandCheckSpec): VerifyChe
         command: commandLabel,
         exitCode,
         logTail: tailLines(output, 50),
+        ...(spec.id === "backend-build" ? {
+          diagnostics: [...new Set(output.split(/\r?\n/).filter((line) =>
+            /\(\d+,\d+\):\s*error\s+\w+/.test(line) ||
+            /^\s*(File ".+", line \d+|(?:Sorry: )?(?:Syntax|Indentation|Tab)Error:|\*\*\* Error compiling)/.test(line)))],
+        } : {}),
       },
       suggestedActions: exitCode === 0 ? [] : [spec.failAction],
     };
@@ -199,6 +207,86 @@ function runCommandCheck(projectRoot: string, spec: CommandCheckSpec): VerifyChe
       suggestedActions: [`Re-run "${commandLabel}" in an environment that permits child process execution.`],
     };
   }
+}
+
+function backendUnavailable(reason: string): VerifyCheckResult {
+  return {
+    id: "backend-build",
+    title: "Standalone Functions compilation",
+    status: "skip",
+    durationMs: 0,
+    fixable: false,
+    evidence: { logTail: [reason], diagnostics: [reason] },
+    suggestedActions: ["Install or restore the backend toolchain, then re-run verify with --checks \"backend-build\". A skipped check is not backend validation."],
+  };
+}
+
+function runBackendBuildCheck(projectRoot: string): VerifyCheckResult {
+  const functionsRoot = path.join(projectRoot, "functions");
+  if (!fs.existsSync(functionsRoot)) return backendUnavailable("functions/ not found; no standalone backend was checked.");
+  const configPath = ["swallowkit.config.json", "swallowkit.config.js", ".swallowkitrc.json"]
+    .map((name) => path.join(projectRoot, name)).find((file) => fs.existsSync(file));
+  if (!configPath) return backendUnavailable("SwallowKit configuration not found; backend language is unknown.");
+  // Same effective language as generation (getBackendLanguage): env override, then file, invalid -> typescript.
+  const configured = loadConfigFromEnv().backend?.language ?? loadConfig(configPath, true, true).backend?.language;
+  const language = configured && ["typescript", "csharp", "python"].includes(configured) ? configured : "typescript";
+  let command: string;
+  let args: string[];
+  if (language === "csharp") {
+    command = "dotnet";
+    args = ["build", "--nologo"];
+    const probe = spawnSync(command, ["--version"], { cwd: functionsRoot, encoding: "utf-8", timeout: 30_000 });
+    if (probe.error && "code" in probe.error && probe.error.code === "ENOENT") return backendUnavailable("dotnet SDK is not installed or is not on PATH; C# compilation was skipped.");
+  } else if (language === "python") {
+    const venvPython = process.platform === "win32"
+      ? path.join(functionsRoot, ".venv", "Scripts", "python.exe")
+      : path.join(functionsRoot, ".venv", "bin", "python");
+    const candidates = fs.existsSync(venvPython)
+      ? [{ command: venvPython, args: [] as string[] }]
+      : process.platform === "win32"
+        ? [{ command: "python", args: [] }, { command: "python3", args: [] }, { command: "py", args: ["-3"] }]
+        : [{ command: "python3", args: [] }, { command: "python", args: [] }];
+    const python = candidates.find((candidate) => {
+      const probe = spawnSync(candidate.command, [...candidate.args, "-c", "import sys; sys.exit(0 if sys.version_info.major == 3 else 1)"], {
+        cwd: functionsRoot, encoding: "utf-8", timeout: 30_000,
+      });
+      // Preserve execution errors for an installed interpreter instead of silently falling back.
+      return probe.status === 0 || (probe.error && (!("code" in probe.error) || probe.error.code !== "ENOENT"));
+    });
+    if (!python) return backendUnavailable("Python 3 is not available in functions/.venv or on PATH; Python syntax compilation was skipped.");
+    command = python.command;
+    // -f: never trust cached bytecode, which can survive same-size edits within one mtime second.
+    args = [...python.args, "-m", "compileall", "-q", "-f", "-x", "[/\\\\](?:\\.venv|\\.codegen-venv|node_modules|__pycache__)(?:[/\\\\]|$)", "."];
+  } else {
+    let tscPath: string;
+    try {
+      tscPath = require.resolve("typescript/bin/tsc", { paths: [functionsRoot] });
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "MODULE_NOT_FOUND") {
+        return backendUnavailable("The project's TypeScript compiler is not installed; restore dependencies before verifying functions/.");
+      }
+      throw error;
+    }
+    const sharedBuild = runSharedBuildIfPresent(projectRoot);
+    if (sharedBuild.ran && !sharedBuild.ok) {
+      return {
+        id: "backend-build", title: "Standalone Functions compilation", status: sharedBuild.unavailable ? "error" : "fail",
+        durationMs: 0, fixable: !sharedBuild.unavailable,
+        evidence: { command: sharedBuild.command, logTail: sharedBuild.logTail,
+          ...(sharedBuild.unavailable ? { errorCode: "verification-command-unavailable" as const } : {}) },
+        suggestedActions: ["Fix the shared package build before compiling the TypeScript backend."],
+      };
+    }
+    command = process.execPath;
+    args = [tscPath, "--project", "tsconfig.json", "--noEmit"];
+  }
+  const result = runCommandCheck(functionsRoot, {
+    id: "backend-build", title: "Standalone Functions compilation", command, args, shell: false,
+    timeoutMs: 10 * 60 * 1000,
+    failAction: "Fix the backend compilation errors in evidence.diagnostics / evidence.logTail, then re-run verify.",
+  });
+  result.evidence.command = `${result.evidence.command} (in functions/)`;
+  return result;
 }
 
 function readPackageScripts(projectRoot: string): Record<string, string> {
@@ -430,6 +518,8 @@ export async function runVerify(
       checks.push(await runDriftCheck(projectRoot));
     } else if (id === "typecheck") {
       checks.push(runTypecheckCheck(projectRoot));
+    } else if (id === "backend-build") {
+      checks.push(runBackendBuildCheck(projectRoot));
     } else if (id === "build" || id === "lint" || id === "test") {
       checks.push(runScriptCheck(projectRoot, id));
     } else {

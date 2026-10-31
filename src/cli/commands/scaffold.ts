@@ -54,6 +54,7 @@ import {
 } from "../../core/operations/file-session";
 import { generateModelContainerMigration } from "../../core/operations/migration-generator";
 import { recordSessionOperations } from "../../core/project/artifacts";
+import { updateSharedIndex } from "../../core/operations/create-model";
 
 const SCAFFOLD_GENERATOR = "scaffold";
 
@@ -158,6 +159,11 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     session.setSchemaAnalysis(schemaAnalysis);
     console.log(`✅ Model parsed: ${modelInfo.name} (${modelInfo.schemaName})`);
 
+    // Validate policy prerequisites before any generated artifacts are written.
+    resolveAuthPolicy(modelInfo, getAuthConfig());
+    for (const configName of ["swallowkit.config.js", "swallowkit.config.json", ".swallowkitrc.json"]) {
+      session.registerInput(path.join(process.cwd(), configName));
+    }
     const userScopeWarning = buildUserScopedDataWarning(modelInfo, getAuthConfig());
     if (userScopeWarning) {
       session.addWarning(userScopeWarning);
@@ -216,6 +222,8 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
     if (options.apiOnly) {
       console.log("ℹ️  --api-only skips UI generation only; Functions, BFF routes, OpenAPI, and native schema assets are still updated.");
     }
+
+    updateSharedIndex(modelPath, modelInfo.schemaName, session);
 
     // 5. Generate BFF callFunction helper
     await generateCallFunctionHelper(session, apiDir);
@@ -332,10 +340,43 @@ function applyExternalTokenFetchToGeneratedUi(modelInfo: ModelInfo, session: Fil
 export function resolveAuthPolicy(modelInfo: ModelInfo, authConfig: AuthConfig | undefined): ModelAuthPolicy | undefined {
   // モデルに明示的な authPolicy がある場合はそれを使用
   if (modelInfo.authPolicy) {
+    if (!isAuthenticationConfigured(authConfig)) {
+      throw new MachineCommandError(
+        "auth-policy-without-auth",
+        `Model '${modelInfo.name}' declares authPolicy, but authentication is not configured. No artifacts were written. Run plan auth and apply auth before scaffolding this model.`,
+        { model: modelInfo.name },
+        "blocked",
+        [{
+          command: "swallowkit machine plan auth --provider <custom-jwt|swa|external-token>",
+          description: "Choose an authentication provider, review and apply its plan, then re-plan scaffold.",
+        }]
+      );
+    }
     const normalized = normalizeAuthConfig(authConfig);
+    const usesNamedPolicy = Boolean(modelInfo.authPolicy.policy ||
+      typeof modelInfo.authPolicy.read === "string" || typeof modelInfo.authPolicy.write === "string");
+    // Guards resolve each operation independently: a string selects the named router, an array (or
+    // the roles fallback) selects the single-provider helper. Named schemes only have the router.
+    const operationIsNamed = (selected: string | string[] | undefined) =>
+      typeof selected === "string" || (selected === undefined && Boolean(modelInfo.authPolicy!.policy));
+    const everyOperationNamed = operationIsNamed(modelInfo.authPolicy.read) && operationIsNamed(modelInfo.authPolicy.write) &&
+      !modelInfo.authPolicy.roles;
+    if (authConfig?.schemes && !authConfig.provider && !everyOperationNamed) {
+      throw new MachineCommandError(
+        "auth-policy-requires-named-policy",
+        `Model '${modelInfo.name}' declares an authPolicy whose read or write operation does not resolve to a named policy, but authentication uses named schemes. Use authPolicy = { policy: '<name>' } or name both read and write policies (role arrays are not supported with named schemes); no artifacts were written.`,
+        { model: modelInfo.name },
+        "blocked",
+        [{
+          command: "swallowkit machine inspect capabilities",
+          description: "Define a named authorization policy selecting the required schemes/roles, reference it from the model, then re-plan scaffold.",
+        }]
+      );
+    }
     for (const policyName of [modelInfo.authPolicy.policy, typeof modelInfo.authPolicy.read === 'string' ? modelInfo.authPolicy.read : undefined, typeof modelInfo.authPolicy.write === 'string' ? modelInfo.authPolicy.write : undefined].filter((value): value is string => Boolean(value))) {
       if (!normalized?.authorization.policies[policyName]) throw new Error(`Model '${modelInfo.name}' references undefined auth policy '${policyName}'. Define auth.authorization.policies.${policyName}.`);
     }
+    if (usesNamedPolicy) assertNamedSchemesConfigured(modelInfo.name, "authPolicy", authConfig);
     return modelInfo.authPolicy;
   }
 
@@ -350,10 +391,33 @@ export function resolveAuthPolicy(modelInfo: ModelInfo, authConfig: AuthConfig |
     return {}; // 空のポリシー = 認証のみ、ロール制限なし
   }
 
-  if (defaultPolicy !== 'anonymous') return { policy: defaultPolicy };
+  if (defaultPolicy !== 'anonymous') {
+    assertNamedSchemesConfigured(modelInfo.name, `auth.authorization.defaultPolicy '${defaultPolicy}'`, authConfig);
+    return { policy: defaultPolicy };
+  }
 
   // defaultPolicy が 'anonymous' なら認証不要
   return undefined;
+}
+
+/**
+ * Named authorization policies are enforced by the generated multi-scheme router and scheme-specific
+ * client contexts, which exist only for named auth.schemes. A single-provider configuration
+ * (auth.provider) has no router, so referencing a named policy would generate code that cannot build.
+ */
+function assertNamedSchemesConfigured(modelName: string, source: string, authConfig: AuthConfig | undefined): void {
+  if (Object.keys(authConfig?.schemes ?? {}).some((name) => name !== "default")) return;
+  throw new MachineCommandError(
+    "auth-named-policy-requires-named-scheme",
+    `Model '${modelName}' uses a named authorization policy via ${source}, but authentication is configured with a single auth.provider. ` +
+      `Named policies require named auth.schemes; no artifacts were written. Use role lists (authPolicy = { roles: [...] } or read/write role arrays) with auth.provider, or add a named scheme.`,
+    { model: modelName, source },
+    "blocked",
+    [{
+      command: "swallowkit machine plan auth --provider <swa|external-token|custom-jwt> --scheme <name>",
+      description: "Add a named scheme and reference it from auth.authorization.policies, or switch the model to role lists; then re-plan scaffold.",
+    }]
+  );
 }
 
 /**

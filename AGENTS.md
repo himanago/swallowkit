@@ -67,6 +67,21 @@ templates with this contributor contract.
   `node .\node_modules\jest\bin\jest.js --runInBand --testMatch '**/*.test.ts' --testPathPattern '<pattern>'`.
 - `npm run lint` checks repository TypeScript.
 - `npm run docs:build` checks the VitePress documentation.
+- `src/__tests__/generated-project-matrix.test.ts` is the regression gate for
+  generated code. It builds `init` skeletons for every frontend × backend ×
+  authentication × `authPolicy` combination, runs plan/apply scaffold, and then
+  compiles the result (TypeScript type-check of Functions/BFF/UI, Python parse
+  plus local-import and `requirements.txt` resolution, C# `dotnet build`). Each
+  combination must either be blocked before any write or produce code that
+  compiles, re-plans as a no-op, and declares every imported package.
+  When adding a generator, provider, option, or prerequisite error, add the
+  combination and its expected outcome to this matrix rather than asserting on
+  generated strings alone. Run it with
+  `node .\node_modules\jest\bin\jest.js --runInBand --testMatch '**/*.test.ts' --testPathPattern generated-project-matrix`;
+  `SWALLOWKIT_TEST_SKIP_DOTNET=1` skips the slower C# builds locally,
+  `SWALLOWKIT_KEEP_MATRIX=1` keeps the generated projects for inspection, and CI
+  sets `SWALLOWKIT_REQUIRE_TOOLCHAINS=1` so a missing Python/.NET fails instead
+  of skipping.
 - `node dist/cli/index.js ...` exercises this checkout's built CLI, not a
   published SwallowKit release.
 - Validate generated consumer applications too: build shared schemas first,

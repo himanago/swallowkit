@@ -144,6 +144,8 @@ pnpm exec swallowkit add-auth
 
 ロールベースアクセスが必要なモデルに `authPolicy` をエクスポートします：
 
+明示的なポリシーを持つモデルを scaffold する前に認証を適用してください。認証未設定なら plan/apply/scaffold は書き込み前に `auth-policy-without-auth` で blocked になります。名前付き `auth.schemes` を使う場合は、スキームとロールを選択する名前付き認可ポリシーを定義し、`policy` または read/write のポリシー名で参照します。ロールのみの宣言は `auth-policy-requires-named-policy` で止め、存在しない単一プロバイダー用ヘルパーを参照するコードは生成しません。逆に、単一プロバイダーの `auth.provider` ではロールの配列だけを使えます。名前付きポリシーや名前付きの `defaultPolicy` は `auth-named-policy-requires-named-scheme` で blocked になります。
+
 ```typescript
 // shared/models/estimate.ts
 export const authPolicy = { roles: ['admin', 'estimator'] };

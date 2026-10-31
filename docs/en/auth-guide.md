@@ -145,6 +145,8 @@ This creates login/logout/me endpoints, BFF routes, middleware, a login page, an
 
 For models that require role-based access, export an `authPolicy`:
 
+Apply authentication before scaffolding a model with an explicit policy. Without authentication, plan/apply/scaffold blocks with `auth-policy-without-auth` before file writes. With named `auth.schemes`, define a named authorization policy selecting schemes and roles and reference it via `policy` or read/write names; role-only declarations block with `auth-policy-requires-named-policy` instead of generating missing single-provider helpers. Conversely, single-provider `auth.provider` supports role lists only: a named policy or named `defaultPolicy` blocks with `auth-named-policy-requires-named-scheme`.
+
 ```typescript
 // shared/models/estimate.ts
 export const authPolicy = { roles: ['admin', 'estimator'] };

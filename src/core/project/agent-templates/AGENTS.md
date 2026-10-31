@@ -319,6 +319,20 @@ custom endpoints that derive the scoping key (e.g. `learnerId`) from the
 verified principal — never from the request body — and restrict the generated
 write endpoints to admin roles.
 
+Configure authentication with `plan auth` / `apply auth` **before** declaring
+`authPolicy`. Without authentication, an explicit policy
+blocks plan/apply/scaffold with `auth-policy-without-auth` before file writes;
+follow `nextActions`, then re-plan. Do not remove a required policy just to pass
+generation.
+An empty `authPolicy = {}` means no explicit policy; it does not enable authentication.
+
+With named `auth.schemes`, define `auth.authorization.policies` selecting the
+required schemes and roles, then use `authPolicy = { policy: 'adminOnly' }` (or
+read/write policy names). Role-only declarations do not select a named scheme
+and block with `auth-policy-requires-named-policy`. Conversely, single-provider
+`auth.provider` supports role lists only; a named policy (including a named
+`defaultPolicy`) blocks with `auth-named-policy-requires-named-scheme`.
+
 ## Verification Is a Completion Gate
 
 Before treating an agent-driven implementation as complete, run SwallowKit
@@ -330,8 +344,17 @@ verification:
 
 or the equivalent MCP operation.
 
-Verification covers SwallowKit structural correctness, drift, type correctness,
-and configured project checks.
+Default checks are `structure`, `drift`, `typecheck`, `backend-build`, plus
+configured project checks. `backend-build` checks standalone `functions/`:
+C# uses `dotnet build`, TypeScript uses the project's `tsc --noEmit`, and Python
+uses Python 3 `compileall` (syntax only, not imports or type checking), preferring
+`functions/.venv` over PATH. Missing toolchains are `skip` with an explanation;
+a skipped backend check is **not** evidence that the backend works. Restore the
+toolchain and re-run it before claiming backend validation.
+
+Root `build` scripts do not replace standalone backend verification. To include
+frontend production builds, use `--checks "structure,drift,typecheck,backend-build,build"`.
+Quote comma-separated values in PowerShell.
 
 When verification fails, use the structured failure explanation:
 
@@ -474,7 +497,9 @@ same generated structure.
 - Model schema files use `shared/models/{kebab-case}.ts`.
 - The Zod schema constant and inferred TypeScript type use the same PascalCase
   name: `export const Todo = z.object(...); export type Todo = z.infer<typeof Todo>`.
-- Re-export models from `shared/index.ts`.
+- Re-export models from `shared/index.ts`. create-model and plan/apply scaffold
+  append missing exports, including manually authored models. Manual exports
+  are allowed; this file has no managed markers and existing content is preserved.
 - `id` is a required `z.string()`; only `createdAt` / `updatedAt` are optional
   backend-managed fields.
 - Models may declare `partitionKey`, `authPolicy`, `displayName`,

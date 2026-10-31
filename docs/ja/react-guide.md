@@ -144,7 +144,7 @@ Next.js と同様、生成 CRUD は利用者ごとのデータ所有権までは
 ```sh
 npm run build
 npx swallowkit machine verify project
-npx swallowkit machine verify project --checks structure,drift,typecheck,build
+npx swallowkit machine verify project --checks "structure,drift,typecheck,backend-build,build"
 ```
 
 build は共有スキーマ、SPA の型検査とビルド、SWA 設定の `dist/` へのコピー、
