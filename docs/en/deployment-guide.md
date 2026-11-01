@@ -51,7 +51,7 @@ npx swallowkit provision --resource-group my-app-rg \
   --location japaneast --swa-location eastasia
 ```
 
-If regions are omitted, the command prompts for them. Running normal `provision` requests deployment; there is no additional command-approval prompt or machine plan/apply procedure. It reads Azure state, deploys `infra/main.bicep` on first use, and records migration baseline 0. After success it displays resource names/URLs and CI/CD setup instructions. Secrets are retrieved privately, not printed automatically. Execution checkpoints and migration tracking remain internal safeguards against replaying interrupted deployments or resetting existing app settings. Machine/MCP is a separate agent interface and still requires a saved plan and explicit human approval.
+If regions are omitted, the command prompts for them. Running normal `provision` requests deployment; there is no additional command-approval prompt or machine plan/apply procedure. It reads Azure state, deploys `infra/main.bicep` on first use, and records migration baseline 0. After success it displays resource names/URLs and the three CI/CD values: `AZURE_STATIC_WEB_APPS_API_TOKEN` (SWA deployment token), `AZURE_FUNCTIONAPP_NAME`, and `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` (publish profile XML). These secrets are shown only in the terminal and are not saved by SwallowKit; if a value cannot be retrieved, the exact `az` command to get it is printed instead and provisioning is still treated as successful. Execution checkpoints and migration tracking remain internal safeguards against replaying interrupted deployments or resetting existing app settings. Machine/MCP is a separate agent interface and still requires a saved plan and explicit human approval.
 
 This creates using Bicep templates:
 - Azure Static Web Apps
@@ -65,7 +65,7 @@ In non-interactive environments, pass `--location` and `--swa-location`. `--appr
 
 #### Interrupted waiting and partial completion
 
-Bicep is submitted once with `--no-wait`. Normal `provision` (and `provision --resume`) then keeps polling the original deployment until Azure reaches `Succeeded`, `Failed`, or `Canceled`; there is no overall time limit, so a 10-20 minute deployment completes in one run and then prints resource information and CI/CD settings. Individual az calls are bounded, and brief state-read errors are retried. Machine/MCP apply keeps a bounded wait (default 300 seconds, `--wait-seconds` 0-3600) so agents get a prompt response. Warning-only stderr with exit 0 is not failure, and excess output is drained/discarded instead of killing az. Diagnostics distinguish exit code, signal, timeout/communication errors and Azure state, with bounded/redacted output and an omission flag. Machine/MCP does not return deployment outputs. Normal CLI retrieves only the named resource-information outputs after success, not credentials or arbitrary outputs.
+Bicep is submitted once with `--no-wait`. Normal `provision` (and `provision --resume`) then keeps polling the original deployment until Azure reaches `Succeeded`, `Failed`, or `Canceled`; there is no overall time limit, so a 10-20 minute deployment completes in one run and then prints resource information and CI/CD settings. Individual az calls are bounded, and brief state-read errors are retried. Machine/MCP apply keeps a bounded wait (default 300 seconds, `--wait-seconds` 0-3600) so agents get a prompt response. Warning-only stderr with exit 0 is not failure, and excess output is drained/discarded instead of killing az. Diagnostics distinguish exit code, signal, timeout/communication errors and Azure state, with bounded/redacted output and an omission flag. Machine/MCP does not return deployment outputs. After success, normal CLI reads only the named resource-information outputs (never arbitrary outputs) and retrieves the SWA deployment token and Functions publish profile with `az` to print them to the terminal only.
 
 If waiting stops early (Ctrl+C, or Azure state stays unreadable), Azure `Running`/`Accepted` is reported as in progress, not `provision-failed`. An unreadable or not-found deployment returns `unknown` (`blocked`); it is not evidence of Azure failure. Azure `Failed`/`Canceled` reports its sanitized error and failed operation causes. Azure `Succeeded` is only **partial** until the migration tag and local ledger finish.
 
@@ -115,12 +115,14 @@ The initial push triggers a CI/CD run that cannot succeed without secrets. Cance
 - **GitHub Actions**: Go to the Actions tab → click the running workflow → Cancel workflow
 - **Azure Pipelines**: Go to Pipelines → click the running pipeline → Cancel
 
-#### Step 4-2: Retrieve and register secrets / variables with Azure CLI
+#### Step 4-2: Register secrets / variables
+
+Use the values printed by `swallowkit provision` under "CI/CD settings". If a value could not be retrieved automatically, run the `az` command printed next to it.
 
 ##### For GitHub Actions
 
 1. Go to your GitHub repository → Settings → Secrets and variables → Actions
-2. Add the following secrets using values retrieved with Azure CLI:
+2. Add the following secrets:
   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
   - `AZURE_FUNCTIONAPP_NAME`
   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
@@ -129,7 +131,7 @@ The initial push triggers a CI/CD run that cannot succeed without secrets. Cance
 
 1. Azure DevOps → Pipelines → Library → Variable groups
 2. Create group named `azure-deployment`
-3. Add the following variables using values retrieved with Azure CLI:
+3. Add the following variables:
   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
   - `AZURE_FUNCTIONAPP_NAME`
   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
