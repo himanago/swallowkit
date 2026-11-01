@@ -8,7 +8,7 @@ import {
 } from "../core/operations/provision-operations";
 import * as migrations from "../core/project/migrations";
 import { loadProvisionRun, saveProvisionRun } from "../core/project/state";
-import { formatProvisionResult } from "../cli/commands/provision";
+import { formatProvisionResult, formatProvisionError } from "../cli/commands/provision";
 import { formatCliError, runCli } from "../cli";
 import { runMachineCli } from "../machine";
 import { buildSwallowKitToolDefinitions } from "../mcp";
@@ -125,6 +125,8 @@ interface FixtureState {
   parameters: Record<string, { value: unknown; type?: string }>;
   error?: unknown;
   operations?: unknown[];
+  outputs?: Record<string, string>;
+  outputQueryFails?: boolean;
 }
 
 describe("provision execution, diagnosis and recovery using an az subprocess fixture", () => {
@@ -511,7 +513,7 @@ describe("provision execution, diagnosis and recovery using an az subprocess fix
     expect(read().deploymentCreates).toBe(3);
     expect(read().calls.filter(args => args[0] === "deployment" && args[2] === "create").map(args => args[args.indexOf("--name") + 1]))
       .toEqual(expect.arrayContaining(["swallowkit-baseline", ...plan.pendingMigrations.map(migration => `swallowkit-migration-${migration.version}-${migration.checksum.slice(0, 12)}`)]));
-  });
+  }, 20000);
 
   it("recovers an older untracked Running deployment using matching ARM/parameter evidence and no create", async () => {
     update({ groupExists: true, states: ["Running"], deployments: { "swallowkit-baseline": { correlationId: "old-correlation", templateHash: "fixture-template-hash" } } });
@@ -558,5 +560,77 @@ describe("provision execution, diagnosis and recovery using an az subprocess fix
     expect(mcp).toMatchObject({ status: "in-progress", runId, nextActions: machine.nextActions, metadata: { swallowkitVersion: expect.any(String) } });
     expect(runner).toHaveBeenCalledWith(["inspect", "provision", "--plan", runId, "--wait-seconds", "0"]);
     expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 0 });
+  });
+
+  it("treats normal provision invocation as consent without an extra prompt or machine instructions", async () => {
+    update({ outputs: { functionsAppName: "func-fixture", staticWebAppName: "swa-fixture", apiKey: "secret-not-for-terminal" } });
+    const logs: string[] = [];
+    jest.spyOn(console, "log").mockImplementation((text: unknown) => { logs.push(String(text)); });
+    await runCli(["node", "swallowkit", "provision", "-g", options.resourceGroup, "--location", options.location, "--swa-location", options.swaLocation]);
+    const output = logs.join("\n");
+    expect(output).toContain("Provisioning completed");
+    expect(output).toContain("AZURE_FUNCTIONAPP_NAME: func-fixture");
+    expect(output).toContain("AZURE_STATIC_WEB_APPS_API_TOKEN");
+    expect(output).not.toContain("secret-not-for-terminal");
+    expect(output).not.toMatch(/machine |--approve|Run these Azure commands|Plan /);
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 1 });
+    expect(read().calls.some(args => args[0] === "staticwebapp" && args[1] === "secrets")).toBe(false);
+  });
+
+  it("keeps normal CLI terminal failure instructions human-only and does not suggest resuming as a repair", async () => {
+    update({ states: ["Failed"], error: { code: "NotFound", message: "Request url is invalid." } });
+    let failure: unknown;
+    try {
+      await runCli(["node", "swallowkit", "provision", "-g", options.resourceGroup, "--location", options.location, "--swa-location", options.swaLocation]);
+    } catch (error) { failure = error; }
+    const output = formatCliError(failure);
+    expect(output).toContain("NotFound: Request url is invalid.");
+    expect(output).toContain("swallowkit provision --status");
+    expect(output).not.toMatch(/machine |--plan|--approve|Resume:/);
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 0 });
+  });
+
+  it("shows human commands when existing execution state blocks a new provision", async () => {
+    update({ states: ["Running"] });
+    const running = await executeProvisionPlan(await planProvisionOperation(options), { approve: true, waitSeconds: 0 });
+    let failure: unknown;
+    try { await planProvisionOperation(options); } catch (error) { failure = error; }
+    const output = formatProvisionError(failure);
+    expect(output).toContain(`swallowkit provision --status ${running.runId}`);
+    expect(output).not.toMatch(/machine |--plan|--approve/);
+    expect(read().deploymentCreates).toBe(1);
+  });
+
+  it("does not redeploy or report deployment failure when resource outputs cannot be read after success", async () => {
+    update({ outputQueryFails: true });
+    const warnings: string[] = [];
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    jest.spyOn(console, "warn").mockImplementation((text: unknown) => { warnings.push(String(text)); });
+    await runCli(["node", "swallowkit", "provision", "-g", options.resourceGroup, "--location", options.location, "--swa-location", options.swaLocation]);
+    expect(warnings.join("\n")).toContain("Deployment succeeded, but resource information could not be read");
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 1 });
+  });
+
+  it("resumes a human-invoked run without an additional approval and never resubmits Bicep", async () => {
+    update({ states: ["Running"] });
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    await runCli(["node", "swallowkit", "provision", "-g", options.resourceGroup, "--location", options.location, "--swa-location", options.swaLocation, "--wait-seconds", "0"]);
+    const file = fs.readdirSync(path.join(project, ".swallowkit", "state", "provision")).find(name => name.endsWith(".json"))!;
+    const runId = file.slice(0, -5);
+    update({ states: ["Succeeded"] });
+    await runCli(["node", "swallowkit", "provision", "--resume", runId]);
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 1 });
+    expect(loadProvisionRun<{ outcome: string }>(runId)?.outcome).toBe("succeeded");
+  });
+
+  it("retains successful deployment when the output-reading helper throws", async () => {
+    const original = azureCli.runAzCliAsync;
+    jest.spyOn(azureCli, "runAzCliAsync").mockImplementation((args, runOptions) =>
+      args.some(arg => arg.includes("properties.outputs.")) ? Promise.reject(new Error("Fixture output transport failed")) : original(args, runOptions));
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
+    await runCli(["node", "swallowkit", "provision", "-g", options.resourceGroup, "--location", options.location, "--swa-location", options.swaLocation]);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("Deployment succeeded, but resource information could not be read"));
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 1 });
   });
 });

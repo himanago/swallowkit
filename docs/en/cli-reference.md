@@ -1274,7 +1274,7 @@ pnpm dlx swallowkit provision [options]
 | `--adopt-existing` | | Adopt an existing untagged environment as a baseline | |
 | `--baseline <version>` | | Adoption baseline; currently only `0` | |
 | `--reconcile` | | Explicitly redeploy all of `main.bicep` | |
-| `--approve` | | Run the displayed Azure commands without the confirmation prompt | |
+| `--approve` | | Compatibility option; normal provision invocation already requests execution | |
 | `--status <runId>` | | Read the original deployment/checkpoint without Azure or ledger writes | |
 | `--resume <runId>` | | Resume the original approved checkpoint; never resubmit an attempted deployment | |
 | `--resume-deployment <name>` | | Recover an older baseline after ARM/non-secure parameter verification; no deployment create | |
@@ -1370,13 +1370,13 @@ Deployments use `--no-wait` plus bounded polling. Running/Accepted returns `in-p
 
 ```powershell
 pnpm exec swallowkit provision --status <runId> --wait-seconds 300
-pnpm exec swallowkit provision --resume <runId> --approve
+pnpm exec swallowkit provision --resume <runId>
 # Machine/MCP equivalent: runId equals original planId
 pnpm exec swallowkit machine inspect provision --plan <runId> --wait-seconds 300
 pnpm exec swallowkit machine apply provision --plan <runId> --approve
 ```
 
-Keep the execution checkpoint under `.swallowkit/state/provision/`. Resume requires approval again and preserves fingerprints, subscription, deployment identity and migration checksums. Ctrl+C/hard termination may leave Azure running; no automatic cancel/delete is performed. Do not replan/reconcile just to fix waiting or bookkeeping. See [older untracked baseline recovery](./deployment-guide.md#recover-an-older-untracked-baseline) for `--resume-deployment`.
+Keep the execution checkpoint under `.swallowkit/state/provision/`. Normal `provision --resume` explicitly requests continuation without another approval prompt. Machine/MCP resume still requires fresh human approval. Both preserve fingerprints, subscription, deployment identity and migration checksums. Normal CLI success includes resource information and CI/CD setup guidance; errors suggest normal provision commands, not machine commands. Ctrl+C/hard termination may leave Azure running; no automatic cancel/delete is performed. Do not replan/reconcile just to fix waiting or bookkeeping. See [older untracked baseline recovery](./deployment-guide.md#recover-an-older-untracked-baseline) for `--resume-deployment`.
 
 ## swallowkit migrations init
 

@@ -224,6 +224,10 @@ required.
 
 Never invent or implicitly grant human approval.
 
+Humans normally invoke `swallowkit provision` directly. Its invocation requests
+execution without an additional confirmation. Agents must still use the
+machine/MCP approval flow and must not switch to normal CLI to bypass it.
+
 ## Model Changes
 
 For an existing model change, the normal pattern is:

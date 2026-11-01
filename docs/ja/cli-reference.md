@@ -1396,7 +1396,7 @@ pnpm dlx swallowkit provision [options]
 | `--adopt-existing` | | タグなし既存環境を baseline として採用する | |
 | `--baseline <version>` | | adoption の baseline。現在は `0` のみ | |
 | `--reconcile` | | `main.bicep` 全体を明示的に再デプロイする | |
-| `--approve` | | 確認を求めずに、表示された Azure コマンドを実行する | |
+| `--approve` | | 互換性用。通常の provision はコマンド実行自体が実行指示になる | |
 | `--status <runId>` | | 元の deployment と実行チェックポイントを読み取り専用で確認 | |
 | `--resume <runId>` | | 元の承認済みチェックポイントから再開。送信済み deployment は再送しない | |
 | `--resume-deployment <name>` | | 旧 baseline の ARM／非 secret parameters の一致を確認して復旧。create はしない | |
@@ -1492,13 +1492,13 @@ npx swallowkit provision \
 
 ```powershell
 pnpm exec swallowkit provision --status <runId> --wait-seconds 300
-pnpm exec swallowkit provision --resume <runId> --approve
+pnpm exec swallowkit provision --resume <runId>
 # machine/MCP も同じ実行処理。runId は元の planId と同じ:
 pnpm exec swallowkit machine inspect provision --plan <runId> --wait-seconds 300
 pnpm exec swallowkit machine apply provision --plan <runId> --approve
 ```
 
-`.swallowkit/state/provision/` のチェックポイントを保持してください。再開でも承認が必要で、fingerprint、subscription、deployment の識別子、migration checksum を再確認します。Ctrl+C／強制終了後も Azure は続く場合があります。自動キャンセル・削除はしません。待機や記録の修復だけのために再計画／reconcile をしないでください。旧版の未追跡 baseline は[デプロイガイド](./deployment-guide.md)の `--resume-deployment` 手順を使います。
+`.swallowkit/state/provision/` のチェックポイントを保持してください。通常の `provision --resume` は続行の指示であり、追加の承認確認はありません。machine／MCP の再開には引き続き明示的な人の承認が必要です。どちらも fingerprint、subscription、deployment の識別子、migration checksum を再確認します。通常 CLI は成功後にリソース情報と CI/CD 設定手順を表示し、エラー時には machine ではなく通常の provision コマンドを案内します。Ctrl+C／強制終了後も Azure は続く場合があります。自動キャンセル・削除はしません。待機や記録の修復だけのために再計画／reconcile をしないでください。旧版の未追跡 baseline は[デプロイガイド](./deployment-guide.md)の `--resume-deployment` 手順を使います。
 
 ## swallowkit migrations init
 

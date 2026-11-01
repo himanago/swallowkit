@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import prompts from "prompts";
 import { ensureSwallowKitProject } from "../../core/config";
 import {
@@ -12,6 +12,88 @@ import {
 } from "../../core/operations/provision-operations";
 import { MachineCommandError } from "../../machine/errors";
 import { formatAzureDiagnostic } from "../../utils/azure-diagnostics";
+import { runAzCliAsync } from "../../utils/azure-cli";
+
+function humanProvisionMessage(message: string): string {
+  return message
+    .replace(/swallowkit machine inspect provision --plan/g, "swallowkit provision --status")
+    .replace(/swallowkit machine apply provision --plan/g, "swallowkit provision --resume")
+    .replace(/plan provision/g, "swallowkit provision")
+    .replace(/\b[Pp]lan\b/g, "Execution")
+    .replace(/preview/g, "deployment preparation")
+    .replace(/after approval/g, "")
+    .replace(/--approve/g, "")
+    .replace(/ {2,}/g, " ");
+}
+
+export function formatProvisionError(error: unknown): string {
+  if (!(error instanceof MachineCommandError)) return error instanceof Error ? error.message : String(error);
+  const message = error.code === "azure-deployment-failed" ? error.message : humanProvisionMessage(error.message);
+  const lines = [...new Set(message.split("\n"))];
+  const details = error.details as Partial<ApplyProvisionResult> | undefined;
+  if (details?.deployment) {
+    lines.push(`Deployment: ${details.deployment.reference.name}; state: ${details.deployment.state}`);
+  }
+  for (const diagnostic of details?.diagnostics ?? []) {
+    if (diagnostic.failureKind || diagnostic.outputTruncated) lines.push(formatAzureDiagnostic(diagnostic));
+  }
+  const runId = details?.runId;
+  if (runId) {
+    lines.push(`Check: swallowkit provision --status ${runId}`);
+    if (error.code !== "azure-deployment-failed") lines.push(`Resume: swallowkit provision --resume ${runId}`);
+    else lines.push("Azure reported a terminal failure. Resuming only observes that failed deployment; correct its cause before explicitly deploying again.");
+  } else {
+    for (const action of error.nextActions ?? []) {
+      const command = humanProvisionMessage(action.command);
+      if (!command.includes("machine ")) lines.push(command);
+    }
+  }
+  return lines.join("\n");
+}
+
+async function printProvisionSetup(result: ApplyProvisionResult): Promise<void> {
+  if (!result.deployment || result.status !== "complete") return;
+  const reference = result.deployment.reference;
+  const fields = ["staticWebAppName", "staticWebAppUrl", "functionsAppName", "functionsAppUrl", "cosmosDbAccountName", "cosmosDatabaseName"] as const;
+  let outputs: Record<string, unknown>;
+  try {
+    const response = await runAzCliAsync(
+      [
+        "deployment",
+        "group",
+        "show",
+        "--name",
+        reference.name.startsWith("swallowkit-migration-") ? "swallowkit-baseline" : reference.name,
+        "--resource-group",
+        reference.resourceGroup,
+        "--subscription",
+        reference.subscription,
+        "--query",
+        `{${fields.map((field) => `${field}:properties.outputs.${field}.value`).join(",")}}`,
+        "-o",
+        "json",
+      ],
+      { timeout: 30_000 }
+    );
+    if (response.status !== 0 || response.failureKind || response.stdoutTruncated) throw new Error("Output query did not complete.");
+    const parsed: unknown = JSON.parse(response.stdout);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid resource output.");
+    outputs = parsed as Record<string, unknown>;
+  } catch {
+    console.warn(
+      "Deployment succeeded, but resource information could not be read. Inspect the deployment's named outputs in Azure Portal; do not redeploy just to retrieve them."
+    );
+    return;
+  }
+  console.log("\nResource information:");
+  for (const field of fields) {
+    if (typeof outputs[field] === "string") console.log(`  ${field}: ${outputs[field]}`);
+  }
+  console.log("\nCI/CD settings:");
+  console.log(`  AZURE_FUNCTIONAPP_NAME: ${typeof outputs.functionsAppName === "string" ? outputs.functionsAppName : "<functions-app-name>"}`);
+  console.log("  Retrieve AZURE_STATIC_WEB_APPS_API_TOKEN and AZURE_FUNCTIONAPP_PUBLISH_PROFILE privately from Azure Portal and save them in your CI/CD secrets.");
+  console.log("  Secret values are not printed or stored by SwallowKit. Trigger the first application deployment after configuring CI/CD.");
+}
 
 export function describeProvisionAction(plan: Pick<ProvisionPlanData, "mode" | "resourceGroup" | "location" | "pendingMigrations">): string {
   switch (plan.mode) {
@@ -67,25 +149,31 @@ interface ProvisionCliOptions {
 }
 
 export function formatProvisionResult(result: ApplyProvisionResult): string {
-  const outcome = result.outcome === "succeeded" ? "✅ Provisioning completed, including migration tags and the local ledger."
-    : result.outcome === "in-progress" ? "⏳ Azure deployment is still in progress. The local wait ended; this is not an Azure failure."
-      : result.outcome === "partial" ? "⚠️ Provisioning is partially complete. Finish migration bookkeeping from the checkpoint; do not redeploy the baseline."
-        : result.outcome === "failed" ? "❌ Azure deployment reached a failed/cancelled terminal state."
-          : "⚠️ Azure deployment result is unknown. A local az interruption does not prove an Azure failure.";
-  const lines = [outcome, `Run: ${result.runId}; resource group: ${result.resourceGroup}`];
+  const outcome =
+    result.outcome === "succeeded"
+      ? "✅ Provisioning completed, including migration tags and the local ledger."
+      : result.outcome === "in-progress"
+        ? "⏳ Azure deployment is still in progress. The local wait ended; this is not an Azure failure."
+        : result.outcome === "partial"
+          ? "⚠️ Provisioning is partially complete. Finish migration bookkeeping from the checkpoint; do not redeploy the baseline."
+          : result.outcome === "failed"
+            ? "❌ Azure deployment reached a failed/cancelled terminal state."
+            : "⚠️ Azure deployment result is unknown. A local az interruption does not prove an Azure failure.";
+  const lines = [outcome, `Resource group: ${result.resourceGroup}`];
   if (result.deployment) {
     const reference = result.deployment.reference;
     lines.push(`Deployment: ${reference.name}; subscription: ${reference.subscription}; state: ${result.deployment.state}${reference.id ? `; ID: ${reference.id}` : ""}`);
     for (const error of result.deployment.errors) lines.push(`${error.code}: ${error.message}`);
   }
-  for (const warning of result.warnings) lines.push(`Warning: ${warning}`);
+  for (const warning of result.warnings) lines.push(`Warning: ${humanProvisionMessage(warning)}`);
   for (const diagnostic of result.diagnostics.filter((entry) => entry.failureKind || entry.outputTruncated)) {
     lines.push(formatAzureDiagnostic(diagnostic));
   }
   if (result.status !== "complete") {
     lines.push(`Check/wait: swallowkit provision --status ${result.runId} --wait-seconds 300`);
-    lines.push(`Resume after approval: swallowkit provision --resume ${result.runId} --approve`);
-    lines.push("Azure may continue after Ctrl+C or process termination. No Azure cancellation or deletion is performed.");
+    if (result.outcome !== "failed") lines.push(`Resume: swallowkit provision --resume ${result.runId}`);
+    if (result.outcome !== "failed") lines.push("Azure may continue after Ctrl+C or process termination. No Azure cancellation or deletion is performed.");
+    else lines.push("Azure reported a terminal failure. Correct its cause before explicitly deploying again; resuming does not repair a failed deployment.");
   }
   return lines.join("\n");
 }
@@ -119,106 +207,127 @@ async function resolveLocations(options: ProvisionCliOptions): Promise<{ locatio
   return { location, swaLocation };
 }
 
-export const provisionCommand = new Command("provision")
-  .description("Bootstrap, adopt, migrate, or explicitly reconcile Azure resources")
-  .option("-g, --resource-group <name>", "Resource group name (required for a new preview)")
-  .option("--subscription <id>", "Azure subscription ID")
-  .option("--location <region>", "Primary location for Functions and Cosmos DB")
-  .option("--swa-location <region>", "Static Web App location")
-  .option("--what-if", "Include Azure what-if evidence in the preview", false)
-  .option("--adopt-existing", "Adopt an existing untagged resource group without deploying main.bicep", false)
-  .option("--baseline <version>", "Baseline version for adoption (currently 0)")
-  .option("--reconcile", "Explicitly redeploy infra/main.bicep", false)
-  .option("--approve", "Run the displayed Azure commands without the confirmation prompt", false)
-  .option("--status <runId>", "Read an existing execution checkpoint and Azure deployment state without writes")
-  .option("--resume <runId>", "Resume an approved checkpoint without resubmitting attempted deployments")
-  .option("--resume-deployment <name>", "Recover an older untracked baseline deployment after verifying its template and parameters")
-  .option("--wait-seconds <seconds>", "Bounded state wait, 0-3600 seconds (default: 300; status: 0)")
-  .action(async (options: ProvisionCliOptions) => {
-    ensureSwallowKitProject("provision");
-    const waitSeconds = options.waitSeconds === undefined ? undefined : Number(options.waitSeconds);
-    if ((options.resume && options.status) || ((options.resume || options.status) && (options.resourceGroup || options.resumeDeployment || options.reconcile || options.adoptExisting || options.subscription || options.location || options.swaLocation || options.whatIf || options.baseline !== undefined))) {
-      throw new MachineCommandError("invalid-arguments", "Use --status or --resume with the checkpoint ID alone; its original Azure target and reviewed files are preserved.", undefined, "blocked");
-    }
-    if (options.status) {
-      const result = await inspectProvisionOperation({ planId: options.status, waitSeconds });
-      console.log(formatProvisionResult(result));
-      if (result.status === "blocked" || result.status === "failed") process.exitCode = 1;
-      return;
-    }
-    if (options.resume) {
-      let approved = options.approve === true;
-      if (!approved && process.stdin.isTTY && process.stdout.isTTY) {
-        const answer = await prompts({ type: "confirm", name: "approved", message: "Resume the original reviewed run and finish pending steps? This requires explicit approval.", initial: false });
-        approved = answer.approved === true;
+export function createProvisionCommand(): Command {
+  return new Command("provision")
+    .description("Deploy Azure infrastructure and show resource information and CI/CD setup")
+    .option("-g, --resource-group <name>", "Resource group name (required for deployment)")
+    .option("--subscription <id>", "Azure subscription ID")
+    .option("--location <region>", "Primary location for Functions and Cosmos DB")
+    .option("--swa-location <region>", "Static Web App location")
+    .option("--what-if", "Check Azure what-if before deployment", false)
+    .option("--adopt-existing", "Adopt an existing untagged resource group without deploying main.bicep", false)
+    .option("--baseline <version>", "Baseline version for adoption (currently 0)")
+    .option("--reconcile", "Explicitly redeploy infra/main.bicep", false)
+    .addOption(new Option("--approve", "Compatibility option; invoking provision already requests execution").hideHelp())
+    .option("--status <runId>", "Read an existing execution checkpoint and Azure deployment state without writes")
+    .option("--resume <runId>", "Continue the original execution without resubmitting attempted deployments")
+    .option("--resume-deployment <name>", "Recover an older untracked baseline deployment after verifying its template and parameters")
+    .option("--wait-seconds <seconds>", "Bounded state wait, 0-3600 seconds (default: 300; status: 0)")
+    .action(async (options: ProvisionCliOptions) => {
+      try {
+        ensureSwallowKitProject("provision");
+        const waitSeconds = options.waitSeconds === undefined ? undefined : Number(options.waitSeconds);
+        if (
+          (options.resume && options.status) ||
+          ((options.resume || options.status) &&
+            (options.resourceGroup ||
+              options.resumeDeployment ||
+              options.reconcile ||
+              options.adoptExisting ||
+              options.subscription ||
+              options.location ||
+              options.swaLocation ||
+              options.whatIf ||
+              options.baseline !== undefined))
+        ) {
+          throw new MachineCommandError(
+            "invalid-arguments",
+            "Use --status or --resume with the checkpoint ID alone; its original Azure target and reviewed files are preserved.",
+            undefined,
+            "blocked"
+          );
+        }
+        if (options.status) {
+          const result = await inspectProvisionOperation({
+            planId: options.status,
+            waitSeconds,
+          });
+          console.log(formatProvisionResult(result));
+          if (result.status === "blocked" || result.status === "failed") process.exitCode = 1;
+          return;
+        }
+        if (options.resume) {
+          const result = await applyProvisionOperation({
+            planId: options.resume,
+            approve: true,
+            waitSeconds,
+          });
+          console.log(formatProvisionResult(result));
+          await printProvisionSetup(result);
+          if (result.status === "blocked" || result.status === "failed") process.exitCode = 1;
+          return;
+        }
+        if (!options.resourceGroup) throw new MachineCommandError("invalid-arguments", "Provision requires --resource-group.", undefined, "blocked");
+        const locations = await resolveLocations(options);
+        const baseline = options.baseline === undefined ? undefined : Number(options.baseline);
+        // Preview in memory: the same Azure checks as the agent workflow, but no saved plan file.
+        const preview = await planProvisionOperation(
+          {
+            resourceGroup: options.resourceGroup,
+            subscription: options.subscription,
+            location: locations.location,
+            swaLocation: locations.swaLocation,
+            whatIf: options.whatIf,
+            adoptExisting: options.adoptExisting,
+            baseline,
+            reconcile: options.reconcile,
+            resumeDeployment: options.resumeDeployment,
+          },
+          { persist: false }
+        );
+
+        for (const warning of preview.warnings) console.warn(`Warning: ${warning}`);
+
+        if (preview.mode === "offline") {
+          console.log(
+            [
+              "",
+              "❌ Azure CLI is unavailable, so the current state of Azure could not be checked. Nothing was changed in Azure.",
+              "   1. Make sure `az --version` works in this terminal (install: https://aka.ms/azure-cli).",
+              "   2. Sign in with `az login` (and `az account set --subscription <id>` if needed).",
+              "   3. Run this command again.",
+            ].join("\n")
+          );
+          process.exitCode = 1;
+          return;
+        }
+
+        if (preview.mode === "adoption-required") {
+          throw new Error(
+            "The existing resource group has no migration tag. For an interrupted baseline use --resume-deployment <original-name> to verify/observe it without redeploying. Legacy adoption applies only to a legacy manifest; do not replace an existing manifest."
+          );
+        }
+
+        if (preview.mode === "noop") {
+          console.log(`Resource group ${preview.resourceGroup} is already up to date. Nothing to do.`);
+          return;
+        }
+
+        console.log(`\n${describeProvisionAction(preview)}`);
+        console.log("Deploying Azure infrastructure. Azure resources may incur charges.");
+
+        const result = await executeProvisionPlan(preview, {
+          approve: true,
+          retryHint: INTERACTIVE_PROVISION_RETRY_HINT,
+          waitSeconds,
+        });
+        console.log(formatProvisionResult(result));
+        await printProvisionSetup(result);
+        if (result.status === "blocked" || result.status === "failed") process.exitCode = 1;
+      } catch (error) {
+        throw new Error(formatProvisionError(error));
       }
-      const result = await applyProvisionOperation({ planId: options.resume, approve: approved, waitSeconds });
-      console.log(formatProvisionResult(result));
-      if (result.status === "blocked" || result.status === "failed") process.exitCode = 1;
-      return;
-    }
-    if (!options.resourceGroup) throw new MachineCommandError("invalid-arguments", "New provision previews require --resource-group.", undefined, "blocked");
-    const locations = await resolveLocations(options);
-    const baseline = options.baseline === undefined ? undefined : Number(options.baseline);
-    // Preview in memory: the same Azure checks as the agent workflow, but no saved plan file.
-    const preview = await planProvisionOperation({
-      resourceGroup: options.resourceGroup,
-      subscription: options.subscription,
-      location: locations.location,
-      swaLocation: locations.swaLocation,
-      whatIf: options.whatIf,
-      adoptExisting: options.adoptExisting,
-      baseline,
-      reconcile: options.reconcile,
-      resumeDeployment: options.resumeDeployment,
-    }, { persist: false });
+    });
+}
 
-    for (const warning of preview.warnings) console.warn(`Warning: ${warning}`);
-
-    if (preview.mode === "offline") {
-      console.log([
-        "",
-        "❌ Azure CLI is unavailable, so the current state of Azure could not be checked. Nothing was changed in Azure.",
-        "   1. Make sure `az --version` works in this terminal (install: https://aka.ms/azure-cli).",
-        "   2. Sign in with `az login` (and `az account set --subscription <id>` if needed).",
-        "   3. Run this command again.",
-      ].join("\n"));
-      process.exitCode = 1;
-      return;
-    }
-
-    if (preview.mode === "adoption-required") {
-      throw new Error('The existing resource group has no migration tag. For an interrupted baseline use --resume-deployment <original-name> to verify/observe it without redeploying. Legacy adoption applies only to a legacy manifest; do not replace an existing manifest.');
-    }
-
-    if (preview.mode === "noop") {
-      console.log(`Resource group ${preview.resourceGroup} is already up to date. Nothing to do.`);
-      return;
-    }
-
-    console.log(`\n${describeProvisionAction(preview)}`);
-    console.log("The following Azure CLI commands will run:");
-    for (const command of preview.commands) console.log(`  ${command}`);
-
-    let approved = options.approve === true;
-    if (!approved) {
-      if (!process.stdin.isTTY || !process.stdout.isTTY) {
-        throw new Error("Non-interactive provision requires --approve after reviewing the commands above.");
-      }
-      const answer = await prompts({
-        type: "confirm",
-        name: "approved",
-        message: "Run these Azure commands? This may create billable resources.",
-        initial: false,
-      });
-      approved = answer.approved === true;
-    }
-    if (!approved) {
-      console.log("Provision cancelled. Nothing was changed in Azure.");
-      return;
-    }
-
-    const result = await executeProvisionPlan(preview, { approve: true, retryHint: INTERACTIVE_PROVISION_RETRY_HINT, waitSeconds });
-    console.log(formatProvisionResult(result));
-    if (result.status === "blocked" || result.status === "failed") process.exitCode = 1;
-  });
+export const provisionCommand = createProvisionCommand();

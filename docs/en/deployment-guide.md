@@ -51,7 +51,7 @@ npx swallowkit provision --resource-group my-app-rg \
   --location japaneast --swa-location eastasia
 ```
 
-If regions are omitted, the command prompts for them. On the first run it verifies that the resource group does not exist, deploys `infra/main.bicep`, and records migration baseline 0 in a resource-group tag. Before anything changes, it reads Azure state, explains the action, lists the Azure CLI commands, and asks for confirmation. The preview is in memory; after approval an execution checkpoint is saved before any Azure write. The machine/MCP flow uses the same executor with a saved plan.
+If regions are omitted, the command prompts for them. Running normal `provision` requests deployment; there is no additional command-approval prompt or machine plan/apply procedure. It reads Azure state, deploys `infra/main.bicep` on first use, and records migration baseline 0. After success it displays resource names/URLs and CI/CD setup instructions. Secrets are retrieved privately, not printed automatically. Execution checkpoints and migration tracking remain internal safeguards against replaying interrupted deployments or resetting existing app settings. Machine/MCP is a separate agent interface and still requires a saved plan and explicit human approval.
 
 This creates using Bicep templates:
 - Azure Static Web Apps
@@ -61,11 +61,11 @@ This creates using Bicep templates:
 
 If `az` cannot be found or started, the command exits without asking for confirmation, and nothing is changed in Azure. A `az-cli-not-found` warning means `az` is not on PATH, and `az-cli-not-runnable` means it was found but failed to start. If you are not signed in, the command asks you to run `az login`. Fix the cause and run `provision` again.
 
-In non-interactive environments, pass `--location`, `--swa-location`, and `--approve`. Obtain CI/CD secrets with the Azure CLI commands later in this guide.
+In non-interactive environments, pass `--location` and `--swa-location`. `--approve` is retained only for compatibility; normal provision does not require it. Obtain CI/CD secrets with the Azure CLI commands later in this guide.
 
 #### Interrupted waiting and partial completion
 
-Bicep is submitted once with `--no-wait`; SwallowKit then polls the original deployment for up to 300 seconds by default. `--wait-seconds` accepts 0-3600. Individual az calls are bounded too. Warning-only stderr with exit 0 is not failure, and excess output is drained/discarded instead of killing az. Diagnostics distinguish exit code, signal, timeout/communication errors and Azure state, with bounded/redacted output and an omission flag. Deployment output values are not returned.
+Bicep is submitted once with `--no-wait`; SwallowKit then polls the original deployment for up to 300 seconds by default. `--wait-seconds` accepts 0-3600. Individual az calls are bounded too. Warning-only stderr with exit 0 is not failure, and excess output is drained/discarded instead of killing az. Diagnostics distinguish exit code, signal, timeout/communication errors and Azure state, with bounded/redacted output and an omission flag. Machine/MCP does not return deployment outputs. Normal CLI retrieves only the named resource-information outputs after success, not credentials or arbitrary outputs.
 
 Azure `Running`/`Accepted` returns `in-progress`, not `provision-failed`. An unreadable or not-found deployment returns `unknown` (`blocked`); it is not evidence of Azure failure. Azure `Failed`/`Canceled` reports its sanitized error and failed operation causes. Azure `Succeeded` is only **partial** until the migration tag and local ledger finish.
 
@@ -73,8 +73,8 @@ Keep `.swallowkit/state/provision/` and use the displayed run ID (the original p
 
 ```powershell
 pnpm exec swallowkit provision --status <runId> --wait-seconds 300
-# Only after reviewing the original run and approving pending steps:
-pnpm exec swallowkit provision --resume <runId> --approve
+# Explicitly request continuation of the original run:
+pnpm exec swallowkit provision --resume <runId>
 ```
 
 Status/wait is read-only. Resume rechecks the original subscription, deployment ID/correlation, fingerprints and migration checksums. It never re-submits an attempted deployment; it can finish unattempted reviewed steps and tag/ledger bookkeeping. If tag/ledger writes failed after Azure Succeeded, resume that checkpoint rather than redeploying the baseline. Ctrl+C or hard termination may leave Azure running; SwallowKit never cancels/deletes it automatically. A forcibly killed process cannot print a final result, but its pre-write checkpoint supports recovery.
@@ -90,7 +90,9 @@ az deployment group show --resource-group <original-rg> --name swallowkit-baseli
 pnpm exec swallowkit provision -g <original-rg> --subscription <original-subscription> --location japaneast --swa-location eastasia --resume-deployment swallowkit-baseline
 ```
 
-With a CLI containing this recovery option, the second command compares the existing deployment's exported ARM template and non-secure parameters to the original local Bicep/parameter files, presents an observation/tag-only preview, and asks for approval. It never sends a deployment create. Running deployments are tracked; after Succeeded it finishes tags/ledger. Template/parameter mismatches, unreadable evidence, secure parameters, legacy manifests, or non-baseline migration recovery block rather than guessing. Restore matching reviewed files; do not replace the manifest or weaken checks. Inspect error messages locally and redact secrets before sharing them.
+With a CLI containing this recovery option, the second command compares the existing deployment's exported ARM template and non-secure parameters to the original local Bicep/parameter files, then only observes and completes bookkeeping. It never sends a deployment create. Running deployments are tracked; after Succeeded it finishes tags/ledger. Template/parameter mismatches, unreadable evidence, secure parameters, legacy manifests, or non-baseline migration recovery block rather than guessing. Restore matching reviewed files; do not replace the manifest or weaken checks. Inspect error messages locally and redact secrets before sharing them.
+
+An Azure terminal `Failed` result is different from an interrupted local wait. For a failed Cosmos module, inspect that module's deployment operations in Azure Portal. `NotFound: Request url is invalid` alone does not identify the cause. Generated Cosmos account names use `cosmos-<projectName>` and are globally unique: changing only the resource group does not produce a different account name. Check existing account names before another deployment; do not delete or rename deployed accounts just to retry. See [Azure naming rules](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/resource-name-rules#microsoftdocumentdb).
 
 ### 3. Push Code
 

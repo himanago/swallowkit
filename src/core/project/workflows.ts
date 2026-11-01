@@ -211,6 +211,8 @@ Goal: bootstrap Azure once, then apply only pending versioned infrastructure mig
   \`status: "requires-human"\` and \`requiresApproval: true\` by design.
 - Never pass \`--approve\` to \`apply provision\` unless a human explicitly
   instructed you to provision in this session.
+- This plan/apply workflow is for agents. Humans normally run \`swallowkit provision\`
+  directly; do not switch to that command to bypass the agent approval gate.
 - Inspect infra locally first — no \`az\` calls are needed for inspection.
 - Never edit an applied migration. Create a corrective migration instead.
 - Never use \`--reconcile\` for an ordinary model or resource addition.

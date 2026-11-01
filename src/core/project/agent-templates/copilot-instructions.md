@@ -23,6 +23,8 @@ Key rules:
   after apply).
 - Use plan/apply for deterministic generation.
 - Respect `requires-human` states and other human approval gates.
+- Normal `swallowkit provision` is a human-facing deployment command. Agents must
+  use the machine/MCP approval flow, not normal CLI as an approval bypass.
 - Provision timeouts/Ctrl+C do not prove Azure failed. Read `status`, `outcome`,
   and `nextActions`; inspect the original run with `machine inspect provision
   --plan <runId>`, then resume `machine apply provision --plan <runId> --approve`
