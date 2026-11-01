@@ -166,6 +166,12 @@ pipelines/                   # For Azure Pipelines
 
 ### Workflow Behavior
 
+Generated Next.js pages support Cache Components: the client homepage does not
+force dynamic rendering, and detail/edit pages place runtime URL hooks below
+Suspense with their existing loading UI. For projects generated before 1.1.3,
+review scaffold plan/apply changes to regenerate affected pages; preserve custom
+edits through the normal conflict/approval workflow rather than disabling caching.
+
 **Static Web Apps Workflow:**
 - Triggers: Push to `main`, changes in `app/**`, `components/**`, `lib/**`
 - Steps:

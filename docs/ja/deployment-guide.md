@@ -164,6 +164,12 @@ pipelines/                   # Azure Pipelines の場合
 
 ### ワークフローの動作
 
+生成する Next.js ページは Cache Components に対応します。クライアントのホームページでは
+dynamic rendering を強制せず、詳細・編集ページでは実行時の URL フックを Suspense の内側に置き、
+既存のローディング表示を使います。1.1.3 より前に生成したプロジェクトでは scaffold の plan/apply
+差分を確認して対象ページを再生成してください。キャッシュを無効にするのではなく、
+通常の競合・承認手順でカスタム編集を維持します。
+
 **Static Web Apps ワークフロー:**
 - トリガー: `main` ブランチへのプッシュ、`app/**`、`components/**`、`lib/**` の変更
 - 処理:

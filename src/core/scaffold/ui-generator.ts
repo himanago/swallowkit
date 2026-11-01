@@ -337,7 +337,7 @@ export function generateDetailPage(model: ModelInfo, sharedPackageName: string, 
   
   return `'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod/v4';
@@ -347,6 +347,18 @@ ${hasAuth ? `import { useAuth } from '${authContextImport}';` : ''}
 type ${modelName} = z.infer<typeof ${localSchemaName}>;
 
 export default function ${modelName}DetailPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-lg text-gray-900 dark:text-gray-100">Loading...</div>
+      </div>
+    }>
+      <${modelName}DetailContent />
+    </Suspense>
+  );
+}
+
+function ${modelName}DetailContent() {
   const params = useParams();
   const router = useRouter();
   const [${modelCamel}, set${modelName}] = useState<${modelName} | null>(null);
@@ -1031,7 +1043,7 @@ export function generateEditPage(model: ModelInfo, sharedPackageName: string, au
   
   return `'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import ${modelName}Form from '../../_components/${modelName}Form';
 import { z } from 'zod/v4';
@@ -1041,6 +1053,18 @@ ${hasAuth ? `import { useAuth } from '${authContextImport}';` : ''}
 type ${modelName} = z.infer<typeof ${localSchemaName}>;
 
 export default function Edit${modelName}Page() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-lg">Loading...</div>
+      </div>
+    }>
+      <Edit${modelName}Content />
+    </Suspense>
+  );
+}
+
+function Edit${modelName}Content() {
   const params = useParams();
 ${hasAuth ? '  const router = useRouter();' : ''}
   const [${modelCamel}, set${modelName}] = useState<${modelName} | null>(null);

@@ -3,6 +3,8 @@ import * as path from "path";
 import * as childProcess from "child_process";
 import { initCommand } from "../cli/commands/init";
 import { buildAgentsMd } from "../core/project/agent-instructions";
+import { generateDetailPage, generateEditPage } from "../core/scaffold/ui-generator";
+import { createBasicModelInfo } from "./fixtures";
 
 jest.mock("child_process", () => ({
   ...jest.requireActual<typeof import("child_process")>("child_process"),
@@ -61,6 +63,21 @@ describe("init persistence instructions", () => {
     const config = fs.readFileSync(path.join(project, "next.config.ts"), "utf-8");
     expect(config).toContain("cacheComponents: true");
     expect(config).toContain("output: 'standalone'");
+    const model = createBasicModelInfo();
+    for (const [route, code, content] of [
+      [path.join("app", "todo", "[id]", "page.tsx"), generateDetailPage(model, "@fictional-app/shared"), "TodoDetailContent"],
+      [path.join("app", "todo", "[id]", "edit", "page.tsx"), generateEditPage(model, "@fictional-app/shared"), "EditTodoContent"],
+    ]) {
+      const file = path.join(project, route);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, code);
+      const generated = fs.readFileSync(file, "utf-8");
+      expect(generated).toContain(`<${content} />`);
+      expect(generated).toContain("<Suspense fallback=");
+      expect(generated.slice(0, generated.indexOf(`function ${content}`))).not.toContain("useParams()");
+      expect(generated).not.toMatch(/export const (dynamic|revalidate|fetchCache|instant)\b/);
+    }
+    expect(fs.readFileSync(path.join(project, "next.config.ts"), "utf-8")).toContain("cacheComponents: true");
     const agents = fs.readFileSync(path.join(project, "AGENTS.md"), "utf-8");
     expect(agents).toBe(buildAgentsMd({ projectName: "fictional-app", backendLanguage: "typescript", packageManager }));
     expect(agents).toContain("**whether or not it uses custom APIs**");
