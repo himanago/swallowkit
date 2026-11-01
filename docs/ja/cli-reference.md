@@ -1400,7 +1400,7 @@ pnpm dlx swallowkit provision [options]
 | `--status <runId>` | | 元の deployment と実行チェックポイントを読み取り専用で確認 | |
 | `--resume <runId>` | | 元の承認済みチェックポイントから再開。送信済み deployment は再送しない | |
 | `--resume-deployment <name>` | | 旧 baseline の ARM／非 secret parameters の一致を確認して復旧。create はしない | |
-| `--wait-seconds <seconds>` | | 状態確認の上限0〜3600秒。適用／再開は既定300秒、status は0秒 | |
+| `--wait-seconds <seconds>` | | 非表示。待機時間の上限（0〜3600秒）を明示する場合のみ指定。既定では provision と `--resume` は Azure の完了まで待ち、status は1回だけ確認 | |
 
 ### リージョン選択
 
@@ -1488,10 +1488,10 @@ npx swallowkit provision \
 
 ### 待機と復旧
 
-`--no-wait` で送信した deployment を、時間を区切って確認します。Running／Accepted は `in-progress`、照会不能／DeploymentNotFound は `blocked`／`outcome: "unknown"` であり、Azure の失敗を意味しません。Failed／Canceled では秘密を伏せた Azure の原因を示します。Succeeded でも tag／ledger 未完了なら `partial` で、記録まで完了したときだけ `complete` です。
+`--no-wait` で送信した deployment を確認します。通常の `provision` と `provision --resume` は Azure の完了まで待ち、その後にリソース情報と CI/CD の設定値を表示します。machine／MCP の apply は時間を区切って確認します（既定300秒）。待機が途中で終わった場合、Running／Accepted は `in-progress`、照会不能／DeploymentNotFound は `blocked`／`outcome: "unknown"` であり、Azure の失敗を意味しません。Failed／Canceled では秘密を伏せた Azure の原因を示します。Succeeded でも tag／ledger 未完了なら `partial` で、記録まで完了したときだけ `complete` です。
 
 ```powershell
-pnpm exec swallowkit provision --status <runId> --wait-seconds 300
+pnpm exec swallowkit provision --status <runId>
 pnpm exec swallowkit provision --resume <runId>
 # machine/MCP も同じ実行処理。runId は元の planId と同じ:
 pnpm exec swallowkit machine inspect provision --plan <runId> --wait-seconds 300

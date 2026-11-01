@@ -64,19 +64,19 @@ npx swallowkit provision --resource-group my-app-rg \
 
 #### 待機の中断と部分完了
 
-Bicep は `--no-wait` で一度だけ送信し、その deployment を既定で最大300秒確認します。`--wait-seconds` は0〜3600秒を指定できます。個々の az 呼び出しにも制限があります。stderr に warning があっても exit code が0なら、それだけで失敗にはしません。大量の出力は読み捨て、出力上限で az を停止しません。診断には exit code、signal、timeout／通信エラー、経過時間、出力を省略した事実を含め、キーや token などを伏せます。machine／MCP は deployment outputs を返しません。通常 CLI は成功後に決められたリソース情報だけを取得し、任意の outputs や認証情報は表示しません。
+Bicep は `--no-wait` で一度だけ送信します。通常の `provision`（および `provision --resume`）は、Azure が `Succeeded`／`Failed`／`Canceled` になるまで元の deployment を確認し続けます。全体の待ち時間に上限はないため、10〜20分かかる deployment も1回の実行で完了まで待ち、その後にリソース情報と CI/CD の設定値を表示します。個々の az 呼び出しには制限があり、一時的な状態照会エラーは再試行します。machine／MCP の apply は、エージェントにすぐ応答を返すため、従来どおり待機時間を区切ります（既定300秒、`--wait-seconds` は0〜3600秒）。stderr に warning があっても exit code が0なら、それだけで失敗にはしません。大量の出力は読み捨て、出力上限で az を停止しません。診断には exit code、signal、timeout／通信エラー、経過時間、出力を省略した事実を含め、キーや token などを伏せます。machine／MCP は deployment outputs を返しません。通常 CLI は成功後に決められたリソース情報だけを取得し、任意の outputs や認証情報は表示しません。
 
-Azure が `Running`／`Accepted` なら `in-progress` です。照会できない場合や DeploymentNotFound は `unknown`（`blocked`）であり、Azure の失敗を意味しません。`Failed`／`Canceled` では、秘密を伏せた Azure のエラーと deployment operations の原因を示します。`Succeeded` でも migration tag とローカル ledger が未完了なら、全体は **partial** です。
+Ctrl+C や状態を照会できない状態の継続で待機が途中で終わった場合、Azure が `Running`／`Accepted` なら進行中と表示し、`provision-failed` にはしません。照会できない場合や DeploymentNotFound は `unknown`（`blocked`）であり、Azure の失敗を意味しません。`Failed`／`Canceled` では、秘密を伏せた Azure のエラーと deployment operations の原因を示します。`Succeeded` でも migration tag とローカル ledger が未完了なら、全体は **partial** です。
 
 `.swallowkit/state/provision/` を保存したまま、表示された run ID（元の plan ID）を使ってください。
 
 ```powershell
-pnpm exec swallowkit provision --status <runId> --wait-seconds 300
-# 元の実行の続行を明示的に指示:
+pnpm exec swallowkit provision --status <runId>
+# 元の実行を続行し、完了まで待つ:
 pnpm exec swallowkit provision --resume <runId>
 ```
 
-status／待機は読み取り専用です。再開では元の subscription、deployment ID／correlation、fingerprint、migration checksum を再確認し、送信済み deployment を再送しません。未実行の承認済み処理と tag／ledger 更新だけを続けます。Azure 成功後に記録処理が失敗しても、baseline を再デプロイせず、このチェックポイントから記録を完了してください。Ctrl+C や強制終了後も Azure が続く場合があります。自動でキャンセル・削除はしません。強制終了では終了結果を表示できませんが、書き込み前のチェックポイントから復旧できます。
+status は読み取り専用です。再開では元の subscription、deployment ID／correlation、fingerprint、migration checksum を再確認し、送信済み deployment を再送しません。未実行の承認済み処理と tag／ledger 更新だけを続けます。Azure 成功後に記録処理が失敗しても、baseline を再デプロイせず、このチェックポイントから記録を完了してください。Ctrl+C や強制終了後も Azure が続く場合があります。自動でキャンセル・削除はしません。強制終了では終了結果を表示できませんが、書き込み前のチェックポイントから復旧できます。
 
 MCP の provision リクエストをキャンセルした場合も、停止するのはローカルの machine 子プロセス／待機であり、Azure deployment ではありません。元の plan／run ID で状態を確認してから再開してください。MCP のキャンセルや応答の欠落は、Azure の失敗を意味しません。
 

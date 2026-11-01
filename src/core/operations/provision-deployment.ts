@@ -4,6 +4,8 @@ import { AzureCliDiagnostic, azureCliDiagnostic, redactAzureText } from "../../u
 export const DEPLOYMENT_QUERY = "{id:id,name:name,state:properties.provisioningState,correlationId:properties.correlationId,templateHash:properties.templateHash,timestamp:properties.timestamp,error:properties.error}";
 export const DEFAULT_PROVISION_WAIT_SECONDS = 300;
 export const MAX_PROVISION_WAIT_SECONDS = 3_600;
+/** Consecutive transient state-read failures tolerated while the human CLI waits for a terminal state. */
+export const UNBOUNDED_WAIT_TRANSIENT_RETRIES = 24;
 
 export interface DeploymentReference {
   subscription: string;
@@ -116,9 +118,15 @@ export async function waitForAzureDeployment(
     onObservation?: (observation: DeploymentObservation) => void;
     secretValues?: readonly string[];
     queryTimeoutMs?: number;
+    /**
+     * Consecutive non-terminal "unknown" reads (query failure, not yet visible) to keep polling through.
+     * Required for an unbounded deadline so a missing deployment cannot be polled forever.
+     */
+    transientRetries?: number;
   }
 ): Promise<DeploymentObservation> {
   let observation: DeploymentObservation;
+  let unknownReads = 0;
   do {
     const remaining = options.deadline - Date.now();
     // Even when the wait budget is exhausted, one bounded read can identify an accepted submission.
@@ -130,7 +138,15 @@ export async function waitForAzureDeployment(
     if (observation.state !== "unknown") reference = observation.reference;
     options.onObservation?.(observation);
     if (observation.state === "Succeeded" || observation.state === "Failed" || observation.state === "Canceled") return observation;
-    if (observation.state === "unknown" && observation.reason !== "not-yet-observed" && observation.reason !== "not-found") return observation;
+    if (observation.state === "unknown") {
+      unknownReads += 1;
+      const retryable = observation.reason === "not-yet-observed" || observation.reason === "not-found"
+        || (options.transientRetries !== undefined && (observation.reason === "query-failed" || observation.reason === "invalid-response"));
+      if (!retryable) return observation;
+      if (!Number.isFinite(options.deadline) && unknownReads > (options.transientRetries ?? 0)) return observation;
+    } else {
+      unknownReads = 0;
+    }
     if (Date.now() >= options.deadline || options.signal?.aborted) return observation;
     await new Promise<void>((resolve) => {
       const done = () => {

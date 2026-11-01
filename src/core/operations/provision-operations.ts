@@ -20,7 +20,7 @@ import { deletePlanState, listProvisionRuns, loadPlanState, loadProvisionRun, lo
 import { hashFileIfExists } from "./file-session";
 import {
   DEFAULT_PROVISION_WAIT_SECONDS, DEPLOYMENT_QUERY, DeploymentObservation, DeploymentReference,
-  MAX_PROVISION_WAIT_SECONDS, queryAzureDeployment, queryDeploymentOperationErrors, waitForAzureDeployment,
+  MAX_PROVISION_WAIT_SECONDS, queryAzureDeployment, queryDeploymentOperationErrors, UNBOUNDED_WAIT_TRANSIENT_RETRIES, waitForAzureDeployment,
 } from "./provision-deployment";
 import {
   MIGRATION_MANIFEST_PATH,
@@ -625,6 +625,8 @@ export interface ApplyProvisionOptions {
   planId: string;
   approve?: boolean;
   waitSeconds?: number;
+  /** Human CLI: keep polling until Azure reaches a terminal state instead of using the bounded wait budget. */
+  waitUntilComplete?: boolean;
 }
 
 export interface ApplyProvisionResult {
@@ -848,7 +850,10 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     );
   }
 
-  const result = await executeProvisionPlan(plan, { approve: options.approve, waitSeconds: options.waitSeconds, retryHint: MACHINE_RETRY_HINT, projectRoot });
+  const result = await executeProvisionPlan(plan, {
+    approve: options.approve, waitSeconds: options.waitSeconds, waitUntilComplete: options.waitUntilComplete,
+    retryHint: MACHINE_RETRY_HINT, projectRoot,
+  });
   if (result.status === "complete") {
     try { deletePlanState(plan.planId, projectRoot); } catch {
       result.warnings.push("Azure and migration bookkeeping completed, but the old preview could not be removed. The completed execution checkpoint prevents replay.");
@@ -863,11 +868,17 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
  */
 export async function executeProvisionPlan(
   plan: ProvisionPlanData,
-  options: { approve?: boolean; retryHint?: string; projectRoot?: string; waitSeconds?: number; signal?: AbortSignal; pollIntervalMs?: number } = {}
+  options: {
+    approve?: boolean; retryHint?: string; projectRoot?: string; waitSeconds?: number;
+    /** Human CLI only: no overall deadline; each az call stays bounded and the checkpoint stays resumable. */
+    waitUntilComplete?: boolean;
+    signal?: AbortSignal; pollIntervalMs?: number;
+  } = {}
 ): Promise<ApplyProvisionResult> {
   const projectRoot = options.projectRoot ?? process.cwd();
   const retryHint = options.retryHint ?? MACHINE_RETRY_HINT;
-  const waitSeconds = validateWaitSeconds(options.waitSeconds);
+  const waitUntilComplete = options.waitUntilComplete === true && options.waitSeconds === undefined;
+  const waitSeconds = waitUntilComplete ? 0 : validateWaitSeconds(options.waitSeconds);
   if (!options.approve) {
     throw new MachineCommandError(
       "approval-required",
@@ -937,7 +948,7 @@ export async function executeProvisionPlan(
   options.signal?.addEventListener("abort", externalAbort, { once: true });
   if (options.signal?.aborted) controller.abort();
   const signal = controller.signal;
-  const deadline = Date.now() + waitSeconds * 1_000;
+  const deadline = waitUntilComplete ? Number.POSITIVE_INFINITY : Date.now() + waitSeconds * 1_000;
   const persist = () => {
     if (!run) return;
     run.warnings = run.warnings.slice(-20);
@@ -958,6 +969,7 @@ export async function executeProvisionPlan(
       ...(signal.aborted ? {} : { signal }),
       ...(signal.aborted ? { queryTimeoutMs: 5_000 } : {}),
       pollIntervalMs: options.pollIntervalMs,
+      ...(waitUntilComplete ? { transientRetries: UNBOUNDED_WAIT_TRANSIENT_RETRIES } : {}),
       secretValues,
       onObservation: (value) => {
         run!.observation = value;

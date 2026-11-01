@@ -1278,7 +1278,7 @@ pnpm dlx swallowkit provision [options]
 | `--status <runId>` | | Read the original deployment/checkpoint without Azure or ledger writes | |
 | `--resume <runId>` | | Resume the original approved checkpoint; never resubmit an attempted deployment | |
 | `--resume-deployment <name>` | | Recover an older baseline after ARM/non-secure parameter verification; no deployment create | |
-| `--wait-seconds <seconds>` | | Bounded state wait, 0-3600; default 300 for apply/resume, 0 for status | |
+| `--wait-seconds <seconds>` | | Hidden. Optional wait limit, 0-3600. By default provision and `--resume` wait until Azure finishes; status reads once | |
 
 ### Region Selection
 
@@ -1366,10 +1366,10 @@ The tag is checked again immediately before apply and before every migration. A 
 
 ### Waiting and Recovery
 
-Deployments use `--no-wait` plus bounded polling. Running/Accepted returns `in-progress`; an unreadable/missing state returns `blocked` with `outcome: "unknown"`, not an invented Azure failure. Failed/Canceled includes sanitized Azure causes. Succeeded with incomplete tag/ledger updates is `partial`; only completed bookkeeping returns `complete`.
+Deployments use `--no-wait`. Normal `provision` and `provision --resume` poll until Azure finishes and then print resource information and CI/CD settings; machine/MCP apply polls for a bounded time (default 300 seconds). If waiting stops early, Running/Accepted returns `in-progress`; an unreadable/missing state returns `blocked` with `outcome: "unknown"`, not an invented Azure failure. Failed/Canceled includes sanitized Azure causes. Succeeded with incomplete tag/ledger updates is `partial`; only completed bookkeeping returns `complete`.
 
 ```powershell
-pnpm exec swallowkit provision --status <runId> --wait-seconds 300
+pnpm exec swallowkit provision --status <runId>
 pnpm exec swallowkit provision --resume <runId>
 # Machine/MCP equivalent: runId equals original planId
 pnpm exec swallowkit machine inspect provision --plan <runId> --wait-seconds 300

@@ -65,19 +65,19 @@ In non-interactive environments, pass `--location` and `--swa-location`. `--appr
 
 #### Interrupted waiting and partial completion
 
-Bicep is submitted once with `--no-wait`; SwallowKit then polls the original deployment for up to 300 seconds by default. `--wait-seconds` accepts 0-3600. Individual az calls are bounded too. Warning-only stderr with exit 0 is not failure, and excess output is drained/discarded instead of killing az. Diagnostics distinguish exit code, signal, timeout/communication errors and Azure state, with bounded/redacted output and an omission flag. Machine/MCP does not return deployment outputs. Normal CLI retrieves only the named resource-information outputs after success, not credentials or arbitrary outputs.
+Bicep is submitted once with `--no-wait`. Normal `provision` (and `provision --resume`) then keeps polling the original deployment until Azure reaches `Succeeded`, `Failed`, or `Canceled`; there is no overall time limit, so a 10-20 minute deployment completes in one run and then prints resource information and CI/CD settings. Individual az calls are bounded, and brief state-read errors are retried. Machine/MCP apply keeps a bounded wait (default 300 seconds, `--wait-seconds` 0-3600) so agents get a prompt response. Warning-only stderr with exit 0 is not failure, and excess output is drained/discarded instead of killing az. Diagnostics distinguish exit code, signal, timeout/communication errors and Azure state, with bounded/redacted output and an omission flag. Machine/MCP does not return deployment outputs. Normal CLI retrieves only the named resource-information outputs after success, not credentials or arbitrary outputs.
 
-Azure `Running`/`Accepted` returns `in-progress`, not `provision-failed`. An unreadable or not-found deployment returns `unknown` (`blocked`); it is not evidence of Azure failure. Azure `Failed`/`Canceled` reports its sanitized error and failed operation causes. Azure `Succeeded` is only **partial** until the migration tag and local ledger finish.
+If waiting stops early (Ctrl+C, or Azure state stays unreadable), Azure `Running`/`Accepted` is reported as in progress, not `provision-failed`. An unreadable or not-found deployment returns `unknown` (`blocked`); it is not evidence of Azure failure. Azure `Failed`/`Canceled` reports its sanitized error and failed operation causes. Azure `Succeeded` is only **partial** until the migration tag and local ledger finish.
 
 Keep `.swallowkit/state/provision/` and use the displayed run ID (the original plan ID):
 
 ```powershell
-pnpm exec swallowkit provision --status <runId> --wait-seconds 300
-# Explicitly request continuation of the original run:
+pnpm exec swallowkit provision --status <runId>
+# Continue the original run and wait until it finishes:
 pnpm exec swallowkit provision --resume <runId>
 ```
 
-Status/wait is read-only. Resume rechecks the original subscription, deployment ID/correlation, fingerprints and migration checksums. It never re-submits an attempted deployment; it can finish unattempted reviewed steps and tag/ledger bookkeeping. If tag/ledger writes failed after Azure Succeeded, resume that checkpoint rather than redeploying the baseline. Ctrl+C or hard termination may leave Azure running; SwallowKit never cancels/deletes it automatically. A forcibly killed process cannot print a final result, but its pre-write checkpoint supports recovery.
+Status is read-only. Resume rechecks the original subscription, deployment ID/correlation, fingerprints and migration checksums. It never re-submits an attempted deployment; it can finish unattempted reviewed steps and tag/ledger bookkeeping. If tag/ledger writes failed after Azure Succeeded, resume that checkpoint rather than redeploying the baseline. Ctrl+C or hard termination may leave Azure running; SwallowKit never cancels/deletes it automatically. A forcibly killed process cannot print a final result, but its pre-write checkpoint supports recovery.
 
 Cancelling an MCP provision request also stops its local machine child/wait, not the Azure deployment. Inspect the original plan/run ID before resuming; a cancelled or missing MCP response is not evidence of Azure failure.
 
