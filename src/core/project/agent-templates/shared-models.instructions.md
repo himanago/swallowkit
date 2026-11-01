@@ -52,6 +52,13 @@ After changing a model, do not manually patch generated artifacts.
 
 ## After changing a model
 
+- For new persistent models, follow the root `AGENTS.md` model-creation and
+  scaffold infrastructure workflow even when all APIs are custom. A schema
+  alone is not completion: verify container Bicep wiring or migrations and
+  `.swallowkit/artifacts.json`. Non-persistent types and connector-backed
+  models do not require invented Cosmos containers. If generation is omitted,
+  report the reason and unfinished infrastructure; never claim deployability
+  while required persistence infrastructure is missing.
 - The shared package is consumed via its built `dist/`. `verify project`
   rebuilds it automatically, but if you typecheck manually, build the shared
   package first — "no exported member" errors usually mean a stale `dist/`.

@@ -73,6 +73,27 @@ describe("coding-agent instruction contract", () => {
     expect(pnpmDocument).not.toContain("npx swallowkit machine ...");
   });
 
+  it("requires persistence infrastructure regardless of custom APIs without restricting non-persistent types", () => {
+    const agentsMd = buildAgentsMd(representativeContext);
+    expect(agentsMd).toContain("**whether or not it uses custom APIs**");
+    expect(agentsMd).toContain("npx swallowkit create-model <name>");
+    expect(agentsMd).toContain("npx swallowkit machine generate model <name> --overwrite never");
+    expect(agentsMd).toContain("it does not\n   create the Cosmos DB container by itself");
+    expect(agentsMd).toContain("versioned\n   Bicep migrations");
+    expect(agentsMd).toContain(".swallowkit/artifacts.json");
+    expect(agentsMd).toContain("Adding a hand-written schema alone is not completion");
+    expect(agentsMd).toContain("Custom APIs and non-persistent types remain ai-authored");
+    expect(agentsMd).toContain("If generation is omitted, state the reason and unfinished work explicitly");
+    expect(agentsMd).toContain("Never describe a project as deployable");
+    const shared = buildPathSpecificInstructions(representativeContext)[AGENT_TEMPLATE_FILES.sharedModelsInstructions];
+    expect(shared).toContain("even when all APIs are custom");
+    expect(shared).toContain(".swallowkit/artifacts.json");
+    const translation = fs.readFileSync(path.join(repositoryRoot, "docs", "ja", "generated-agent-docs", "AGENTS.ja.md"), "utf-8");
+    expect(translation).toContain("**カスタム API の有無にかかわらず**");
+    expect(translation).toContain("生成を省略する場合は理由と未完了事項を明示");
+    expect(translation).toContain("非永続化型は ai-authored");
+  });
+
   it("keeps Claude and Copilot as self-identifying adapters to canonical AGENTS.md", () => {
     const adapters = [
       buildClaudeMd(representativeContext),
@@ -179,7 +200,7 @@ describe("coding-agent documentation synchronization", () => {
     }
 
     expect(englishGuide).toContain("complete English templates");
-    expect(englishGuide).toContain("not\nabridged excerpts");
+    expect(englishGuide).toMatch(/not\s+abridged excerpts/);
     expect(japaneseGuide).toContain("抜粋ではありません");
   });
 

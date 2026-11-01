@@ -248,6 +248,30 @@ model 変更に関する追加事項:
 <!-- source-section: New Models / CRUD Features -->
 ## 新しい model / CRUD feature
 
+永続化モデルを追加するときは、**カスタム API の有無にかかわらず**、現在の SwallowKit の
+モデル作成・インフラ生成手順を実行してください。手書きのスキーマを追加しただけでは完了ではありません。
+
+1. 現在の capabilities と entities を確認し、`{{runCmd}} swallowkit create-model <name>`、
+   または Agent 向けの同等操作
+   `{{runCmd}} swallowkit machine generate model <name> --overwrite never` を使います。
+   この操作はスキーマ、shared export、モデルのメタデータを作成しますが、
+   Cosmos DB コンテナー自体は作成しません。
+2. ドメインのフィールドを記述し、現在のオプションを確認してモデルの scaffold を plan/apply します。
+   1.x の scaffold は新しい Cosmos DB コンテナーを `infra/migrations/` の versioned Bicep
+   migration として追加し、同ディレクトリの `manifest.json` に記録します。
+   baseline が所有する既存コンテナーは `infra/main.bicep` の組み込みを維持します。
+   コンテナーを重複追加したり、適用済み migration を編集したりしてはなりません。
+3. モデル、コンテナー名と partition key、Bicep の組み込みまたは migration manifest、
+   生成台帳 `.swallowkit/artifacts.json` の対応を検証します。
+   `machine inspect entities`、`machine inspect infra`、`machine inspect drift`、
+   `machine verify project` を実行し、実際のファイルも確認してください。
+   ローカルでの生成・検証は Azure へのデプロイ完了を意味しません。
+
+カスタム API と非永続化型は ai-authored のまま自由に実装できます。Connector-backed モデルは
+connector の手順に従い、不要な Cosmos コンテナーを作らないでください。
+生成を省略する場合は理由と未完了事項を明示してください。必要な永続化インフラがない状態で
+デプロイ可能と案内してはなりません。管理対象のインフラや生成台帳を手で編集してはなりません。
+
 利用可能なら `swallowkit-add-model` Agent Skill を使用してください。
 
 それ以外では `.swallowkit/workflows/` の同等の runbook に従ってください。

@@ -48,7 +48,15 @@ This creates using Bicep templates:
 - Azure Cosmos DB (the Free Tier or Serverless option selected during initialization)
 - Managed Identity (secure service connections)
 
-In non-interactive environments, pass `--location`, `--swa-location`, and `--approve`. Obtain CI/CD secrets with the Azure CLI commands later in this guide.
+In non-interactive environments, pass `--location`, `--swa-location`, and `--approve`.
+After a successful deployment, migration tags, and local ledger update, the human
+`provision` CLI prints resource information and `AZURE_STATIC_WEB_APPS_API_TOKEN`,
+`AZURE_FUNCTIONAPP_NAME`, and `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` (XML).
+Queries are pinned to the deployment's resource group and subscription; if
+`--subscription` is omitted, the active subscription is resolved before planning.
+Credentials are shown only in the human terminal, never stored in project metadata
+or returned through machine/MCP operations. Adoption, no-op, cancellation, and
+failed applies do not retrieve credentials.
 
 ### 3. Push Code
 
@@ -72,6 +80,19 @@ The initial push triggers a CI/CD run that cannot succeed without secrets. Cance
 - **Azure Pipelines**: Go to Pipelines → click the running pipeline → Cancel
 
 #### Step 4-2: Retrieve and register secrets / variables with Azure CLI
+
+Use the values printed by human `provision`. If retrieval fails, returns missing
+or incomplete values, or resource outputs cannot be read, the CLI prints safe
+manual commands instead of claiming credential retrieval succeeded. Do not
+redeploy just to retrieve settings. Use the actual resource names and subscription:
+
+```bash
+az staticwebapp secrets list --name <swa-name> --resource-group my-app-rg --subscription <subscription-id> --query properties.apiKey -o tsv
+az webapp deployment list-publishing-profiles --name <functions-app-name> --resource-group my-app-rg --subscription <subscription-id> --xml
+```
+
+Treat the token and publish profile as secrets; do not commit them or paste them
+into agent prompts, logs, or machine/MCP responses.
 
 ##### For GitHub Actions
 
