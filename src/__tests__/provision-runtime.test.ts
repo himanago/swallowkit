@@ -120,6 +120,7 @@ interface FixtureState {
   submitStderr?: string;
   submitDelay?: number;
   queryMode?: string;
+  transientQueryFailures?: number;
   template: Record<string, unknown>;
   remoteTemplate?: Record<string, unknown>;
   parameters: Record<string, { value: unknown; type?: string }>;
@@ -227,6 +228,53 @@ describe("provision execution, diagnosis and recovery using an az subprocess fix
     expect(result.status).toBe("complete");
     expect(read().deploymentCreates).toBe(1);
   });
+
+  function advanceClock(stepMs: number) {
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    jest.spyOn(Date, "now").mockImplementation(() => realNow() + (offset += stepMs));
+  }
+
+  it("waits past the old bounded budget until Azure finishes when the human CLI asks for completion", async () => {
+    update({ states: ["Accepted", "Running", "Running", "Running", "Running", "Succeeded"] });
+    advanceClock(120_000);
+    const result = await executeProvisionPlan(await planProvisionOperation(options), { approve: true, waitUntilComplete: true, pollIntervalMs: 10 });
+    expect(result).toMatchObject({ status: "complete", outcome: "succeeded" });
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 1 });
+  });
+
+  it("keeps the bounded default wait for machine/MCP apply", async () => {
+    update({ states: ["Accepted", "Running", "Running", "Running", "Running", "Succeeded"] });
+    const plan = await planProvisionOperation(options);
+    advanceClock(120_000);
+    const result = await executeProvisionPlan(plan, { approve: true, pollIntervalMs: 10 });
+    expect(result).toMatchObject({ status: "in-progress", outcome: "in-progress" });
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 0 });
+  });
+
+  it("reports an Azure terminal failure after a long unbounded wait", async () => {
+    update({ states: ["Running", "Running", "Failed"], error: { code: "Conflict", message: "fixture conflict" } });
+    advanceClock(200_000);
+    await expect(executeProvisionPlan(await planProvisionOperation(options), { approve: true, waitUntilComplete: true, pollIntervalMs: 10 }))
+      .rejects.toMatchObject({ code: "azure-deployment-failed", message: expect.stringContaining("Conflict: fixture conflict") });
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 0 });
+  });
+
+  it("rides through transient state-read failures while waiting until completion", async () => {
+    update({ states: ["Running", "Succeeded"] });
+    const plan = await planProvisionOperation(options);
+    update({ transientQueryFailures: 3 });
+    const result = await executeProvisionPlan(plan, { approve: true, waitUntilComplete: true, pollIntervalMs: 10 });
+    expect(result.status).toBe("complete");
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 1 });
+  });
+
+  it("does not poll forever when the submitted deployment never becomes visible", async () => {
+    update({ queryMode: "not-found" });
+    const result = await executeProvisionPlan(await planProvisionOperation(options), { approve: true, waitUntilComplete: true, pollIntervalMs: 1 });
+    expect(result).toMatchObject({ status: "blocked", outcome: "unknown" });
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 0 });
+  }, 60_000);
 
   it.each(["communication", "nonzero", "slow"])("distinguishes local %s from Azure Running", async (submitMode) => {
     update({ submitMode, states: ["Running"] });
@@ -561,6 +609,19 @@ describe("provision execution, diagnosis and recovery using an az subprocess fix
     expect(runner).toHaveBeenCalledWith(["inspect", "provision", "--plan", runId, "--wait-seconds", "0"]);
     expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 0 });
   });
+
+  it("waits for a long normal provision to finish and then prints CI/CD settings", async () => {
+    update({ states: ["Running", "Succeeded"], outputs: { functionsAppName: "func-fixture", staticWebAppName: "swa-fixture" } });
+    advanceClock(400_000);
+    const logs: string[] = [];
+    jest.spyOn(console, "log").mockImplementation((text: unknown) => { logs.push(String(text)); });
+    await runCli(["node", "swallowkit", "provision", "-g", options.resourceGroup, "--location", options.location, "--swa-location", options.swaLocation]);
+    const output = logs.join("\n");
+    expect(output).toContain("Provisioning completed");
+    expect(output).toContain("AZURE_FUNCTIONAPP_NAME: func-fixture");
+    expect(output).not.toMatch(/still in progress|local wait ended|--wait-seconds/);
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 1 });
+  }, 30_000);
 
   it("treats normal provision invocation as consent without an extra prompt or machine instructions", async () => {
     update({ outputs: { functionsAppName: "func-fixture", staticWebAppName: "swa-fixture", apiKey: "secret-not-for-terminal" } });

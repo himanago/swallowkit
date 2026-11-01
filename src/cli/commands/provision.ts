@@ -170,8 +170,8 @@ export function formatProvisionResult(result: ApplyProvisionResult): string {
     lines.push(formatAzureDiagnostic(diagnostic));
   }
   if (result.status !== "complete") {
-    lines.push(`Check/wait: swallowkit provision --status ${result.runId} --wait-seconds 300`);
-    if (result.outcome !== "failed") lines.push(`Resume: swallowkit provision --resume ${result.runId}`);
+    lines.push(`Check status: swallowkit provision --status ${result.runId}`);
+    if (result.outcome !== "failed") lines.push(`Resume and wait until completion: swallowkit provision --resume ${result.runId}`);
     if (result.outcome !== "failed") lines.push("Azure may continue after Ctrl+C or process termination. No Azure cancellation or deletion is performed.");
     else lines.push("Azure reported a terminal failure. Correct its cause before explicitly deploying again; resuming does not repair a failed deployment.");
   }
@@ -222,7 +222,7 @@ export function createProvisionCommand(): Command {
     .option("--status <runId>", "Read an existing execution checkpoint and Azure deployment state without writes")
     .option("--resume <runId>", "Continue the original execution without resubmitting attempted deployments")
     .option("--resume-deployment <name>", "Recover an older untracked baseline deployment after verifying its template and parameters")
-    .option("--wait-seconds <seconds>", "Bounded state wait, 0-3600 seconds (default: 300; status: 0)")
+    .addOption(new Option("--wait-seconds <seconds>", "Optional limit on waiting, 0-3600 seconds (default: wait until Azure finishes; status: 0)").hideHelp())
     .action(async (options: ProvisionCliOptions) => {
       try {
         ensureSwallowKitProject("provision");
@@ -261,6 +261,7 @@ export function createProvisionCommand(): Command {
             planId: options.resume,
             approve: true,
             waitSeconds,
+            waitUntilComplete: waitSeconds === undefined,
           });
           console.log(formatProvisionResult(result));
           await printProvisionSetup(result);
@@ -315,11 +316,13 @@ export function createProvisionCommand(): Command {
 
         console.log(`\n${describeProvisionAction(preview)}`);
         console.log("Deploying Azure infrastructure. Azure resources may incur charges.");
+        console.log("Waiting for the Azure deployment to finish. This often takes 10-20 minutes; resource information and CI/CD settings are shown when it completes.");
 
         const result = await executeProvisionPlan(preview, {
           approve: true,
           retryHint: INTERACTIVE_PROVISION_RETRY_HINT,
           waitSeconds,
+          waitUntilComplete: waitSeconds === undefined,
         });
         console.log(formatProvisionResult(result));
         await printProvisionSetup(result);

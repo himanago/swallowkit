@@ -106,7 +106,8 @@ if (args[0] === "--version") {
   if (!deployment || state.queryMode === "not-found") {
     console.error("ERROR: (DeploymentNotFound) fixture deployment is not visible");
     process.exitCode = 3;
-  } else if (state.queryMode === "communication") {
+  } else if (state.queryMode === "communication" || (state.transientQueryFailures ?? 0) > 0) {
+    if (state.transientQueryFailures) { state.transientQueryFailures -= 1; save(); }
     console.error("ConnectionResetError: fixture status query interrupted");
     process.exitCode = 1;
   } else if (state.queryMode === "invalid") {
