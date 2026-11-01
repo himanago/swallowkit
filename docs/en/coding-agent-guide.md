@@ -173,6 +173,20 @@ separate generated directories.
 
 ## Implementation workflow
 
+For a new persistent model, custom APIs do not exempt it from SwallowKit's
+model-creation and infrastructure workflow. Use `create-model` (or
+`machine generate model`), author fields, then plan/apply scaffold: model creation
+alone does not generate a Cosmos DB container. In 1.x, new containers are versioned
+Bicep migrations under `infra/migrations/`; existing baseline containers retain
+their `infra/main.bicep` wiring. Check the model/container name and partition key,
+migration manifest or baseline wiring, and `.swallowkit/artifacts.json` using
+entities/infra/drift inspection and project verification, plus actual file review.
+Non-persistent types and custom APIs remain ai-authored; connector-backed models
+use their connector workflow. If generation is omitted, state the reason and
+unfinished work; never claim deployability with required infrastructure missing.
+The generated AGENTS contract, shared-model instructions, and add-model Skill/runbook
+carry this rule. Existing projects must update their generated instructions too.
+
 The standard agent workflow is:
 
 ```text

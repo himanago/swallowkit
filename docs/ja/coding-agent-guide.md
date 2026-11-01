@@ -165,6 +165,19 @@ horizontal ticket は、generated directory が別という理由ではなく、
 
 ## Implementation workflow
 
+永続化モデルを追加するときは、カスタム API の有無にかかわらず SwallowKit のモデル作成・
+インフラ生成手順を実行します。`create-model`（または `machine generate model`）で作成し、
+フィールドを記述した後、scaffold を plan/apply してください。モデル作成だけでは Cosmos DB
+コンテナーは生成されません。1.x の新規コンテナーは `infra/migrations/` の versioned Bicep
+migration として追加され、既存の baseline コンテナーは `infra/main.bicep` の組み込みを維持します。
+モデルとコンテナー名・partition key、migration manifest または baseline の組み込み、
+生成台帳 `.swallowkit/artifacts.json` の対応を entities/infra/drift の inspect と project verify、
+実ファイルの確認で検証します。非永続化型とカスタム API は ai-authored のまま自由に実装でき、
+connector-backed モデルは connector の手順に従います。生成を省略する場合は理由と未完了事項を
+明示し、必要なインフラがない状態でデプロイ可能と案内しないでください。
+生成する AGENTS、shared-model instructions、add-model Skill/runbook にもこのルールを記載します。
+既存プロジェクトでも生成済みの指示を更新してください。
+
 Agent の標準 workflow は次のとおりです。
 
 ```text

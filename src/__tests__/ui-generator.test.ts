@@ -22,6 +22,27 @@ const namedAuthOptions = {
   authContextImport: "@/lib/auth/schemes/staff/auth-context",
 };
 
+describe("dynamic route Cache Components compatibility", () => {
+  it.each([undefined, namedAuthOptions])("keeps detail/edit URL hooks below Suspense with auth=%j", (authOptions) => {
+    const model = createBasicModelInfo();
+    for (const [code, page, content] of [
+      [generateDetailPage(model, "@myapp/shared", authOptions), "TodoDetailPage", "TodoDetailContent"],
+      [generateEditPage(model, "@myapp/shared", authOptions), "EditTodoPage", "EditTodoContent"],
+    ]) {
+      expect(code).toContain("import { Suspense, useEffect, useState } from 'react'");
+      const wrapper = code.slice(code.indexOf(`export default function ${page}`), code.indexOf(`function ${content}`));
+      expect(wrapper).toContain("<Suspense fallback=");
+      expect(wrapper).toContain(`<${content} />`);
+      expect(wrapper).not.toContain("useParams()");
+      expect(wrapper).not.toContain("useAuth()");
+      expect(code.slice(code.indexOf(`function ${content}`))).toContain("const params = useParams()");
+      expect(code).toContain("Loading...");
+      expect(code).toContain("fetch(`/api/todo/${id}`)");
+      expect(code).not.toMatch(/export const (dynamic|revalidate|fetchCache|instant)\b/);
+    }
+  });
+});
+
 describe("generateAuthLayout", () => {
   it("uses the same resolved auth context as authenticated CRUD pages", () => {
     const model = createBasicModelInfo({ name: "Product" });

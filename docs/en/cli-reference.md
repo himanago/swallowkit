@@ -1219,6 +1219,14 @@ npx swallowkit dev --seed-env local
 
 Inspect Azure state and either bootstrap the environment or apply pending infrastructure migrations. Existing environments do not normally redeploy `main.bicep`.
 
+After successful deployment/tag/ledger completion, the human CLI displays resource
+information and CI/CD settings: the SWA deployment token, Functions app name, and
+publish profile XML. They are not stored or returned by machine/MCP operations.
+Failed or incomplete retrieval displays scoped manual Azure CLI commands; no-op
+and adoption do not retrieve secrets. See the [deployment guide](./deployment-guide#cicd-setup).
+Without `--subscription`, the active subscription is resolved before planning and
+used explicitly for deployment and settings queries.
+
 ### Usage
 
 ```bash

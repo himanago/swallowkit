@@ -41,6 +41,12 @@ export function buildWorkflowDocs(runCmd: string): WorkflowDoc[] {
 
 Goal: add a data model and derive CRUD/BFF/UI/infra deterministically.
 
+For persistent models, this workflow is required even when all APIs are custom.
+A hand-written schema alone is not completion. Non-persistent types remain
+ai-authored; connector-backed models follow their connector workflow without
+inventing Cosmos containers. If generation is omitted, report the reason and
+unfinished work; never claim deployability with required infrastructure missing.
+
 ## Responsibility boundary
 
 - **You author freely**: the model schema (\`shared/models/<name>.ts\`) and any business logic.
@@ -60,6 +66,13 @@ Goal: add a data model and derive CRUD/BFF/UI/infra deterministically.
 5. Verify:
    \`${runCmd} swallowkit machine verify project\`
    - \`summary.done: false\` → \`${runCmd} swallowkit machine explain failure\` and repair, then re-verify.
+   - Check model/container name and partition key, versioned container
+     migrations in \`infra/migrations/manifest.json\` (or existing baseline-owned
+     container wiring in \`infra/main.bicep\`), and the
+     generation ledger \`.swallowkit/artifacts.json\`. Use \`machine inspect entities\`,
+     \`machine inspect infra\`, and \`machine inspect drift\` and inspect actual files.
+     Model creation alone does not generate containers; scaffold does.
+     Local verification is not proof of Azure deployment.
 6. If \`dev-seeds/\` exists, update seed JSON for the new model. Seeds are only
    applied by \`${runCmd} swallowkit dev --seed-env <environment>\` — editing the
    JSON alone does nothing.

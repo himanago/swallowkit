@@ -254,6 +254,32 @@ Additional model-change facts:
 
 ## New Models / CRUD Features
 
+For every new persistent model, follow the current SwallowKit model-creation
+and infrastructure-generation workflow, **whether or not it uses custom APIs**.
+Adding a hand-written schema alone is not completion.
+
+1. Inspect current capabilities and entities. Use
+   `{{runCmd}} swallowkit create-model <name>` or the agent-facing equivalent
+   `{{runCmd}} swallowkit machine generate model <name> --overwrite never`.
+   This creates the schema, shared export, and model metadata; it does not
+   create the Cosmos DB container by itself.
+2. Author domain fields, then plan/apply scaffold for that model using the
+   current options. In 1.x, scaffold adds new Cosmos DB containers as versioned
+   Bicep migrations under `infra/migrations/`, recorded in its `manifest.json`.
+   Existing baseline-owned containers remain wired in `infra/main.bicep`;
+   do not add duplicate containers or edit applied migrations.
+3. Verify the correspondence between the model, container name/partition key,
+   Bicep wiring or migration manifest, and `.swallowkit/artifacts.json`
+   generation ledger. Use `machine inspect entities`, `machine inspect infra`,
+   `machine inspect drift`, and `machine verify project`; inspect the actual
+   files too. Local generation/verification does not mean Azure was deployed.
+
+Custom APIs and non-persistent types remain ai-authored. Connector-backed
+models follow their connector workflow rather than inventing Cosmos containers.
+If generation is omitted, state the reason and unfinished work explicitly.
+Never describe a project as deployable while required persistence infrastructure
+is missing; do not hand-edit managed infrastructure or the generation ledger.
+
 Use the `swallowkit-add-model` Agent Skill when available.
 
 Otherwise follow the equivalent runbook under `.swallowkit/workflows/`.

@@ -1340,6 +1340,14 @@ npx swallowkit dev --seed-env local
 
 Azure の状態を確認し、初回構築または未適用の Infrastructure Migration を実行します。既存環境では通常 `main.bicep` を再デプロイしません。
 
+デプロイ、タグ、台帳の更新が成功した後、人間向け CLI はリソース情報と CI/CD 設定
+（SWA デプロイトークン、Functions アプリ名、publish profile XML）を表示します。
+これらは保存せず、machine/MCP の応答にも含めません。取得失敗や不完全な出力時には
+取得先を指定した手動 Azure CLI コマンドを表示し、no-op と adoption では秘密情報を取得しません。
+詳細は [デプロイガイド](./deployment-guide#cicd-セットアップ) を参照してください。
+`--subscription` を省略した場合は計画前にアクティブな subscription を確定し、
+デプロイと設定取得に明示的に指定します。
+
 ### 使用法
 
 ```bash

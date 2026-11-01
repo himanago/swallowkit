@@ -1601,8 +1601,6 @@ async function createHomePage(projectDir: string, pm: PackageManager = 'pnpm') {
   
   const pageContent = `'use client'
 
-export const dynamic = 'force-dynamic';
-
 import { useState } from 'react';
 import { scaffoldConfig } from '@/lib/scaffold-config';
 
@@ -3434,4 +3432,3 @@ async function createAzurePipelines(projectDir: string, pm: PackageManager, back
 
   console.log('✅ Azure Pipelines created\n');
 }
-

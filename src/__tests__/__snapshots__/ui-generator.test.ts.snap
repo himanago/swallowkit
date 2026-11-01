@@ -3,7 +3,7 @@
 exports[`generateDetailPage generates detail page (snapshot) 1`] = `
 "'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod/v4';
@@ -13,6 +13,18 @@ import { todoSchema } from '@myapp/shared';
 type Todo = z.infer<typeof todoSchema>;
 
 export default function TodoDetailPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-lg text-gray-900 dark:text-gray-100">Loading...</div>
+      </div>
+    }>
+      <TodoDetailContent />
+    </Suspense>
+  );
+}
+
+function TodoDetailContent() {
   const params = useParams();
   const router = useRouter();
   const [todo, setTodo] = useState<Todo | null>(null);
@@ -142,7 +154,7 @@ export default function TodoDetailPage() {
 exports[`generateEditPage generates edit page (snapshot) 1`] = `
 "'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import TodoForm from '../../_components/TodoForm';
 import { z } from 'zod/v4';
@@ -152,6 +164,18 @@ import { todoSchema } from '@myapp/shared';
 type Todo = z.infer<typeof todoSchema>;
 
 export default function EditTodoPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-lg">Loading...</div>
+      </div>
+    }>
+      <EditTodoContent />
+    </Suspense>
+  );
+}
+
+function EditTodoContent() {
   const params = useParams();
 
   const [todo, setTodo] = useState<Todo | null>(null);

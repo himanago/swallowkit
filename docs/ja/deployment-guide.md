@@ -48,7 +48,14 @@ npx swallowkit provision --resource-group my-app-rg \
 - Azure Cosmos DB（初期化時に選択した Free Tier または Serverless）
 - マネージド ID（サービス間の安全な接続）
 
-非対話環境では `--location`、`--swa-location`、`--approve` を明示してください。CI/CD の secrets は後述の Azure CLI コマンドで取得します。
+非対話環境では `--location`、`--swa-location`、`--approve` を明示してください。
+デプロイ、migration タグ、ローカル台帳の更新が成功すると、人間向けの `provision` CLI は
+リソース情報と `AZURE_STATIC_WEB_APPS_API_TOKEN`、`AZURE_FUNCTIONAPP_NAME`、
+`AZURE_FUNCTIONAPP_PUBLISH_PROFILE`（XML）を表示します。
+取得先はデプロイの resource group と subscription に固定します。`--subscription` を省略した場合は、
+計画前にアクティブな subscription を確定します。認証情報は人間向けのターミナルでのみ表示し、
+プロジェクトのメタデータには保存せず、machine/MCP の応答にも含めません。
+adoption、no-op、キャンセル、apply 失敗時には認証情報を取得しません。
 
 ### 3. コードのプッシュ
 
@@ -72,6 +79,18 @@ git push origin main
 - **Azure Pipelines**: Pipelines → 実行中のパイプラインをクリック → Cancel
 
 #### ステップ 4-2: Azure CLI で secrets / variables を取得して登録
+
+人間向け `provision` が表示した値を使います。取得失敗、値の欠落や不完全な出力、
+リソース情報の取得失敗時には、取得成功と案内せず、安全な手動コマンドを表示します。
+設定の取得だけを目的に再デプロイしないでください。実際のリソース名と subscription を指定します。
+
+```bash
+az staticwebapp secrets list --name <swa-name> --resource-group my-app-rg --subscription <subscription-id> --query properties.apiKey -o tsv
+az webapp deployment list-publishing-profiles --name <functions-app-name> --resource-group my-app-rg --subscription <subscription-id> --xml
+```
+
+トークンと publish profile は秘密情報です。コミットしたり、エージェントへのプロンプト、
+ログ、machine/MCP の応答に貼り付けたりしないでください。
 
 ##### GitHub Actions の場合
 
@@ -144,6 +163,12 @@ pipelines/                   # Azure Pipelines の場合
 ```
 
 ### ワークフローの動作
+
+生成する Next.js ページは Cache Components に対応します。クライアントのホームページでは
+dynamic rendering を強制せず、詳細・編集ページでは実行時の URL フックを Suspense の内側に置き、
+既存のローディング表示を使います。1.1.3 より前に生成したプロジェクトでは scaffold の plan/apply
+差分を確認して対象ページを再生成してください。キャッシュを無効にするのではなく、
+通常の競合・承認手順でカスタム編集を維持します。
 
 **Static Web Apps ワークフロー:**
 - トリガー: `main` ブランチへのプッシュ、`app/**`、`components/**`、`lib/**` の変更
