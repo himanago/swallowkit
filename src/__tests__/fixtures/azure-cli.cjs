@@ -113,6 +113,14 @@ if (args[0] === "--version") {
     process.stdout.write("{invalid JSON");
   } else if (value("--query") === "properties.parameters") {
     emit(state.parameters);
+  } else if (value("--query").includes("properties.outputs.")) {
+    if (state.outputQueryFails) {
+      console.error("ERROR: resource output query failed");
+      process.exitCode = 1;
+    } else {
+      const outputs = state.outputs ?? {};
+      emit(Object.fromEntries(["staticWebAppName", "staticWebAppUrl", "functionsAppName", "functionsAppUrl", "cosmosDbAccountName", "cosmosDatabaseName"].map(key => [key, outputs[key] ?? null])));
+    }
   } else {
     const states = state.states ?? ["Succeeded"];
     const provisioningState = states.length > 1 ? states.shift() : states[0];

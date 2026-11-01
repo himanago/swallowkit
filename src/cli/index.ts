@@ -5,7 +5,7 @@ import { readFileSync } from "fs";
 import * as path from "path";
 import { Command } from "commander";
 import { initCommand, devCommand, devSeedsCommand, scaffoldCommand, createModelCommand } from "./commands";
-import { provisionCommand } from "./commands/provision";
+import { createProvisionCommand } from "./commands/provision";
 import { AzureCliDiagnostic, formatAzureDiagnostic } from "../utils/azure-diagnostics";
 import { createMigrationCommand } from "./commands/create-migration";
 import { migrationsCommand } from "./commands/migrations";
@@ -140,7 +140,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
   program.addCommand(devCommandOverride);
   program.addCommand(devSeedsCommand);
 
-  program.addCommand(provisionCommand);
+  program.addCommand(createProvisionCommand());
   program.addCommand(migrationsCommand);
   program.addCommand(createMigrationCommand);
   program.addCommand(configureMcpCommand);

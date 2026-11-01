@@ -60,6 +60,7 @@ describe("coding-agent instruction contract", () => {
     expect(agentsMd).toContain("machine inspect provision --plan <runId> --wait-seconds 300");
     expect(agentsMd).toContain("outcome: \"succeeded\"");
     expect(agentsMd).toContain("Never re-submit Bicep");
+    expect(agentsMd).toContain("must not switch to normal CLI to bypass it");
     expect(agentsMd).toContain("never bypass its\napproval gate");
   });
 
@@ -91,6 +92,7 @@ describe("coding-agent instruction contract", () => {
       expect(adapter).toContain("planning");
       expect(adapter).toContain("Never hand-edit deterministic SwallowKit-managed artifacts");
       expect(adapter).toContain("SwallowKit verification");
+      expect(adapter).toContain("approval");
     }
   });
 

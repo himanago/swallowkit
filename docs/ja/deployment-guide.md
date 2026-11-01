@@ -50,7 +50,7 @@ npx swallowkit provision --resource-group my-app-rg \
   --location japaneast --swa-location eastasia
 ```
 
-リージョンを省略した場合は対話式に選択します。初回実行では Resource Group が存在しないことを確認して `infra/main.bicep` をデプロイし、migration baseline 0 を Resource Group タグへ記録します。変更の前に Azure の状態、実行内容、Azure CLI コマンドを表示して確認を求めます。確認前のプレビューはメモリ上だけで作り、承認後は Azure への書き込み前に実行チェックポイントを保存します。machine/MCP の保存済み plan も、同じ実行処理を使います。
+リージョンを省略した場合は対話式に選択します。通常の `provision` を実行すること自体がデプロイの指示であり、追加のコマンド承認や machine の plan／apply 操作は不要です。Azure の状態を確認し、初回は `infra/main.bicep` をデプロイして baseline 0 を記録します。成功後にはリソース名・URL と CI/CD 設定手順を表示します。秘密値は自動表示せず、利用者が非公開で取得します。内部のチェックポイントと migration 管理は、送信済み deployment の二重実行や既存アプリ設定の上書きを防ぐために維持します。エージェント向けの machine／MCP は別の入口であり、保存済み plan と明示的な人の承認が必要です。
 
 このコマンドは Bicep テンプレートを使用して以下を作成します:
 - Azure Static Web Apps
@@ -60,11 +60,11 @@ npx swallowkit provision --resource-group my-app-rg \
 
 `az` が見つからないか起動できない場合は、確認を求めずに終了し、Azure には何も変更を加えません。`az-cli-not-found` は PATH に `az` がないこと、`az-cli-not-runnable` は見つかったものの起動できなかったことを示します。サインインしていない場合は `az login` の実行を案内します。原因を解消してから、もう一度 `provision` を実行してください。
 
-非対話環境では `--location`、`--swa-location`、`--approve` を明示してください。CI/CD の secrets は後述の Azure CLI コマンドで取得します。
+非対話環境では `--location` と `--swa-location` を明示してください。`--approve` は互換性のためだけに残しており、通常の provision には不要です。CI/CD の secrets は後述の Azure CLI コマンドで取得します。
 
 #### 待機の中断と部分完了
 
-Bicep は `--no-wait` で一度だけ送信し、その deployment を既定で最大300秒確認します。`--wait-seconds` は0〜3600秒を指定できます。個々の az 呼び出しにも制限があります。stderr に warning があっても exit code が0なら、それだけで失敗にはしません。大量の出力は読み捨て、出力上限で az を停止しません。診断には exit code、signal、timeout／通信エラー、経過時間、出力を省略した事実を含め、キーや token などを伏せます。deployment outputs の値は返しません。
+Bicep は `--no-wait` で一度だけ送信し、その deployment を既定で最大300秒確認します。`--wait-seconds` は0〜3600秒を指定できます。個々の az 呼び出しにも制限があります。stderr に warning があっても exit code が0なら、それだけで失敗にはしません。大量の出力は読み捨て、出力上限で az を停止しません。診断には exit code、signal、timeout／通信エラー、経過時間、出力を省略した事実を含め、キーや token などを伏せます。machine／MCP は deployment outputs を返しません。通常 CLI は成功後に決められたリソース情報だけを取得し、任意の outputs や認証情報は表示しません。
 
 Azure が `Running`／`Accepted` なら `in-progress` です。照会できない場合や DeploymentNotFound は `unknown`（`blocked`）であり、Azure の失敗を意味しません。`Failed`／`Canceled` では、秘密を伏せた Azure のエラーと deployment operations の原因を示します。`Succeeded` でも migration tag とローカル ledger が未完了なら、全体は **partial** です。
 
@@ -72,8 +72,8 @@ Azure が `Running`／`Accepted` なら `in-progress` です。照会できな�
 
 ```powershell
 pnpm exec swallowkit provision --status <runId> --wait-seconds 300
-# 元の実行内容を確認し、残りの処理を承認した後だけ実行:
-pnpm exec swallowkit provision --resume <runId> --approve
+# 元の実行の続行を明示的に指示:
+pnpm exec swallowkit provision --resume <runId>
 ```
 
 status／待機は読み取り専用です。再開では元の subscription、deployment ID／correlation、fingerprint、migration checksum を再確認し、送信済み deployment を再送しません。未実行の承認済み処理と tag／ledger 更新だけを続けます。Azure 成功後に記録処理が失敗しても、baseline を再デプロイせず、このチェックポイントから記録を完了してください。Ctrl+C や強制終了後も Azure が続く場合があります。自動でキャンセル・削除はしません。強制終了では終了結果を表示できませんが、書き込み前のチェックポイントから復旧できます。
@@ -89,7 +89,9 @@ az deployment group show --resource-group <original-rg> --name swallowkit-baseli
 pnpm exec swallowkit provision -g <original-rg> --subscription <original-subscription> --location japaneast --swa-location eastasia --resume-deployment swallowkit-baseline
 ```
 
-この復旧オプションを含む修正版 CLI で、元のローカル Bicep／parameters と既存 deployment の ARM template／非 secret parameters の一致を確認します。確認後は照会と tag 更新だけのプレビューを表示し、承認を求めます。deployment create は送りません。Running なら追跡を続け、Succeeded 後に tag／ledger を記録します。不一致、照会不能、secure parameters、legacy manifest、baseline 以外の未追跡 migration は推測せず停止します。元の確認済みファイルを復元し、manifest の置き換えやチェックの回避はしないでください。Azure の生のエラーを共有する前には、秘密がないか確認してください。
+この復旧オプションを含む修正版 CLI で、元のローカル Bicep／parameters と既存 deployment の ARM template／非 secret parameters の一致を確認し、照会と記録処理だけを進めます。deployment create は送りません。Running なら追跡を続け、Succeeded 後に tag／ledger を記録します。不一致、照会不能、secure parameters、legacy manifest、baseline 以外の未追跡 migration は推測せず停止します。元の確認済みファイルを復元し、manifest の置き換えやチェックの回避はしないでください。Azure の生のエラーを共有する前には、秘密がないか確認してください。
+
+Azure が terminal `Failed` を返した場合は、ローカルの待機中断とは別の障害です。Cosmos module の失敗は Azure Portal でその module の deployment operations を確認してください。`NotFound: Request url is invalid` だけでは原因を特定できません。生成される Cosmos の名前は `cosmos-<projectName>` で、Azure 全体で一意である必要があります。Resource Group だけ変えてもアカウント名は変わりません。再デプロイ前に既存アカウント名を確認し、再試行のためだけに稼働中アカウントを削除・改名しないでください。[Azure の命名規則](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/resource-name-rules#microsoftdocumentdb)も参照してください。
 
 ### 3. コードのプッシュ
 
