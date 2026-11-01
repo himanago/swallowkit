@@ -26,6 +26,8 @@ import {
   getStaticWebAppSku,
   withNpmLockfileSafeManifests,
 } from "../cli/commands/init";
+import { generateModelContainerMigration, initializeLegacyMigrations } from "../core/operations/migration-generator";
+import { FileOperationSession } from "../core/operations/file-session";
 
 describe("injectSwallowKitNextConfig", () => {
   it("adds standalone settings without deprecated experimental options", () => {
@@ -374,6 +376,63 @@ describe("Infrastructure generation", () => {
       });
     },
   );
+
+  it("derives globally unique Cosmos DB and Function App names from the resource group", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-infra-names-"));
+    try {
+      await createInfrastructure(projectDir, "sample-app", {
+        cosmosDbMode: "freetier", vnetOption: "none", swaPlan: "free",
+      }, "typescript");
+      const mainBicep = fs.readFileSync(path.join(projectDir, "infra", "main.bicep"), "utf-8");
+
+      expect(mainBicep).toContain("var resourceSuffix = take(uniqueString(resourceGroup().id, projectName), 6)");
+      expect(mainBicep).toContain("var cosmosAccountName = 'cosmos-${take(toLower(projectName), 30)}-${resourceSuffix}'");
+      expect(mainBicep).toContain("var functionsAppName = 'func-${take(projectName, 40)}-${resourceSuffix}'");
+      expect(mainBicep.match(/accountName: cosmosAccountName/g)).toHaveLength(2);
+      expect(mainBicep).toContain("name: functionsAppName");
+      expect(mainBicep).not.toContain("'cosmos-${projectName}'");
+      expect(mainBicep).not.toContain("'func-${projectName}'");
+      // Azure limits: Cosmos DB account <= 44 chars, Function App <= 60 chars.
+      expect("cosmos-".length + 30 + 1 + 6).toBeLessThanOrEqual(44);
+      expect("func-".length + 40 + 1 + 6).toBeLessThanOrEqual(60);
+
+      const migration = generateModelContainerMigration(
+        { name: "Todo", partitionKey: "/id" },
+        new FileOperationSession("commit", projectDir)
+      );
+      const migrationBicep = fs.readFileSync(path.join(projectDir, migration!.template), "utf-8");
+      expect(migrationBicep).toContain(
+        "name: 'cosmos-${take(toLower(projectName), 30)}-${take(uniqueString(resourceGroup().id, projectName), 6)}'"
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the original Cosmos DB account name in model migrations for projects without suffixed names", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-infra-legacy-names-"));
+    try {
+      await createInfrastructure(projectDir, "sample-app", {
+        cosmosDbMode: "freetier", vnetOption: "none", swaPlan: "free",
+      }, "typescript");
+      const mainPath = path.join(projectDir, "infra", "main.bicep");
+      const legacyMain = fs.readFileSync(mainPath, "utf-8")
+        .replace(/^var (resourceSuffix|cosmosAccountName|functionsAppName) = .*\r?\n/gm, "")
+        .replace(/accountName: cosmosAccountName/g, "accountName: 'cosmos-${projectName}'")
+        .replace("name: functionsAppName", "name: 'func-${projectName}'");
+      fs.writeFileSync(mainPath, legacyMain);
+      initializeLegacyMigrations(projectDir);
+
+      const migration = generateModelContainerMigration(
+        { name: "Todo", partitionKey: "/id" },
+        new FileOperationSession("commit", projectDir)
+      );
+      const migrationBicep = fs.readFileSync(path.join(projectDir, migration!.template), "utf-8");
+      expect(migrationBicep).toContain("name: 'cosmos-${projectName}'");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("GitHub Actions workflow generation", () => {
