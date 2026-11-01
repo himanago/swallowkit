@@ -57,6 +57,9 @@ describe("coding-agent instruction contract", () => {
     expect(agentsMd).toContain("Verification Is a Completion Gate");
     expect(agentsMd).toContain("semantic code review answers different questions");
     expect(agentsMd).toContain("When the status is `requires-human`, stop");
+    expect(agentsMd).toContain("machine inspect provision --plan <runId> --wait-seconds 300");
+    expect(agentsMd).toContain("outcome: \"succeeded\"");
+    expect(agentsMd).toContain("Never re-submit Bicep");
     expect(agentsMd).toContain("never bypass its\napproval gate");
   });
 

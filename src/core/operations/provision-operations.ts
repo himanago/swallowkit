@@ -1,9 +1,7 @@
 /**
  * Plan / Apply Provision — Azure プロビジョニングの事前計画と承認付き実行。
  *
- * - plan provision: ローカルの決定論的プリフライト(Bicep 解析・az CLI 有無)のみ。
- *   ネットワークアクセスや az login を必要とする操作は行わない。
- *   --what-if を明示した場合のみ az deployment group what-if を実行する。
+ * - plan provision: Bicep と Azure の現在の状態を確認する。リソースは変更しない。
  * - apply provision: 常に承認(--approve)必須。承認なしでは requires-human で停止する。
  * - 対話的な `swallowkit provision` は同じ計画をメモリ上で作成・表示し、確認後に
  *   executeProvisionPlan で同じ安全確認を経て実行する(計画ファイルは保存しない)。
@@ -11,13 +9,19 @@
 
 import * as crypto from "crypto";
 import * as fs from "fs";
-import { AzCliAvailability, checkAzCliAvailability, runAzCli } from "../../utils/azure-cli";
+import { AzCliAvailability, AzCliResult, checkAzCliAvailability, runAzCli, runAzCliAsync } from "../../utils/azure-cli";
+import { AzureCliDiagnostic, azureCliDiagnostic, redactAzureText } from "../../utils/azure-diagnostics";
 import * as path from "path";
 import { MachineCommandError } from "../../machine/errors";
+import type { MachineNextAction, MachineOperationStatus } from "../../machine/contracts";
 import { getSwallowKitVersion } from "../../version";
 import { inspectInfra, InfraInspection } from "../project/infra";
-import { deletePlanState, loadPlanState, savePlanState } from "../project/state";
+import { deletePlanState, listProvisionRuns, loadPlanState, loadProvisionRun, lockProvisionTarget, savePlanState, saveProvisionRun } from "../project/state";
 import { hashFileIfExists } from "./file-session";
+import {
+  DEFAULT_PROVISION_WAIT_SECONDS, DEPLOYMENT_QUERY, DeploymentObservation, DeploymentReference,
+  MAX_PROVISION_WAIT_SECONDS, queryAzureDeployment, queryDeploymentOperationErrors, waitForAzureDeployment,
+} from "./provision-deployment";
 import {
   MIGRATION_MANIFEST_PATH,
   MigrationManifest,
@@ -49,9 +53,11 @@ export interface PlanProvisionOptions {
   adoptExisting?: boolean;
   baseline?: number;
   reconcile?: boolean;
+  /** Attach an existing, matching baseline deployment without submitting Bicep again. */
+  resumeDeployment?: string;
 }
 
-export type ProvisionMode = "offline" | "bootstrap" | "adoption-required" | "adopt" | "migrate" | "noop" | "reconcile";
+export type ProvisionMode = "offline" | "bootstrap" | "adoption-required" | "adopt" | "migrate" | "noop" | "reconcile" | "recover";
 
 interface ProvisionCommand {
   file: "az";
@@ -85,6 +91,7 @@ export interface ProvisionPlanData {
   requiresApproval: true;
   fingerprints: Record<string, string | null>;
   baselineSnapshotChecksum?: string;
+  recoveryDeployment?: DeploymentReference;
 }
 
 function validateProvisionInputs(options: PlanProvisionOptions): void {
@@ -112,6 +119,9 @@ function validateProvisionInputs(options: PlanProvisionOptions): void {
       "failed"
     );
   }
+  if (options.resumeDeployment && (!/^[A-Za-z0-9._()-]{1,64}$/.test(options.resumeDeployment) || options.reconcile || options.adoptExisting)) {
+    throw new MachineCommandError("invalid-arguments", "--resume-deployment requires a valid deployment name and cannot be combined with adoption or reconcile.", undefined, "blocked");
+  }
 }
 
 function azCliUnavailableWarning(availability: Exclude<AzCliAvailability, { available: true }>): string {
@@ -124,32 +134,22 @@ function displayCommand(command: ProvisionCommand): string {
   return [command.file, ...command.args.map((arg) => /\s/.test(arg) ? JSON.stringify(arg) : arg)].join(" ");
 }
 
-interface AzResult {
-  status: number | null;
-  stdout: string;
-  stderr: string;
+function runAz(args: string[], timeout = 60_000): AzCliResult {
+  return runAzCli(args, { timeout });
 }
 
-function runAz(args: string[], timeout = 300_000): AzResult {
-  const result = runAzCli(args, { timeout });
-  return {
-    status: result.status,
-    stdout: result.stdout,
-    stderr: result.stderr || (result.error ? result.error.message : ""),
-  };
-}
-
-function azQueryError(code: string, message: string, result: AzResult): MachineCommandError {
-  const output = (result.stderr || result.stdout || "").trim();
+function azQueryError(code: string, message: string, result: AzCliResult, secretValues: readonly string[] = []): MachineCommandError {
+  const diagnostic = azureCliDiagnostic(result, "azure-state", secretValues);
+  const output = (diagnostic.stderr || diagnostic.stdout).trim().slice(0, 2_000);
   if (/az login|not logged in|AADSTS|expired/i.test(output)) {
     return new MachineCommandError(
       "az-not-logged-in",
       `Azure CLI is not signed in (or the session expired). Run "az login", then try again.\n${output.slice(0, 1000)}`,
-      undefined,
+      { diagnostic },
       "requires-human"
     );
   }
-  return new MachineCommandError(code, `${message}: ${output}`, undefined, "blocked");
+  return new MachineCommandError(code, `${message}: ${output || result.errorCode || result.failureKind || `exit ${result.status}`}`, { diagnostic }, "blocked");
 }
 
 function subscriptionArgs(subscription?: string): string[] {
@@ -158,10 +158,10 @@ function subscriptionArgs(subscription?: string): string[] {
 
 function buildBootstrapCommands(options: PlanProvisionOptions, mainBicepPath: string, parametersPath: string): ProvisionCommand[] {
   const commands: ProvisionCommand[] = [];
-  commands.push({ file: "az", args: ["group", "create", "--name", options.resourceGroup, "--location", options.location, ...subscriptionArgs(options.subscription)], kind: "resource-group" });
+  commands.push({ file: "az", args: ["group", "create", "--name", options.resourceGroup, "--location", options.location, ...subscriptionArgs(options.subscription), "--query", "id", "-o", "json"], kind: "resource-group" });
   commands.push({
     file: "az",
-    args: ["deployment", "group", "create", "--name", "swallowkit-baseline", "--resource-group", options.resourceGroup, "--template-file", mainBicepPath, "--parameters", parametersPath, "--parameters", `location=${options.location}`, `swaLocation=${options.swaLocation}`, ...subscriptionArgs(options.subscription)],
+    args: ["deployment", "group", "create", "--name", "swallowkit-baseline", "--resource-group", options.resourceGroup, "--template-file", mainBicepPath, "--parameters", parametersPath, "--parameters", `location=${options.location}`, `swaLocation=${options.swaLocation}`, ...subscriptionArgs(options.subscription), "--no-wait", "--query", DEPLOYMENT_QUERY, "-o", "json"],
     kind: "deployment",
   });
   return commands;
@@ -186,24 +186,30 @@ interface RemoteGroupState {
 
 function inspectRemoteGroup(options: PlanProvisionOptions): RemoteGroupState {
   const existsResult = runAz(["group", "exists", "--name", options.resourceGroup, ...subscriptionArgs(options.subscription)], 60_000);
-  if (existsResult.status !== 0) {
+  if (existsResult.status !== 0 || existsResult.failureKind || !/^(true|false)$/.test(existsResult.stdout.trim())) {
     throw azQueryError("azure-state-query-failed", "Could not query resource group", existsResult);
   }
   if ((existsResult.stdout || "").trim() !== "true") return { exists: false, tags: {} };
   const showResult = runAz(["group", "show", "--name", options.resourceGroup, ...subscriptionArgs(options.subscription), "--query", "{id:id,tags:tags}", "-o", "json"], 60_000);
-  if (showResult.status !== 0) {
+  if (showResult.status !== 0 || showResult.failureKind || showResult.stdoutTruncated) {
     throw azQueryError("azure-state-query-failed", "Could not read resource group tags", showResult);
   }
-  const parsed = JSON.parse(showResult.stdout || "{}");
+  let parsed: { id?: string; tags?: Record<string, string> };
+  try { parsed = JSON.parse(showResult.stdout); } catch {
+    throw azQueryError("azure-state-query-failed", "Invalid resource group response", showResult);
+  }
+  if (!parsed || typeof parsed.id !== "string") {
+    throw azQueryError("azure-state-query-failed", "Invalid resource group identity", showResult);
+  }
   return { exists: true, id: parsed.id, tags: parsed.tags ?? {} };
 }
 
 function tagCommand(resourceId: string, key: string, state: MigrationState, expectedState: MigrationState | null): ProvisionCommand {
-  return { file: "az", args: ["tag", "update", "--resource-id", resourceId, "--operation", "Merge", "--tags", `${key}=${encodeMigrationState(state)}`], kind: "tag", expectedState };
+  return { file: "az", args: ["tag", "update", "--resource-id", resourceId, "--operation", "Merge", "--tags", `${key}=${encodeMigrationState(state)}`, "-o", "none"], kind: "tag", expectedState };
 }
 
 function bootstrapTagCommand(options: PlanProvisionOptions, key: string, state: MigrationState): ProvisionCommand {
-  return { file: "az", args: ["group", "update", "--name", options.resourceGroup, "--set", `tags.${key}=${encodeMigrationState(state)}`, ...subscriptionArgs(options.subscription)], kind: "tag", expectedState: null };
+  return { file: "az", args: ["group", "update", "--name", options.resourceGroup, "--set", `tags.${key}=${encodeMigrationState(state)}`, ...subscriptionArgs(options.subscription), "-o", "none"], kind: "tag", expectedState: null };
 }
 
 function runBaseWhatIf(options: PlanProvisionOptions, mainBicepPath: string, parametersPath: string): string {
@@ -219,7 +225,7 @@ function runBaseWhatIf(options: PlanProvisionOptions, mainBicepPath: string, par
     "-o", "json",
   ]);
   if (result.status !== 0) {
-    throw new MachineCommandError("what-if-failed", `az deployment group what-if failed: ${(result.stderr || result.stdout).trim().slice(0, 2000)}`, undefined, "blocked");
+    throw azQueryError("what-if-failed", "az deployment group what-if failed", result);
   }
   return result.stdout.trim();
 }
@@ -240,6 +246,90 @@ function assertAdoptionWhatIfIsSafe(whatIfResult: string): void {
     if (error instanceof MachineCommandError) throw error;
     throw new MachineCommandError("what-if-invalid", "Azure what-if did not return valid JSON for legacy adoption.", undefined, "blocked");
   }
+}
+
+function resolveSubscription(options: PlanProvisionOptions): string {
+  if (options.subscription) return options.subscription;
+  const result = runAz(["account", "show", "--query", "id", "-o", "tsv"]);
+  const subscription = result.stdout.trim();
+  if (result.status !== 0 || !SUBSCRIPTION_PATTERN.test(subscription)) {
+    throw azQueryError("azure-subscription-query-failed", "Could not identify the Azure subscription for this provision run", result);
+  }
+  return subscription;
+}
+
+function canonicalTemplate(value: unknown): string {
+  const normalize = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(normalize);
+    if (item && typeof item === "object") {
+      return Object.fromEntries(Object.entries(item).filter(([key]) => key !== "_generator")
+        .sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, normalize(entry)]));
+    }
+    return item;
+  };
+  return JSON.stringify(normalize(value));
+}
+
+async function verifyExistingBaseline(
+  options: PlanProvisionOptions,
+  mainBicepPath: string,
+  parametersPath: string
+): Promise<DeploymentReference> {
+  const projectRoot = path.dirname(path.dirname(mainBicepPath));
+  const secretValues = provisionSecretValues({
+    fingerprints: Object.fromEntries(collectLegacyBaselineFiles(projectRoot).map(file => [file.path, file.checksum])),
+  }, projectRoot);
+  const reference: DeploymentReference = {
+    subscription: options.subscription!, resourceGroup: options.resourceGroup, name: options.resumeDeployment!,
+  };
+  const observation = await queryAzureDeployment(reference, { secretValues });
+  if (observation.state === "unknown") {
+    throw new MachineCommandError("recovery-deployment-unknown", "The existing deployment could not be identified. No Bicep will be submitted.", { deployment: observation }, "blocked");
+  }
+  const compiled = await runAzCliAsync(["bicep", "build", "--file", mainBicepPath, "--stdout"], { timeout: 60_000, captureBytes: 16_777_216 });
+  const exported = await runAzCliAsync([
+    "deployment", "group", "export", "--name", reference.name,
+    "--resource-group", reference.resourceGroup, "--subscription", reference.subscription,
+  ], { timeout: 60_000, captureBytes: 16_777_216 });
+  const parameters = await runAzCliAsync([
+    "deployment", "group", "show", "--name", reference.name, "--resource-group", reference.resourceGroup,
+    "--subscription", reference.subscription, "--query", "properties.parameters", "-o", "json",
+  ], { timeout: 30_000 });
+  if ([compiled, exported, parameters].some((result) => result.status !== 0 || result.failureKind || result.stdoutTruncated)) {
+    throw new MachineCommandError("recovery-evidence-unavailable", "Recovery requires the existing deployment template and parameters to match the local baseline. Evidence could not be read; nothing will be redeployed.", {
+      diagnostics: [compiled, exported, parameters].map((result, index) => ({
+        ...azureCliDiagnostic(result, ["local-bicep-build", "recovery-template", "recovery-parameters"][index], secretValues),
+        stdout: "[template/parameter payload omitted]", stderr: "[template/parameter payload omitted]", outputTruncated: true,
+      })),
+    }, "blocked");
+  }
+  let template: Record<string, unknown>;
+  let remoteParameters: Record<string, { type?: string; value?: unknown }>;
+  let localParameters: Record<string, { value?: unknown }>;
+  try {
+    template = JSON.parse(compiled.stdout) as Record<string, unknown>;
+    if (canonicalTemplate(template) !== canonicalTemplate(JSON.parse(exported.stdout))) {
+      throw new MachineCommandError("recovery-template-mismatch", "The deployed ARM template differs from the local Bicep. Restore the matching reviewed files before recovery; do not redeploy to repair migration bookkeeping.", undefined, "blocked");
+    }
+    remoteParameters = JSON.parse(parameters.stdout) as Record<string, { type?: string; value?: unknown }>;
+    localParameters = JSON.parse(fs.readFileSync(parametersPath, "utf-8")).parameters as Record<string, { value?: unknown }>;
+    if (!remoteParameters || !localParameters || typeof remoteParameters !== "object" || typeof localParameters !== "object") throw new Error("Invalid parameters");
+  } catch (error) {
+    if (error instanceof MachineCommandError) throw error;
+    throw new MachineCommandError("recovery-invalid-evidence", "Recovery template/parameter evidence is not valid JSON.", undefined, "blocked");
+  }
+  const declarations = template.parameters as Record<string, { type?: string }> | undefined;
+  if (Object.values(declarations ?? {}).some((parameter) => /^secure/i.test(parameter.type ?? ""))) {
+    throw new MachineCommandError("recovery-secure-parameters", "This untracked deployment has secure parameters that cannot be verified. Recovery requires the original execution checkpoint; no secret values will be requested or printed.", undefined, "blocked");
+  }
+  const expected = { ...localParameters, location: { value: options.location }, swaLocation: { value: options.swaLocation } };
+  for (const [name, parameter] of Object.entries(expected)) {
+    if (!parameter || !Object.prototype.hasOwnProperty.call(parameter, "value")
+      || canonicalTemplate(parameter.value) !== canonicalTemplate(remoteParameters[name]?.value)) {
+      throw new MachineCommandError("recovery-parameters-mismatch", "The deployed parameters differ from the local reviewed parameters/regions. No tag or ledger will be changed.", undefined, "blocked");
+    }
+  }
+  return observation.reference;
 }
 
 /**
@@ -284,6 +374,7 @@ export async function planProvisionOperation(
   let whatIfResult: string | undefined;
   let manifestAfterApply: MigrationManifest | undefined;
   let baselineDrift: string[] = [];
+  let recoveryDeployment: DeploymentReference | undefined;
 
   const manifestPath = path.join(projectRoot, MIGRATION_MANIFEST_PATH);
   const manifest = fs.existsSync(manifestPath) ? loadMigrationManifest(projectRoot) : null;
@@ -300,6 +391,18 @@ export async function planProvisionOperation(
   }
 
   if (azCliAvailable) {
+    options = { ...options, subscription: resolveSubscription(options) };
+    const unfinished = readRuns(projectRoot).find((run) =>
+      run.outcome !== "succeeded" && run.outcome !== "failed" && run.plan.resourceGroup === options.resourceGroup
+      && run.plan.subscription === options.subscription);
+    if (unfinished) {
+      throw new MachineCommandError(
+        "provision-run-pending",
+        `Provision run ${unfinished.runId} is unfinished. Inspect or resume that run instead of submitting Bicep again.`,
+        { runId: unfinished.runId, outcome: unfinished.outcome },
+        "blocked", provisionNextActions(unfinished.runId)
+      );
+    }
     const remoteGroup = inspectRemoteGroup(options);
     if (!manifest) {
       if (remoteGroup.exists) {
@@ -314,7 +417,32 @@ export async function planProvisionOperation(
     }
 
     migrationTagKey = getMigrationTagKey(manifest.projectId);
-    if (!remoteGroup.exists) {
+    if (options.resumeDeployment) {
+      if (!remoteGroup.exists || manifest.baseline.legacy) {
+        throw new MachineCommandError("recovery-baseline-required", "--resume-deployment requires an existing resource group and the original non-legacy baseline manifest.", undefined, "blocked");
+      }
+      const tagValue = remoteGroup.tags[migrationTagKey];
+      remoteState = tagValue ? decodeMigrationState(tagValue) : null;
+      if (remoteState && remoteState.version !== 0) {
+        throw new MachineCommandError("recovery-baseline-only", "Untracked-deployment recovery supports baseline 0 only. Use the original checkpoint to resume migrations.", undefined, "blocked");
+      }
+      recoveryDeployment = await verifyExistingBaseline(options, mainBicepPath, parametersPath);
+      const baselineFiles = collectLegacyBaselineFiles(projectRoot);
+      manifestAfterApply = {
+        ...manifest,
+        baseline: { ...manifest.baseline, files: baselineFiles, checksum: computeBaselineChecksum(baselineFiles) },
+      };
+      if (remoteState && remoteState.checksum !== manifestAfterApply.baseline.checksum) {
+        throw new MachineCommandError("recovery-checksum-mismatch", "The existing baseline tag does not match this project. Nothing will be overwritten.", undefined, "blocked");
+      }
+      mode = "recover";
+      warnings.push("Recovery only observes the matching existing deployment, then records migration state after Azure Succeeded. It never submits Bicep.");
+      commandSpecs = [{
+        file: "az",
+        args: ["deployment", "group", "show", "--name", recoveryDeployment.name, "--resource-group", options.resourceGroup, ...subscriptionArgs(options.subscription), "--query", DEPLOYMENT_QUERY, "-o", "json"],
+        kind: "deployment",
+      }, tagCommand(remoteGroup.id!, migrationTagKey, { schemaVersion: 1, version: 0, checksum: manifestAfterApply.baseline.checksum }, remoteState)];
+    } else if (!remoteGroup.exists) {
       mode = "bootstrap";
       const baselineFiles = collectLegacyBaselineFiles(projectRoot);
       manifestAfterApply = {
@@ -340,7 +468,7 @@ export async function planProvisionOperation(
         commandSpecs = [];
         if (options.reconcile && !manifest.baseline.legacy) {
           whatIfResult = runBaseWhatIf(options, mainBicepPath, parametersPath);
-          warnings.push("Recovering an interrupted bootstrap by reconciling the baseline before recording migration state.");
+          warnings.push("Explicit reconcile redeploys the untagged baseline. For an interrupted wait/tag/ledger update use --resume-deployment instead.");
           mode = "reconcile";
           const baselineFiles = collectLegacyBaselineFiles(projectRoot);
           manifestAfterApply = {
@@ -398,12 +526,13 @@ export async function planProvisionOperation(
             file: "az",
             args: [
               "deployment", "group", "create",
-              "--name", "swallowkit-migration",
+              "--name", `swallowkit-migration-${migration.version}-${migration.checksum.slice(0, 12)}`,
               "--resource-group", options.resourceGroup,
               "--template-file", path.join(projectRoot, migration.template),
               ...(migration.parameters ? ["--parameters", path.join(projectRoot, migration.parameters)] : []),
               "--parameters", `projectName=${projectName}`, `location=${options.location}`,
               ...subscriptionArgs(options.subscription),
+              "--no-wait", "--query", DEPLOYMENT_QUERY, "-o", "json",
             ],
             kind: "migration",
             expectedState,
@@ -414,11 +543,11 @@ export async function planProvisionOperation(
         }
       }
     }
-  } else if (options.whatIf || options.adoptExisting || options.reconcile) {
+  } else if (options.whatIf || options.adoptExisting || options.reconcile || options.resumeDeployment) {
     const detail = azCli.available ? "" : ` ${azCliUnavailableWarning(azCli)}`;
     throw new MachineCommandError(
       !azCli.available && azCli.reason === "not-runnable" ? "az-cli-not-runnable" : "az-cli-not-found",
-      `Azure CLI is required for --what-if, --adopt-existing, and --reconcile.${detail}`,
+      `Azure CLI is required for --what-if, --adopt-existing, --reconcile, and --resume-deployment.${detail}`,
       undefined,
       "blocked"
     );
@@ -453,6 +582,8 @@ export async function planProvisionOperation(
         mode,
         remoteState,
         pendingMigrations: pendingMigrations.map((migration) => ({ version: migration.version, checksum: migration.checksum })),
+        recoveryDeployment,
+        nonce: crypto.randomUUID(),
         baselineSnapshotChecksum,
         fingerprints,
       })
@@ -483,6 +614,7 @@ export async function planProvisionOperation(
     requiresApproval: true,
     fingerprints,
     ...(baselineSnapshotChecksum ? { baselineSnapshotChecksum } : {}),
+    ...(recoveryDeployment ? { recoveryDeployment } : {}),
   };
 
   if (planOptions.persist !== false) savePlanState(plan, projectRoot);
@@ -492,67 +624,221 @@ export async function planProvisionOperation(
 export interface ApplyProvisionOptions {
   planId: string;
   approve?: boolean;
+  waitSeconds?: number;
 }
 
 export interface ApplyProvisionResult {
+  status: MachineOperationStatus;
+  outcome: "succeeded" | "in-progress" | "unknown" | "partial" | "failed";
+  runId: string;
   planId: string;
   resourceGroup: string;
   location: string;
   swaLocation: string;
   executedCommands: string[];
-  deploymentOutputs?: Record<string, unknown>;
   warnings: string[];
+  diagnostics: AzureCliDiagnostic[];
+  deployment?: DeploymentObservation;
+  nextActions: MachineNextAction[];
+  interrupted?: NodeJS.Signals;
+}
+
+export interface ProvisionRun {
+  schemaVersion: 1;
+  runId: string;
+  projectRoot: string;
+  plan: ProvisionPlanData;
+  cursor: number;
+  attemptedIndex?: number;
+  deployment?: DeploymentReference;
+  observation?: DeploymentObservation;
+  outcome: ApplyProvisionResult["outcome"];
+  executedCommands: string[];
+  warnings: string[];
+  diagnostics: AzureCliDiagnostic[];
+  updatedAt: string;
 }
 
 function statesEqual(left: MigrationState | null | undefined, right: MigrationState | null | undefined): boolean {
   return left?.version === right?.version && left?.checksum === right?.checksum;
 }
 
-function readRemoteMigrationState(plan: ProvisionPlanData): { group: RemoteGroupState; state: MigrationState | null } {
-  const group = inspectRemoteGroup(plan);
-  if (!group.exists || !plan.migrationTagKey) return { group, state: null };
-  const tagValue = group.tags[plan.migrationTagKey];
-  return { group, state: tagValue ? decodeMigrationState(tagValue) : null };
-}
-
-function assertPlanRemoteState(plan: ProvisionPlanData, expected: MigrationState | null | undefined, retryHint: string): void {
-  if (plan.mode === "offline") return;
-  const current = readRemoteMigrationState(plan);
-  if (plan.mode === "bootstrap") {
-    if (current.group.exists) {
-      throw new MachineCommandError("stale-azure-state", `The resource group was created after the preview was computed. ${retryHint}`, undefined, "blocked");
-    }
-    return;
-  }
-  if (!current.group.exists || !statesEqual(current.state, expected)) {
-    throw new MachineCommandError(
-      "stale-azure-state",
-      `Azure migration state changed after the preview was computed. ${retryHint}`,
-      { expected, actual: current.state, resourceGroupExists: current.group.exists },
-      "blocked"
-    );
-  }
-}
-
-function assertTagExpectedState(plan: ProvisionPlanData, expected: MigrationState | null | undefined, retryHint: string): void {
-  const current = readRemoteMigrationState(plan);
-  if (!current.group.exists || !statesEqual(current.state, expected)) {
-    throw new MachineCommandError(
-      "stale-azure-state",
-      `Azure migration state changed before its tag could be updated. ${retryHint}`,
-      { expected, actual: current.state, resourceGroupExists: current.group.exists },
-      "blocked"
-    );
-  }
-}
-
 const MACHINE_RETRY_HINT = "Re-run plan provision.";
 export const INTERACTIVE_PROVISION_RETRY_HINT = 'Run "swallowkit provision" again to review the current state.';
 
+export function provisionNextActions(runId: string): MachineNextAction[] {
+  return [
+    { command: `swallowkit machine inspect provision --plan ${runId}`, description: "Read the original Azure deployment state without creating, cancelling, deleting, tagging, or updating the ledger." },
+    { command: `swallowkit machine apply provision --plan ${runId} --approve`, description: "After explicit human approval, resume this checkpoint: observe the original deployment and finish tags/ledger; never resubmit an attempted deployment." },
+  ];
+}
+
+function resultForRun(run: ProvisionRun, outcome = run.outcome, interrupted?: NodeJS.Signals): ApplyProvisionResult {
+  run.warnings = run.warnings.slice(-20);
+  run.diagnostics = run.diagnostics.slice(-20);
+  return {
+    status: outcome === "succeeded" ? "complete" : outcome === "in-progress" ? "in-progress" : outcome === "failed" ? "failed" : "blocked",
+    outcome, runId: run.runId, planId: run.plan.planId,
+    resourceGroup: run.plan.resourceGroup, location: run.plan.location, swaLocation: run.plan.swaLocation,
+    executedCommands: run.executedCommands, warnings: run.warnings, diagnostics: run.diagnostics,
+    ...(run.observation ? { deployment: run.observation } : {}),
+    nextActions: outcome === "succeeded"
+      ? [{ command: "swallowkit machine inspect infra", description: "Inspect local infrastructure assets after deployment and migration bookkeeping completed." }]
+      : provisionNextActions(run.runId),
+    ...(interrupted ? { interrupted } : {}),
+  };
+}
+
+function readRun(runId: string, projectRoot: string): ProvisionRun | null {
+  let run: ProvisionRun | null;
+  try { run = loadProvisionRun<ProvisionRun>(runId, projectRoot); } catch {
+    throw new MachineCommandError("invalid-provision-checkpoint", "The execution checkpoint cannot be read. Do not re-submit Bicep; inspect the original deployment first.", { runId }, "blocked");
+  }
+  if (run && (run.schemaVersion !== 1 || run.runId !== runId || run.plan?.planId !== runId
+    || run.projectRoot !== path.resolve(projectRoot) || !Number.isInteger(run.cursor)
+    || !Array.isArray(run.plan.commandSpecs) || !run.plan.fingerprints
+    || !Array.isArray(run.warnings) || !Array.isArray(run.diagnostics) || !Array.isArray(run.executedCommands)
+    || !["succeeded", "in-progress", "unknown", "partial", "failed"].includes(run.outcome)
+    || run.cursor < 0 || run.cursor > run.plan.commandSpecs.length)) {
+    throw new MachineCommandError("invalid-provision-checkpoint", "The execution checkpoint is invalid or belongs to another checkout. Nothing will be re-submitted.", { runId }, "blocked");
+  }
+  return run;
+}
+
+function readRuns(projectRoot: string): ProvisionRun[] {
+  try {
+    return listProvisionRuns<ProvisionRun>(projectRoot).map(record => {
+      if (!record || typeof record.runId !== "string") throw new Error("Invalid checkpoint identity.");
+      const run = readRun(record.runId, projectRoot);
+      if (!run) throw new Error("Missing execution checkpoint.");
+      return run;
+    });
+  } catch (error) {
+    if (error instanceof MachineCommandError) throw error;
+    throw new MachineCommandError("invalid-provision-checkpoint", "An execution checkpoint is corrupt. Preserve it and inspect the original deployment; nothing will be re-submitted.", undefined, "blocked");
+  }
+}
+
+function validateWaitSeconds(value = DEFAULT_PROVISION_WAIT_SECONDS): number {
+  if (!Number.isInteger(value) || value < 0 || value > MAX_PROVISION_WAIT_SECONDS) {
+    throw new MachineCommandError("invalid-arguments", `--wait-seconds must be an integer from 0 to ${MAX_PROVISION_WAIT_SECONDS}.`, undefined, "blocked");
+  }
+  return value;
+}
+
+function assertLocalFiles(plan: ProvisionPlanData, projectRoot: string, retryHint: string, allowRecordedManifest = false): void {
+  const changedFiles = Object.entries(plan.fingerprints).filter(([relativePath, expectedHash]) => {
+    const file = path.join(projectRoot, relativePath);
+    if (allowRecordedManifest && relativePath === MIGRATION_MANIFEST_PATH && plan.manifestAfterApply && fs.existsSync(file)
+      && fs.readFileSync(file, "utf-8") === `${JSON.stringify(plan.manifestAfterApply, null, 2)}\n`) return false;
+    return hashFileIfExists(file) !== expectedHash;
+  }).map(([file]) => file);
+  if (changedFiles.length || (plan.baselineSnapshotChecksum
+    && computeBaselineChecksum(collectLegacyBaselineFiles(projectRoot)) !== plan.baselineSnapshotChecksum)) {
+    throw new MachineCommandError("stale-plan", `${changedFiles.join(", ") || "Baseline infrastructure files"} changed after the preview was computed. ${retryHint}`, { planId: plan.planId, changedFiles }, "blocked");
+  }
+}
+
+async function readMigrationState(plan: ProvisionPlanData, signal?: AbortSignal, secretValues: readonly string[] = []): Promise<{ group: RemoteGroupState; state: MigrationState | null }> {
+  const exists = await runAzCliAsync(["group", "exists", "--name", plan.resourceGroup, ...subscriptionArgs(plan.subscription)], { timeout: 30_000, signal });
+  if (exists.status !== 0 || exists.failureKind || !/^(true|false)$/.test(exists.stdout.trim())) {
+    throw azQueryError("azure-state-query-failed", "Could not query resource group", exists, secretValues);
+  }
+  if (exists.stdout.trim() === "false") return { group: { exists: false, tags: {} }, state: null };
+  const show = await runAzCliAsync(["group", "show", "--name", plan.resourceGroup, ...subscriptionArgs(plan.subscription), "--query", "{id:id,tags:tags}", "-o", "json"], { timeout: 30_000, signal });
+  if (show.status !== 0 || show.failureKind || show.stdoutTruncated) throw azQueryError("azure-state-query-failed", "Could not read resource group tags", show, secretValues);
+  let parsed: { id?: unknown; tags?: Record<string, string> };
+  try { parsed = JSON.parse(show.stdout); } catch { throw azQueryError("azure-state-query-failed", "Invalid resource group response", show, secretValues); }
+  const expectedId = `/subscriptions/${plan.subscription}/resourceGroups/${plan.resourceGroup}`;
+  if (typeof parsed.id !== "string" || parsed.id.toLowerCase() !== expectedId.toLowerCase()) {
+    throw new MachineCommandError("azure-resource-group-mismatch", "Azure returned a different resource group/subscription. Nothing will be updated.", undefined, "blocked");
+  }
+  const group = { exists: true, id: parsed.id, tags: parsed.tags ?? {} };
+  const tag = plan.migrationTagKey ? group.tags[plan.migrationTagKey] : undefined;
+  return { group, state: tag ? decodeMigrationState(tag) : null };
+}
+
+function desiredTagState(command: ProvisionCommand, key?: string): MigrationState {
+  const value = command.args.find((arg) => arg.startsWith(`${key}=`) || arg.startsWith(`tags.${key}=`));
+  if (!value) throw new MachineCommandError("incompatible-plan", "The reviewed migration tag is missing.", undefined, "blocked");
+  return decodeMigrationState(value.slice(value.indexOf("=") + 1));
+}
+
+function provisionSecretValues(plan: Pick<ProvisionPlanData, "fingerprints">, projectRoot: string): string[] {
+  const files = Object.keys(plan.fingerprints);
+  const secureBicep = files.filter(file => file.endsWith(".bicep")).some(file => /@secure\s*\(/.test(fs.readFileSync(path.join(projectRoot, file), "utf-8")));
+  const values: string[] = [];
+  const collect = (value: unknown): void => {
+    if (typeof value === "string" && value) values.push(value);
+    else if (Array.isArray(value)) value.forEach(collect);
+    else if (value && typeof value === "object") Object.values(value).forEach(collect);
+  };
+  for (const file of files.filter(file => file.endsWith(".json") && file !== MIGRATION_MANIFEST_PATH)) {
+    let parsed: { parameters?: Record<string, { value?: unknown }> };
+    try { parsed = JSON.parse(fs.readFileSync(path.join(projectRoot, file), "utf-8")); } catch {
+      throw new MachineCommandError("invalid-infra-parameters", "Infrastructure JSON is invalid. Correct it before provision; unstructured Azure output cannot safely redact unknown parameter secrets.", undefined, "blocked");
+    }
+    for (const [name, parameter] of Object.entries(parsed.parameters ?? {})) {
+      if (secureBicep || /secret|password|token|key|connection.?string/i.test(name)) collect(parameter?.value);
+    }
+  }
+  return [...new Set(values)].sort((left, right) => right.length - left.length);
+}
+
+function rememberDiagnostic(run: ProvisionRun, result: AzCliResult, phase: string, secretValues: readonly string[]): void {
+  run.diagnostics.push(azureCliDiagnostic(result, phase, secretValues));
+  run.diagnostics = run.diagnostics.slice(-20);
+  if (result.stderr.trim()) {
+    run.warnings.push(result.stderrTruncated ? "Azure CLI stderr exceeded the capture limit; output omitted." : redactAzureText(result.stderr, secretValues).slice(0, 4_000));
+    run.warnings = run.warnings.slice(-20);
+  }
+}
+
+export async function inspectProvisionOperation(options: { planId: string; waitSeconds?: number }): Promise<ApplyProvisionResult> {
+  const run = readRun(options.planId, process.cwd());
+  if (!run) throw new MachineCommandError("provision-run-not-found", "No execution checkpoint exists for this ID. For an older interrupted bootstrap use plan provision --resume-deployment <name> with the original resource group/subscription/regions.", { runId: options.planId }, "blocked");
+  const waitSeconds = validateWaitSeconds(options.waitSeconds ?? 0);
+  if (run.deployment) {
+    let secretValues: string[] = [];
+    let omitOutput = false;
+    try {
+      assertLocalFiles(run.plan, process.cwd(), "Reviewed files no longer match.", true);
+      secretValues = provisionSecretValues(run.plan, process.cwd());
+    } catch {
+      omitOutput = true;
+      run.warnings.push("Reviewed files are unavailable or changed; deployment state is still read, but diagnostic output/causes are omitted to avoid exposing unknown secrets.");
+    }
+    run.observation = await waitForAzureDeployment(run.deployment, { deadline: Date.now() + waitSeconds * 1_000, secretValues });
+    if (omitOutput) {
+      run.observation.errors = [];
+      run.observation.diagnostic = { ...run.observation.diagnostic, stdout: "[output omitted: reviewed parameters unavailable]", stderr: "", outputTruncated: true };
+    }
+    run.diagnostics = [...run.diagnostics, run.observation.diagnostic].slice(-20);
+    let outcome: ApplyProvisionResult["outcome"] = run.observation.state === "Failed" || run.observation.state === "Canceled" ? "failed"
+      : run.observation.state === "Succeeded" ? run.outcome === "succeeded" ? "succeeded" : "partial"
+        : run.observation.state === "unknown" ? "unknown" : "in-progress";
+    if (outcome === "succeeded") {
+      try {
+        assertLocalFiles(run.plan, process.cwd(), "The original reviewed files no longer match.", true);
+        const tag = [...run.plan.commandSpecs].reverse().find(command => command.kind === "tag");
+        if (tag && !statesEqual((await readMigrationState(run.plan, undefined, secretValues)).state, desiredTagState(tag, run.plan.migrationTagKey))) {
+          outcome = "partial";
+          run.warnings.push("Azure Succeeded, but the completed run's migration tag no longer matches. No bookkeeping or deployment write was performed.");
+        }
+      } catch {
+        outcome = "partial";
+        run.warnings.push("Azure Succeeded, but current local files or migration bookkeeping could not be verified. No writes were performed.");
+      }
+    }
+    return resultForRun(run, outcome);
+  }
+  return resultForRun(run);
+}
+
 export async function applyProvisionOperation(options: ApplyProvisionOptions): Promise<ApplyProvisionResult> {
   const projectRoot = process.cwd();
-
-  const plan = loadPlanState<ProvisionPlanData>(options.planId, projectRoot);
+  const run = /^[a-f0-9]{12}$/.test(options.planId) ? readRun(options.planId, projectRoot) : null;
+  const plan = run?.plan ?? loadPlanState<ProvisionPlanData>(options.planId, projectRoot);
   if (!plan) {
     throw new MachineCommandError(
       "plan-not-found",
@@ -562,8 +848,12 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     );
   }
 
-  const result = await executeProvisionPlan(plan, { approve: options.approve, retryHint: MACHINE_RETRY_HINT, projectRoot });
-  deletePlanState(plan.planId, projectRoot);
+  const result = await executeProvisionPlan(plan, { approve: options.approve, waitSeconds: options.waitSeconds, retryHint: MACHINE_RETRY_HINT, projectRoot });
+  if (result.status === "complete") {
+    try { deletePlanState(plan.planId, projectRoot); } catch {
+      result.warnings.push("Azure and migration bookkeeping completed, but the old preview could not be removed. The completed execution checkpoint prevents replay.");
+    }
+  }
   return result;
 }
 
@@ -573,43 +863,18 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
  */
 export async function executeProvisionPlan(
   plan: ProvisionPlanData,
-  options: { approve?: boolean; retryHint?: string; projectRoot?: string } = {}
+  options: { approve?: boolean; retryHint?: string; projectRoot?: string; waitSeconds?: number; signal?: AbortSignal; pollIntervalMs?: number } = {}
 ): Promise<ApplyProvisionResult> {
   const projectRoot = options.projectRoot ?? process.cwd();
   const retryHint = options.retryHint ?? MACHINE_RETRY_HINT;
-
-  // Bicep が plan 後に変更されていないか確認
-  const changedFiles: string[] = [];
-  for (const [relativePath, expectedHash] of Object.entries(plan.fingerprints)) {
-    const currentHash = hashFileIfExists(path.join(projectRoot, relativePath));
-    if (currentHash !== expectedHash) changedFiles.push(relativePath);
-  }
-  if (changedFiles.length > 0) {
-    throw new MachineCommandError(
-      "stale-plan",
-      `${changedFiles.join(", ")} changed after the preview was computed. ${retryHint}`,
-      { planId: plan.planId, changedFiles },
-      "blocked"
-    );
-  }
-  if (plan.baselineSnapshotChecksum) {
-    const currentBaselineChecksum = computeBaselineChecksum(collectLegacyBaselineFiles(projectRoot));
-    if (currentBaselineChecksum !== plan.baselineSnapshotChecksum) {
-      throw new MachineCommandError(
-        "stale-plan",
-        `Baseline infrastructure files changed after the preview was computed. ${retryHint}`,
-        { planId: plan.planId },
-        "blocked"
-      );
-    }
-  }
-
+  const waitSeconds = validateWaitSeconds(options.waitSeconds);
   if (!options.approve) {
     throw new MachineCommandError(
       "approval-required",
       "Provisioning creates billable Azure resources and always requires human approval. Review plan.commands and re-run with --approve.",
       { planId: plan.planId, commands: plan.commands },
-      "requires-human"
+      "requires-human",
+      [{ command: `swallowkit machine apply provision --plan ${plan.planId} --approve`, description: "Review the commands and obtain explicit human consent before applying or resuming." }]
     );
   }
   if (!plan.mode || !plan.commandSpecs) {
@@ -627,62 +892,249 @@ export async function executeProvisionPlan(
   if (plan.mode === "adoption-required") {
     throw new MachineCommandError(
       "adoption-required",
-      'This existing resource group has no SwallowKit migration state. Re-plan with --adopt-existing --baseline 0 --what-if.',
+      'This resource group has no migration tag. Recover a matching existing baseline with --resume-deployment <name>; adoption applies only to a legacy manifest. Do not reconcile just to repair bookkeeping.',
       { planId: plan.planId },
       "requires-human"
     );
   }
-
+  let run = readRun(plan.planId, projectRoot);
+  const resuming = run !== null;
+  if (run) plan = run.plan;
+  try {
+    assertLocalFiles(plan, projectRoot, run ? "Restore the original reviewed files before resuming this checkpoint; do not resubmit Bicep." : retryHint, run?.cursor === plan.commandSpecs.length);
+  } catch (error) {
+    if (run && error instanceof MachineCommandError) {
+      throw new MachineCommandError(error.code, error.message, { ...resultForRun(run), cause: error.details }, error.status, provisionNextActions(run.runId));
+    }
+    throw error;
+  }
+  const secretValues = provisionSecretValues(plan, projectRoot);
+  if (!plan.subscription || plan.commandSpecs.some((command) => (command.kind === "deployment" || command.kind === "migration")
+    && !plan.recoveryDeployment && !command.args.includes("--no-wait"))) {
+    throw new MachineCommandError("incompatible-plan", `Create a fresh preview with bounded deployment tracking. For an older interrupted deployment use --resume-deployment instead of resubmitting Bicep. ${retryHint}`, undefined, "blocked");
+  }
   const azCli = checkAzCliAvailability();
   if (!azCli.available) {
     throw new MachineCommandError(azCli.reason === "not-found" ? "az-cli-not-found" : "az-cli-not-runnable", azCliUnavailableWarning(azCli), undefined, "blocked");
   }
 
-  const executedCommands: string[] = [];
-  const warnings = [...plan.warnings];
-  let deploymentOutputs: Record<string, unknown> | undefined;
-
-  assertPlanRemoteState(plan, plan.remoteState, retryHint);
-
-  for (const command of plan.commandSpecs) {
-    if (command.kind === "migration") {
-      assertPlanRemoteState(plan, command.expectedState, retryHint);
-    }
-    if (command.kind === "tag") {
-      assertTagExpectedState(plan, command.expectedState, retryHint);
-    }
-    const result = runAz(command.args);
-    const commandText = displayCommand(command);
-    executedCommands.push(commandText);
-    if (result.status !== 0) {
-      throw new MachineCommandError(
-        "provision-failed",
-        `Command failed: ${commandText}\n${(result.stderr || result.stdout).trim().slice(0, 4000)}`,
-        { executedCommands },
-        "failed"
-      );
-    }
-    if (command.kind === "deployment" || command.kind === "migration") {
-      try {
-        const deployment = JSON.parse(result.stdout || "{}");
-        deploymentOutputs = deployment.properties?.outputs;
-      } catch {
-        warnings.push("Could not parse deployment output JSON.");
-      }
-    }
+  const targetKey = crypto.createHash("sha256").update(`${plan.subscription}/${plan.resourceGroup.toLowerCase()}`).digest("hex");
+  let unlock: () => void;
+  try { unlock = lockProvisionTarget(targetKey, projectRoot); } catch (error) {
+    throw new MachineCommandError("provision-target-locked", error instanceof Error ? error.message : "Provision target is locked.", { runId: plan.planId }, "blocked", provisionNextActions(plan.planId));
   }
-
-  if (plan.manifestAfterApply) {
-    replaceMigrationManifest(plan.manifestAfterApply, projectRoot);
-  }
-
-  return {
-    planId: plan.planId,
-    resourceGroup: plan.resourceGroup,
-    location: plan.location,
-    swaLocation: plan.swaLocation,
-    executedCommands,
-    ...(deploymentOutputs ? { deploymentOutputs } : {}),
-    warnings,
+  const controller = new AbortController();
+  let interrupted: NodeJS.Signals | undefined;
+  const interrupt = (signal: NodeJS.Signals) => {
+    interrupted = signal;
+    controller.abort();
   };
+  const sigint = () => interrupt("SIGINT");
+  const sigterm = () => interrupt("SIGTERM");
+  const externalAbort = () => controller.abort();
+  process.on("SIGINT", sigint);
+  process.on("SIGTERM", sigterm);
+  options.signal?.addEventListener("abort", externalAbort, { once: true });
+  if (options.signal?.aborted) controller.abort();
+  const signal = controller.signal;
+  const deadline = Date.now() + waitSeconds * 1_000;
+  const persist = () => {
+    if (!run) return;
+    run.warnings = run.warnings.slice(-20);
+    run.diagnostics = run.diagnostics.slice(-20);
+    run.updatedAt = new Date().toISOString();
+    saveProvisionRun(run, projectRoot);
+  };
+  const pause = (outcome: ApplyProvisionResult["outcome"], warning: string) => {
+    run!.outcome = outcome;
+    run!.warnings.push(warning);
+    persist();
+    return resultForRun(run!, outcome, interrupted);
+  };
+  const observe = async () => {
+    const observation = await waitForAzureDeployment(run!.deployment!, {
+      deadline: signal.aborted ? Date.now() : deadline,
+      // A final short read after Ctrl+C must not inherit the aborted wait signal.
+      ...(signal.aborted ? {} : { signal }),
+      ...(signal.aborted ? { queryTimeoutMs: 5_000 } : {}),
+      pollIntervalMs: options.pollIntervalMs,
+      secretValues,
+      onObservation: (value) => {
+        run!.observation = value;
+        if (value.state !== "unknown") run!.deployment = value.reference;
+        persist();
+      },
+    });
+    run!.observation = observation;
+    run!.diagnostics.push(observation.diagnostic);
+    run!.diagnostics = run!.diagnostics.slice(-20);
+    return observation;
+  };
+  try {
+    if (!run) {
+      const unfinished = readRuns(projectRoot).find((other) =>
+        other.outcome !== "succeeded" && other.outcome !== "failed"
+        && other.plan.resourceGroup === plan.resourceGroup && other.plan.subscription === plan.subscription);
+      if (unfinished) throw new MachineCommandError("provision-run-pending", "Resume the existing execution checkpoint instead of creating another deployment.", { runId: unfinished.runId }, "blocked", provisionNextActions(unfinished.runId));
+      const current = await readMigrationState(plan, signal, secretValues);
+      if (plan.mode === "bootstrap" ? current.group.exists : !current.group.exists || !statesEqual(current.state, plan.remoteState)) {
+        throw new MachineCommandError("stale-azure-state", plan.mode === "bootstrap"
+          ? `The resource group was created after the preview was computed. ${retryHint}`
+          : `Azure migration state changed after the preview was computed. ${retryHint}`, { expected: plan.remoteState, actual: current.state }, "blocked");
+      }
+      const checkpointPlan = { ...plan };
+      delete checkpointPlan.whatIfResult;
+      run = {
+        schemaVersion: 1, runId: plan.planId, projectRoot: path.resolve(projectRoot), plan: checkpointPlan,
+        cursor: 0, outcome: "in-progress", executedCommands: [], warnings: [...plan.warnings], diagnostics: [],
+        updatedAt: new Date().toISOString(),
+      };
+      persist();
+    }
+    for (; run.cursor < plan.commandSpecs.length;) {
+      if (signal.aborted) return pause(run.observation?.state === "Succeeded" ? "partial" : "unknown", "Local provisioning was interrupted. Azure may continue; use status/resume. No Azure cancel/delete was requested and the ledger is not marked successful.");
+      assertLocalFiles(plan, projectRoot, "Restore the original reviewed files before resuming; do not resubmit Bicep.");
+      const command = plan.commandSpecs[run.cursor];
+      if (command.kind === "deployment" || command.kind === "migration") {
+        if (command.kind === "migration" && run.attemptedIndex !== run.cursor && run.observation?.state === "Succeeded" && Date.now() >= deadline) {
+          return pause("partial", "The bounded wait budget ended before the next reviewed migration. Resume this checkpoint after approval; completed deployments will not be re-submitted.");
+        }
+        if (run.attemptedIndex !== run.cursor) {
+          let observationOnly = Boolean(plan.recoveryDeployment);
+          if (plan.recoveryDeployment) {
+            run.deployment = plan.recoveryDeployment;
+          } else {
+            const current = await readMigrationState(plan, signal, secretValues);
+            if (!current.group.exists || !statesEqual(current.state, command.expectedState ?? plan.remoteState)) {
+              throw new MachineCommandError("stale-azure-state", `Azure migration state changed before deployment. ${retryHint}`, { expected: command.expectedState ?? plan.remoteState, actual: current.state }, "blocked");
+            }
+            const name = command.args[command.args.indexOf("--name") + 1];
+            const reference: DeploymentReference = { name, resourceGroup: plan.resourceGroup, subscription: plan.subscription! };
+            const previous = await queryAzureDeployment(reference, { signal, secretValues });
+            if (previous.state === "unknown" && previous.reason !== "not-found") {
+              run.deployment = reference;
+              run.observation = previous;
+              return pause("unknown", "The deployment name could not be checked before submission. No create request was sent; inspect the original deployment before proceeding.");
+            }
+            if (previous.state !== "unknown" && (plan.mode !== "reconcile" || previous.state === "Running" || previous.state === "Accepted")) {
+              run.deployment = previous.reference;
+              run.observation = previous;
+              if (!resuming || command.kind !== "deployment") {
+                return pause("unknown", "A deployment already exists under the reviewed name. No create request was sent. Resume only after matching its template/parameters; do not overwrite or re-submit it.");
+              }
+              run.deployment = await verifyExistingBaseline({ ...plan, resumeDeployment: name },
+                path.join(projectRoot, "infra", "main.bicep"), path.join(projectRoot, "infra", "main.parameters.json"));
+              observationOnly = true;
+            } else {
+              run.deployment = {
+                ...reference,
+                ...(previous.state !== "unknown" ? { previousCorrelationId: previous.reference.correlationId } : {}),
+              };
+            }
+          }
+          // Persist intent before spawn: even a hard process termination must never replay this create.
+          run.attemptedIndex = run.cursor;
+          persist();
+          if (!observationOnly) {
+            const result = await runAzCliAsync(command.args, { timeout: 60_000, signal });
+            run.executedCommands.push(displayCommand(command));
+            rememberDiagnostic(run, result, command.kind === "migration" ? "migration-submit" : "baseline-submit", secretValues);
+            persist();
+          }
+        }
+        const observation = await observe();
+        if (signal.aborted) return pause(observation.state === "Succeeded" ? "partial" : observation.state === "Running" || observation.state === "Accepted" ? "in-progress" : "unknown", "Local provisioning was interrupted. Azure may continue. The original deployment is tracked; no cancellation or successful ledger update was performed.");
+        if (observation.state === "Failed" || observation.state === "Canceled") {
+          const operations = await queryDeploymentOperationErrors(observation.reference, secretValues, signal);
+          observation.errors.push(...operations.errors);
+          run.diagnostics.push(operations.diagnostic);
+          run.outcome = "failed";
+          persist();
+          throw new MachineCommandError("azure-deployment-failed",
+            `Azure deployment ${observation.reference.name} is ${observation.state}.${observation.errors.length ? `\n${observation.errors.map((error) => `${error.code}: ${error.message}`).join("\n")}` : " Azure did not return a structured cause; inspect deployment operations."}`,
+            resultForRun(run), "failed", provisionNextActions(run.runId));
+        }
+        if (observation.state !== "Succeeded") {
+          return pause(observation.state === "unknown" ? "unknown" : "in-progress",
+            observation.state === "unknown" ? `Azure deployment result is unknown (${observation.reason}); a local az error is not proof that Azure failed. No create will be automatically retried.`
+              : `Azure deployment is ${observation.state}. The bounded local wait ended; status/resume tracks the same deployment without submitting Bicep again.`);
+        }
+      } else if (command.kind === "tag") {
+        if (run.deployment) {
+          const observation = await queryAzureDeployment(run.deployment, { signal, secretValues });
+          run.observation = observation;
+          if (observation.state !== "Succeeded") return pause("partial", "Azure Succeeded was previously observed, but its identity/terminal state could not be confirmed before migration tagging. No tag or ledger update was performed.");
+        }
+        const current = await readMigrationState(plan, signal, secretValues);
+        const desired = desiredTagState(command, plan.migrationTagKey);
+        if (!current.group.exists) throw new MachineCommandError("stale-azure-state", "The resource group disappeared before tagging.", undefined, "blocked");
+        if (!statesEqual(current.state, desired)) {
+          if (!statesEqual(current.state, command.expectedState)) {
+            throw new MachineCommandError("stale-azure-state", `Azure migration state changed before its tag could be updated. ${retryHint}`, { expected: command.expectedState, actual: current.state }, "blocked");
+          }
+          run.attemptedIndex = run.cursor;
+          persist();
+          const result = await runAzCliAsync(command.args, { timeout: 60_000, signal });
+          run.executedCommands.push(displayCommand(command));
+          rememberDiagnostic(run, result, "migration-tag", secretValues);
+          if (result.status !== 0 || result.failureKind || signal.aborted) {
+            return pause("partial", "Azure deployment succeeded, but migration tagging did not complete locally. Resume this checkpoint to verify/finish tagging; do not redeploy the baseline.");
+          }
+          const after = await readMigrationState(plan, signal, secretValues);
+          if (!statesEqual(after.state, desired)) return pause("partial", "The tag update returned successfully but its version/checksum could not be confirmed. Resume bookkeeping without redeploying Bicep.");
+        }
+      } else {
+        const current = await readMigrationState(plan, signal, secretValues);
+        if (run.attemptedIndex === run.cursor) {
+          if (!current.group.exists) return pause("unknown", "Resource group creation was attempted, but its result is unknown. Inspect the target before resuming; nothing will be re-created automatically.");
+        } else {
+          if (current.group.exists) throw new MachineCommandError("stale-azure-state", `The resource group was created after the preview was computed. ${retryHint}`, undefined, "blocked");
+          run.attemptedIndex = run.cursor;
+          persist();
+          const result = await runAzCliAsync(command.args, { timeout: 60_000, signal });
+          run.executedCommands.push(displayCommand(command));
+          rememberDiagnostic(run, result, "resource-group-create", secretValues);
+          if (result.status !== 0 || result.failureKind || signal.aborted) return pause("unknown", "Local resource-group creation did not complete. Azure may have accepted it; inspect/resume this checkpoint, not a new bootstrap.");
+        }
+      }
+      run.cursor++;
+      delete run.attemptedIndex;
+      persist();
+    }
+    if (signal.aborted) return pause("partial", "Local provisioning was interrupted before ledger completion. Resume bookkeeping; no deployment will be submitted again.");
+    assertLocalFiles(plan, projectRoot, "Restore the reviewed files before completing the local ledger.", true);
+    const finalTag = [...plan.commandSpecs].reverse().find((command) => command.kind === "tag");
+    if (finalTag) {
+      const current = await readMigrationState(plan, signal, secretValues);
+      if (!statesEqual(current.state, desiredTagState(finalTag, plan.migrationTagKey))) return pause("partial", "The final remote migration version/checksum changed before local ledger completion. No ledger success was recorded.");
+    }
+    if (run.deployment) {
+      run.observation = await queryAzureDeployment(run.deployment, { signal, secretValues });
+      if (run.observation.state !== "Succeeded") return pause("partial", "The original deployment identity/terminal state could not be confirmed before local ledger completion. No successful ledger update was performed.");
+    }
+    if (plan.manifestAfterApply && run.outcome !== "succeeded") replaceMigrationManifest(plan.manifestAfterApply, projectRoot);
+    run.outcome = "succeeded";
+    persist();
+    return resultForRun(run);
+  } catch (error) {
+    if (!run) throw error;
+    if (error instanceof MachineCommandError && error.code === "azure-deployment-failed") throw error;
+    run.outcome = run.observation?.state === "Succeeded" ? "partial" : "unknown";
+    run.warnings.push(`Provisioning stopped: ${redactAzureText(error instanceof Error ? error.message : "Unknown local error", secretValues)}. Azure deployment and local bookkeeping are separate; inspect/resume this checkpoint.`);
+    try { persist(); } catch {
+      run.warnings.push("The checkpoint could not be updated. Preserve the existing checkpoint; inspect the original Azure deployment before any further write.");
+    }
+    if (error instanceof MachineCommandError) {
+      throw new MachineCommandError(error.code, error.message, { ...resultForRun(run), cause: error.details }, error.status ?? "blocked", provisionNextActions(run.runId));
+    }
+    return resultForRun(run, run.outcome, interrupted);
+  } finally {
+    process.removeListener("SIGINT", sigint);
+    process.removeListener("SIGTERM", sigterm);
+    options.signal?.removeEventListener("abort", externalAbort);
+    try { unlock(); } catch {
+      run?.warnings.push("The local execution lock could not be removed. Inspect its owner before retrying; Azure deployment/ledger results are unchanged.");
+      console.warn("Provision lock cleanup failed; inspect the checkpoint before another apply.");
+    }
+  }
 }

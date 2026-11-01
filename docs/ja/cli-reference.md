@@ -1388,7 +1388,7 @@ pnpm dlx swallowkit provision [options]
 
 | オプション | 短縮 | 説明 | 必須 |
 |----------|------|------|------|
-| `--resource-group <name>` | `-g` | リソースグループ名 | ✅ |
+| `--resource-group <name>` | `-g` | 新しいプレビューでは必須。チェックポイントの照会／再開では指定しない | |
 | `--subscription <id>` | | サブスクリプション ID | |
 | `--location <region>` | | Functions / Cosmos DB のリージョン。非対話実行では必須 | |
 | `--swa-location <region>` | | Static Web Apps のリージョン。非対話実行では必須 | |
@@ -1397,6 +1397,10 @@ pnpm dlx swallowkit provision [options]
 | `--baseline <version>` | | adoption の baseline。現在は `0` のみ | |
 | `--reconcile` | | `main.bicep` 全体を明示的に再デプロイする | |
 | `--approve` | | 確認を求めずに、表示された Azure コマンドを実行する | |
+| `--status <runId>` | | 元の deployment と実行チェックポイントを読み取り専用で確認 | |
+| `--resume <runId>` | | 元の承認済みチェックポイントから再開。送信済み deployment は再送しない | |
+| `--resume-deployment <name>` | | 旧 baseline の ARM／非 secret parameters の一致を確認して復旧。create はしない | |
+| `--wait-seconds <seconds>` | | 状態確認の上限0〜3600秒。適用／再開は既定300秒、status は0秒 | |
 
 ### リージョン選択
 
@@ -1481,6 +1485,20 @@ npx swallowkit provision \
 | Azure の version が先行、または checksum 不一致 | 安全のため停止 |
 
 適用直前と各 migration の前にもタグを再確認します。別のデプロイが先に状態を進めた場合は `stale-azure-state` で停止します。
+
+### 待機と復旧
+
+`--no-wait` で送信した deployment を、時間を区切って確認します。Running／Accepted は `in-progress`、照会不能／DeploymentNotFound は `blocked`／`outcome: "unknown"` であり、Azure の失敗を意味しません。Failed／Canceled では秘密を伏せた Azure の原因を示します。Succeeded でも tag／ledger 未完了なら `partial` で、記録まで完了したときだけ `complete` です。
+
+```powershell
+pnpm exec swallowkit provision --status <runId> --wait-seconds 300
+pnpm exec swallowkit provision --resume <runId> --approve
+# machine/MCP も同じ実行処理。runId は元の planId と同じ:
+pnpm exec swallowkit machine inspect provision --plan <runId> --wait-seconds 300
+pnpm exec swallowkit machine apply provision --plan <runId> --approve
+```
+
+`.swallowkit/state/provision/` のチェックポイントを保持してください。再開でも承認が必要で、fingerprint、subscription、deployment の識別子、migration checksum を再確認します。Ctrl+C／強制終了後も Azure は続く場合があります。自動キャンセル・削除はしません。待機や記録の修復だけのために再計画／reconcile をしないでください。旧版の未追跡 baseline は[デプロイガイド](./deployment-guide.md)の `--resume-deployment` 手順を使います。
 
 ## swallowkit migrations init
 

@@ -24,6 +24,11 @@ Always-on rules:
   after apply).
 - Use plan/apply for deterministic generation.
 - Respect all `requires-human` states and provisioning approval gates.
+- Provision timeouts/Ctrl+C do not prove Azure failed. Inspect the original
+  execution checkpoint with `machine inspect provision --plan <runId>`; resume
+  `machine apply provision --plan <runId> --approve` only after explicit human
+  approval. Preserve checkpoints; never re-submit Bicep/reconcile/cancel/delete
+  to repair waiting or tag/ledger failures. Do not print deployment output secrets.
 - Run SwallowKit verification before considering implementation complete.
 - Default verification includes `backend-build` for standalone Functions.
   Skipped toolchains are not validation; Python compilation checks syntax only.

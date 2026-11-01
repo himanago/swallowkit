@@ -3,7 +3,7 @@ import { isSwallowKitProject } from "../core/config";
 import { createModelOperation } from "../core/operations/create-model";
 import { applyScaffoldOperation } from "../core/operations/scaffold-apply";
 import { applyAuthOperation, planAuthOperation } from "../core/operations/auth-operations";
-import { applyProvisionOperation, planProvisionOperation } from "../core/operations/provision-operations";
+import { applyProvisionOperation, inspectProvisionOperation, planProvisionOperation } from "../core/operations/provision-operations";
 import { ProcessExitInterceptError } from "../core/operations/runtime";
 import { inspectInfra } from "../core/project/infra";
 import { runMachineScaffoldOperation } from "../core/operations/scaffold-machine";
@@ -141,6 +141,17 @@ function createMachineProgram(): Command {
     .showHelpAfterError(false);
 
   const inspect = new Command("inspect");
+  inspect
+    .command("provision")
+    .description("Read/wait for an original provision deployment without writes or replay")
+    .requiredOption("--plan <runId>", "Original provision plan/execution checkpoint ID")
+    .option("--wait-seconds <seconds>", "Bounded read-only wait, 0-3600 seconds (default: 0)", Number)
+    .action(async (options: { plan: string; waitSeconds?: number }) => {
+      await handleMachineAction("inspect-provision", async () => {
+        ensureProjectForMachine();
+        return inspectProvisionOperation({ planId: options.plan, waitSeconds: options.waitSeconds });
+      }, (result) => ({ status: result.status, nextActions: result.nextActions }));
+    });
   inspect
     .command("project")
     .description("Inspect SwallowKit project metadata")
@@ -373,7 +384,7 @@ function createMachineProgram(): Command {
 
   plan
     .command("provision")
-    .description("Preflight Azure provisioning locally; use --what-if for an az what-if analysis (requires az login)")
+    .description("Review local infrastructure and current Azure state without writes (requires az login)")
     .requiredOption("-g, --resource-group <name>", "Resource group name")
     .requiredOption("--location <region>", "Primary location for Functions and Cosmos DB")
     .requiredOption("--swa-location <region>", "Static Web App location")
@@ -382,7 +393,8 @@ function createMachineProgram(): Command {
     .option("--adopt-existing", "Adopt an existing untagged resource group without deploying main.bicep", false)
     .option("--baseline <version>", "Baseline version for adoption", (value) => Number(value))
     .option("--reconcile", "Explicitly redeploy infra/main.bicep", false)
-    .action(async (options: { resourceGroup: string; location: string; swaLocation: string; subscription?: string; whatIf?: boolean; adoptExisting?: boolean; baseline?: number; reconcile?: boolean }) => {
+    .option("--resume-deployment <name>", "Recover a matching older baseline deployment without re-submitting Bicep")
+    .action(async (options: { resourceGroup: string; location: string; swaLocation: string; subscription?: string; whatIf?: boolean; adoptExisting?: boolean; baseline?: number; reconcile?: boolean; resumeDeployment?: string }) => {
       await handleMachineAction(
         "plan-provision",
         async () => {
@@ -396,6 +408,7 @@ function createMachineProgram(): Command {
             adoptExisting: options.adoptExisting,
             baseline: options.baseline,
             reconcile: options.reconcile,
+            resumeDeployment: options.resumeDeployment,
           });
         },
         (planData) => ({
@@ -546,22 +559,15 @@ function createMachineProgram(): Command {
     .description("Apply an approved provisioning plan (always requires --approve; creates billable Azure resources)")
     .requiredOption("--plan <planId>", "Provision plan to apply")
     .option("--approve", "Confirm human approval of the provisioning plan", false)
-    .action(async (options: { plan: string; approve?: boolean }) => {
+    .option("--wait-seconds <seconds>", "Bounded state wait, 0-3600 seconds (default: 300)", Number)
+    .action(async (options: { plan: string; approve?: boolean; waitSeconds?: number }) => {
       await handleMachineAction(
         "apply-provision",
         async () => {
           ensureProjectForMachine();
-          return applyProvisionOperation({ planId: options.plan, approve: options.approve });
+          return applyProvisionOperation({ planId: options.plan, approve: options.approve, waitSeconds: options.waitSeconds });
         },
-        () => ({
-          status: "complete",
-          nextActions: [
-            {
-              command: "swallowkit machine inspect infra",
-              description: "Re-inspect infra assets after provisioning.",
-            },
-          ],
-        })
+        (result) => ({ status: result.status, nextActions: result.nextActions })
       );
     });
 

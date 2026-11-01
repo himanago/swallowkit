@@ -18,6 +18,7 @@ import { loadCustomVerifyChecks, compactVerifyResult, runVerify, VerifyResult } 
 import { buildAgentSkills, buildWorkflowDocs, writeAgentSkills, writeWorkflowDocs } from "../core/project/workflows";
 import { applyProvisionOperation, planProvisionOperation } from "../core/operations/provision-operations";
 import { resetAzCliInvocationCache, setAzCliInvocationForTesting } from "../utils/azure-cli";
+import * as azureCli from "../utils/azure-cli";
 import { createCustomMigration, initializeLegacyMigrations } from "../core/operations/migration-generator";
 import { createMigrationManifest, encodeMigrationState, getMigrationTagKey, saveMigrationManifest } from "../core/project/migrations";
 
@@ -129,6 +130,7 @@ describe("agent loop phase 3/4", () => {
     (childProcess.spawnSync as unknown as any).mockReturnValue({ status: 1, stdout: "", stderr: "" });
     // Platform-independent az invocation; the Windows wrapper resolution is covered in azure-cli.test.ts.
     setAzCliInvocationForTesting({ command: "az", prefixArgs: [], source: "az" });
+    jest.spyOn(azureCli, "runAzCliAsync").mockImplementation(async (args) => azureCli.runAzCli(args));
   });
 
   afterEach(() => {
@@ -136,6 +138,7 @@ describe("agent loop phase 3/4", () => {
     process.chdir(originalCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });
     jest.clearAllMocks();
+    jest.restoreAllMocks();
   });
 
   it("returns the responsibility boundary contract via inspect boundaries", async () => {
@@ -317,11 +320,11 @@ describe("agent loop phase 3/4", () => {
     (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
       if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
       if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
-      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: {} }), stderr: "" };
+      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample", tags: {} }), stderr: "" };
       return { status: 1, stdout: "", stderr: "unexpected" };
     });
 
-    const plan = await planProvisionOperation({ resourceGroup: "rg-sample", location: "japaneast", swaLocation: "eastasia" });
+    const plan = await planProvisionOperation({ resourceGroup: "rg-sample", location: "japaneast", swaLocation: "eastasia", subscription: "11111111-1111-1111-1111-111111111111" });
 
     expect(plan.mode).toBe("adoption-required");
     expect(plan.commands).toEqual([]);
@@ -336,7 +339,7 @@ describe("agent loop phase 3/4", () => {
     (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
       if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
       if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
-      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: {} }), stderr: "" };
+      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample", tags: {} }), stderr: "" };
       if (args[0] === "deployment" && args[2] === "what-if") {
         return { status: 0, stdout: JSON.stringify({ changes: [{ changeType: "Modify", resourceId: "/functions/sample" }] }), stderr: "" };
       }
@@ -350,6 +353,7 @@ describe("agent loop phase 3/4", () => {
       adoptExisting: true,
       baseline: 0,
       whatIf: true,
+      subscription: "11111111-1111-1111-1111-111111111111",
     });
 
     expect(plan.mode).toBe("adopt");
@@ -367,7 +371,7 @@ describe("agent loop phase 3/4", () => {
     (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
       if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
       if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
-      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: {} }), stderr: "" };
+      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample", tags: {} }), stderr: "" };
       if (args[0] === "deployment" && args[2] === "what-if") return { status: 0, stdout: JSON.stringify({ changes: [] }), stderr: "" };
       return { status: 1, stdout: "", stderr: "unexpected" };
     });
@@ -377,6 +381,7 @@ describe("agent loop phase 3/4", () => {
       location: "japaneast",
       swaLocation: "eastasia",
       reconcile: true,
+      subscription: "11111111-1111-1111-1111-111111111111",
     });
 
     expect(plan.mode).toBe("reconcile");
@@ -398,12 +403,12 @@ describe("agent loop phase 3/4", () => {
       if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
       if (args[0] === "group" && args[1] === "show") {
         const tagKey = getMigrationTagKey(manifest.projectId);
-        return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: { [tagKey]: tagValue } }), stderr: "" };
+        return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample", tags: { [tagKey]: tagValue } }), stderr: "" };
       }
       return { status: 1, stdout: "", stderr: "unexpected" };
     });
 
-    const plan = await planProvisionOperation({ resourceGroup: "rg-sample", location: "japaneast", swaLocation: "eastasia" });
+    const plan = await planProvisionOperation({ resourceGroup: "rg-sample", location: "japaneast", swaLocation: "eastasia", subscription: "11111111-1111-1111-1111-111111111111" });
 
     expect(plan.mode).toBe("migrate");
     expect(plan.pendingMigrations.map((migration) => migration.version)).toEqual([1]);
@@ -424,7 +429,13 @@ describe("agent loop phase 3/4", () => {
     (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
       if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
       if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
-      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: { [tagKey]: tagValue } }), stderr: "" };
+      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample", tags: { [tagKey]: tagValue } }), stderr: "" };
+      if (args[0] === "deployment" && args[2] === "show") {
+        const name = args[args.indexOf("--name") + 1];
+        return deployedTemplates.length === 0
+          ? { status: 1, stdout: "", stderr: "DeploymentNotFound" }
+          : { status: 0, stdout: JSON.stringify({ id: `/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample/providers/Microsoft.Resources/deployments/${name}`, state: "Succeeded", correlationId: "fixture-correlation" }), stderr: "" };
+      }
       if (args[0] === "deployment" && args[2] === "create") {
         deployedTemplates.push(args[args.indexOf("--template-file") + 1]);
         return { status: 0, stdout: JSON.stringify({ properties: { outputs: {} } }), stderr: "" };
@@ -436,7 +447,7 @@ describe("agent loop phase 3/4", () => {
       return { status: 1, stdout: "", stderr: `unexpected: ${args.join(" ")}` };
     });
 
-    const plan = await planProvisionOperation({ resourceGroup: "rg-sample", location: "japaneast", swaLocation: "eastasia" });
+    const plan = await planProvisionOperation({ resourceGroup: "rg-sample", location: "japaneast", swaLocation: "eastasia", subscription: "11111111-1111-1111-1111-111111111111" });
     const result = await applyProvisionOperation({ planId: plan.planId, approve: true });
 
     expect(result.executedCommands).toHaveLength(2);

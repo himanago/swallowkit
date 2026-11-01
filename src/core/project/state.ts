@@ -57,6 +57,76 @@ export function deletePlanState(planId: string, projectRoot: string = process.cw
   }
 }
 
+function provisionRunPath(runId: string, projectRoot: string): string {
+  if (!/^[a-f0-9]{12}$/.test(runId)) throw new Error("Invalid provision run ID.");
+  return path.join(projectRoot, SWALLOWKIT_STATE_DIR, "provision", `${runId}.json`);
+}
+
+export function saveProvisionRun<T extends { runId: string }>(run: T, projectRoot: string = process.cwd()): void {
+  ensureStateDir(projectRoot);
+  const file = provisionRunPath(run.runId, projectRoot);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(temporary, `${JSON.stringify(run, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
+  fs.renameSync(temporary, file);
+}
+
+export function loadProvisionRun<T>(runId: string, projectRoot: string = process.cwd()): T | null {
+  const file = provisionRunPath(runId, projectRoot);
+  if (!fs.existsSync(file)) return null;
+  // Unlike a preview, discarding a corrupt execution checkpoint could replay Azure writes.
+  return JSON.parse(fs.readFileSync(file, "utf-8")) as T;
+}
+
+export function listProvisionRuns<T>(projectRoot: string = process.cwd()): T[] {
+  const directory = path.join(projectRoot, SWALLOWKIT_STATE_DIR, "provision");
+  if (!fs.existsSync(directory)) return [];
+  return fs.readdirSync(directory).filter((name) => /^[a-f0-9]{12}\.json$/.test(name))
+    .map((name) => loadProvisionRun<T>(name.slice(0, -5), projectRoot)!);
+}
+
+/** A live local executor must not share an Azure target with another executor. */
+export function lockProvisionTarget(key: string, projectRoot: string = process.cwd()): () => void {
+  if (!/^[a-f0-9]{64}$/.test(key)) throw new Error("Invalid provision lock key.");
+  const directory = path.join(ensureStateDir(projectRoot), "provision");
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, `${key}.lock`);
+  const create = () => {
+    const descriptor = fs.openSync(file, "wx", 0o600);
+    try { fs.writeFileSync(descriptor, String(process.pid)); } finally { fs.closeSync(descriptor); }
+  };
+  try {
+    create();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const recoveryFile = `${file}.recovery`;
+    let descriptor: number;
+    try {
+      descriptor = fs.openSync(recoveryFile, "wx", 0o600);
+    } catch (recoveryError) {
+      if ((recoveryError as NodeJS.ErrnoException).code !== "EEXIST") throw recoveryError;
+      throw new Error("Provision lock recovery is already in progress. Inspect the checkpoint before retrying.");
+    }
+    fs.closeSync(descriptor);
+    try {
+      const pid = Number(fs.readFileSync(file, "utf-8"));
+      if (!Number.isInteger(pid) || pid < 1) throw new Error("Invalid provision lock; inspect the checkpoint before removing the lock.");
+      try {
+        process.kill(pid, 0);
+      } catch (probeError) {
+        if ((probeError as NodeJS.ErrnoException).code !== "ESRCH") throw probeError;
+        fs.unlinkSync(file);
+        create();
+        return () => fs.unlinkSync(file);
+      }
+      throw new Error("Another local provision executor is using this Azure target. Inspect its run; do not start a second deployment.");
+    } finally {
+      fs.unlinkSync(recoveryFile);
+    }
+  }
+  return () => fs.unlinkSync(file);
+}
+
 const LAST_VERIFY_FILE = "last-verify.json";
 
 export function saveLastVerifyState(result: unknown, projectRoot: string = process.cwd()): void {

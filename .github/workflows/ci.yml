@@ -48,6 +48,20 @@ jobs:
           # The generated-project matrix compiles C# and checks Python; fail instead of skipping if either is missing.
           SWALLOWKIT_REQUIRE_TOOLCHAINS: '1'
 
+  provision-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Test Azure-free provision subprocesses and Windows argument handling
+        run: node .\node_modules\jest\bin\jest.js --runInBand --testMatch '**/*.test.ts' --testPathPattern '(azure-cli|provision-runtime|mcp\.test)'
+
   consumer-compatibility:
     runs-on: ubuntu-latest
     timeout-minutes: 30

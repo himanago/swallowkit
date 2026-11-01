@@ -50,7 +50,7 @@ npx swallowkit provision --resource-group my-app-rg \
   --location japaneast --swa-location eastasia
 ```
 
-リージョンを省略した場合は対話式に選択します。初回実行では Resource Group が存在しないことを確認して `infra/main.bicep` をデプロイし、migration baseline 0 を Resource Group タグへ記録します。変更の前に Azure の現在の状態を確認し、何が行われるかと実行する Azure CLI コマンドを表示して、確認を求めます。後で使うための計画ファイルは保存しません。コマンド実行までに Azure 側の状態が変わった場合は停止し、再実行を案内します（エージェント向けには `swallowkit machine plan provision` / `apply provision --plan` という別の手順があります）。
+リージョンを省略した場合は対話式に選択します。初回実行では Resource Group が存在しないことを確認して `infra/main.bicep` をデプロイし、migration baseline 0 を Resource Group タグへ記録します。変更の前に Azure の状態、実行内容、Azure CLI コマンドを表示して確認を求めます。確認前のプレビューはメモリ上だけで作り、承認後は Azure への書き込み前に実行チェックポイントを保存します。machine/MCP の保存済み plan も、同じ実行処理を使います。
 
 このコマンドは Bicep テンプレートを使用して以下を作成します:
 - Azure Static Web Apps
@@ -61,6 +61,35 @@ npx swallowkit provision --resource-group my-app-rg \
 `az` が見つからないか起動できない場合は、確認を求めずに終了し、Azure には何も変更を加えません。`az-cli-not-found` は PATH に `az` がないこと、`az-cli-not-runnable` は見つかったものの起動できなかったことを示します。サインインしていない場合は `az login` の実行を案内します。原因を解消してから、もう一度 `provision` を実行してください。
 
 非対話環境では `--location`、`--swa-location`、`--approve` を明示してください。CI/CD の secrets は後述の Azure CLI コマンドで取得します。
+
+#### 待機の中断と部分完了
+
+Bicep は `--no-wait` で一度だけ送信し、その deployment を既定で最大300秒確認します。`--wait-seconds` は0〜3600秒を指定できます。個々の az 呼び出しにも制限があります。stderr に warning があっても exit code が0なら、それだけで失敗にはしません。大量の出力は読み捨て、出力上限で az を停止しません。診断には exit code、signal、timeout／通信エラー、経過時間、出力を省略した事実を含め、キーや token などを伏せます。deployment outputs の値は返しません。
+
+Azure が `Running`／`Accepted` なら `in-progress` です。照会できない場合や DeploymentNotFound は `unknown`（`blocked`）であり、Azure の失敗を意味しません。`Failed`／`Canceled` では、秘密を伏せた Azure のエラーと deployment operations の原因を示します。`Succeeded` でも migration tag とローカル ledger が未完了なら、全体は **partial** です。
+
+`.swallowkit/state/provision/` を保存したまま、表示された run ID（元の plan ID）を使ってください。
+
+```powershell
+pnpm exec swallowkit provision --status <runId> --wait-seconds 300
+# 元の実行内容を確認し、残りの処理を承認した後だけ実行:
+pnpm exec swallowkit provision --resume <runId> --approve
+```
+
+status／待機は読み取り専用です。再開では元の subscription、deployment ID／correlation、fingerprint、migration checksum を再確認し、送信済み deployment を再送しません。未実行の承認済み処理と tag／ledger 更新だけを続けます。Azure 成功後に記録処理が失敗しても、baseline を再デプロイせず、このチェックポイントから記録を完了してください。Ctrl+C や強制終了後も Azure が続く場合があります。自動でキャンセル・削除はしません。強制終了では終了結果を表示できませんが、書き込み前のチェックポイントから復旧できます。
+
+MCP の provision リクエストをキャンセルした場合も、停止するのはローカルの machine 子プロセス／待機であり、Azure deployment ではありません。元の plan／run ID で状態を確認してから再開してください。MCP のキャンセルや応答の欠落は、Azure の失敗を意味しません。
+
+#### 旧バージョンの未追跡 baseline を復旧する
+
+実行チェックポイントがない版で bootstrap が中断した場合は、まず元の deployment を確認します。タグの修復だけのために新しい bootstrap や `--reconcile` を実行しないでください。
+
+```powershell
+az deployment group show --resource-group <original-rg> --name swallowkit-baseline --subscription <original-subscription> --query "{state:properties.provisioningState,error:properties.error}" -o json
+pnpm exec swallowkit provision -g <original-rg> --subscription <original-subscription> --location japaneast --swa-location eastasia --resume-deployment swallowkit-baseline
+```
+
+この復旧オプションを含む修正版 CLI で、元のローカル Bicep／parameters と既存 deployment の ARM template／非 secret parameters の一致を確認します。確認後は照会と tag 更新だけのプレビューを表示し、承認を求めます。deployment create は送りません。Running なら追跡を続け、Succeeded 後に tag／ledger を記録します。不一致、照会不能、secure parameters、legacy manifest、baseline 以外の未追跡 migration は推測せず停止します。元の確認済みファイルを復元し、manifest の置き換えやチェックの回避はしないでください。Azure の生のエラーを共有する前には、秘密がないか確認してください。
 
 ### 3. コードのプッシュ
 
@@ -248,7 +277,7 @@ npx swallowkit create-migration add-search
 npx swallowkit provision -g my-app-rg --location japaneast --swa-location eastasia
 ```
 
-`provision` は Resource Group タグの version/checksum とローカル manifest を比較し、未適用 migration だけを昇順に実行します。各 migration の成功後にタグを進めるため、失敗時は同じコマンドを再計画・再実行できます。適用済み migration は編集せず、修正用の新しい migration を追加してください。
+`provision` は Resource Group タグの version/checksum とローカル manifest を比較し、未適用 migration だけを昇順に実行します。各 migration の成功後にタグを進めます。待機や tag/ledger 更新が中断した場合は、新しい deployment を作らず、元の実行チェックポイントから再開してください。適用済み migration は編集せず、修正用の新しい migration を追加してください。
 
 ### 旧バージョンで作成したプロジェクト
 

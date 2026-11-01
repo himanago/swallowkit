@@ -117,9 +117,12 @@ pnpm exec swallowkit machine apply provision --plan <planId> --approve
 ```
 :::
 
-- `plan provision` performs a purely local, deterministic preflight (Bicep analysis, az CLI availability, a preview of the commands that would run). It requires neither Azure connectivity nor `az login`.
-- Only when `--what-if` is passed does it run `az deployment group what-if` (which requires `az login`).
+- `plan provision` analyzes local Bicep and reads the Azure subscription/resource-group/migration state when az is available. It creates no resources, but online planning requires Azure connectivity and `az login`; unavailable az produces an offline preview that cannot be applied.
+- `--what-if` additionally reads Azure deployment change evidence; it does not apply resources.
 - Provisioning creates billable resources, so the plan always reports `requiresApproval: true` (`status: "requires-human"`). `apply provision` refuses to run without an `--approve` that reflects explicit human consent.
+- Apply saves a pre-write execution checkpoint, submits Bicep once with `--no-wait`, and bounded-polls the original deployment (default 300 seconds; `--wait-seconds 0-3600`). Inspect `status`, `outcome` and `nextActions`: Running/Accepted is `in-progress`, unreadable state is `unknown`, and Succeeded without finished tags/ledger is `partial`, not complete.
+- `machine inspect provision --plan <runId> [--wait-seconds 300]` / `swallowkit_inspect_provision` is read-only. After renewed human approval, `apply provision --plan <runId> --approve` / `swallowkit_apply_provision` resumes the same checkpoint without re-submitting attempted deployments. Retain `.swallowkit/state/provision/`; never reconcile/cancel/delete to repair waiting or bookkeeping. Ctrl+C may leave Azure running.
+- Older untracked baselines can use `plan provision --resume-deployment <name>` with the original target/regions. ARM template and non-secure parameters must match local files; otherwise recovery blocks. Diagnostics redact secrets and omit deployment output values. See the [recovery guide](./deployment-guide.md#interrupted-waiting-and-partial-completion).
 
 ### Responsibility Boundary / Infra Inspection
 
@@ -273,6 +276,7 @@ The server exposes explicit tools only:
 - `swallowkit_apply_auth`
 - `swallowkit_plan_provision`
 - `swallowkit_apply_provision`
+- `swallowkit_inspect_provision`
 - `swallowkit_verify_project`
 - `swallowkit_explain_failure`
 

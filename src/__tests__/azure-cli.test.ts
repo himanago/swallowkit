@@ -2,6 +2,7 @@ import * as childProcess from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import * as azureCli from "../utils/azure-cli";
 import {
   buildBatchCommandLine,
   checkAzCliAvailability,
@@ -118,6 +119,7 @@ describe("provision planning with Azure CLI state", () => {
     saveMigrationManifest(createMigrationManifest(project, { projectId: "project" }), project);
     process.chdir(project);
     setAzCliInvocationForTesting({ command: "az", prefixArgs: [], source: "az" });
+    jest.spyOn(azureCli, "runAzCliAsync").mockImplementation(async (args) => runAzCli(args));
   });
   afterEach(() => {
     process.chdir(originalCwd);
@@ -125,9 +127,10 @@ describe("provision planning with Azure CLI state", () => {
     spawnSyncMock.mockReset();
     spawnSyncMock.mockImplementation(jest.requireActual<typeof import("child_process")>("child_process").spawnSync);
     fs.rmSync(project, { recursive: true, force: true });
+    jest.restoreAllMocks();
   });
 
-  const options = { resourceGroup: "rg-sample", location: "japaneast", swaLocation: "eastasia" };
+  const options = { resourceGroup: "rg-sample", location: "japaneast", swaLocation: "eastasia", subscription: "11111111-1111-1111-1111-111111111111" };
 
   it("reads Azure state through the resolved CLI and plans a bootstrap", async () => {
     spawnSyncMock.mockImplementation((_command: string, args: string[]) => {
@@ -150,7 +153,7 @@ describe("provision planning with Azure CLI state", () => {
     spawnSyncMock.mockImplementation((_command: string, args: string[]) => {
       if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
       if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: `${groupExists}\n`, stderr: "" };
-      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: "/subscriptions/test/resourceGroups/rg-sample", tags: {} }), stderr: "" };
+      if (args[0] === "group" && args[1] === "show") return { status: 0, stdout: JSON.stringify({ id: `/subscriptions/${options.subscription}/resourceGroups/rg-sample`, tags: {} }), stderr: "" };
       return { status: 1, stdout: "", stderr: `unexpected ${args.join(" ")}` };
     });
     const preview = await planProvisionOperation(options, { persist: false });

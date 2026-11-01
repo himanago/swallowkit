@@ -61,6 +61,14 @@ export interface CapabilitiesContract {
     notes: string[];
   };
   machineCommands: string[];
+  provisioning: {
+    execution: string;
+    completion: string;
+    tracking: string;
+    recovery: string;
+    diagnostics: string;
+    approval: string;
+  };
   verifyChecks: {
     defaultChecks: string[];
     optInChecks: string[];
@@ -214,16 +222,24 @@ export function inspectCapabilities(): CapabilitiesContract {
       notes: ["Editing dev-seeds/*.json alone does nothing; seeds are only applied via dev --seed-env."],
     },
     machineCommands: [
-      "inspect project | entities | routes | artifacts | boundaries | infra | drift | capabilities",
+      "inspect project | entities | routes | artifacts | boundaries | infra | drift | capabilities; inspect provision --plan <runId> [--wait-seconds <0-3600>]",
       "validate project",
       "generate model <names...> | generate scaffold <model>",
-      "plan scaffold <models...> [--api-only] [--skip-infra] | plan auth --provider <p> [--scheme <name>] [--allowed-providers <csv>] | plan provision -g <rg> --location <loc> --swa-location <loc> [--adopt-existing --baseline 0 --what-if] [--reconcile --what-if]",
-      "apply scaffold [models...] --plan <id> [--approve] [--skip-infra] | apply auth --plan <id> [--approve] | apply provision --plan <id> --approve",
+      "plan scaffold <models...> [--api-only] [--skip-infra] | plan auth --provider <p> [--scheme <name>] [--allowed-providers <csv>] | plan provision -g <rg> --location <loc> --swa-location <loc> [--adopt-existing --baseline 0 --what-if] [--reconcile --what-if] [--resume-deployment <name>]",
+      "apply scaffold [models...] --plan <id> [--approve] [--skip-infra] | apply auth --plan <id> [--approve] | apply provision --plan <id> --approve [--wait-seconds <0-3600>] (also resumes the same execution checkpoint)",
       "verify project [--checks <ids>] [--compact]",
       "explain failure [--check <id>]",
       "(regular CLI) migrations add-model <model> [--dry-run] — generate only the container migration after scaffold --skip-infra",
       "(regular CLI) configure-mcp [--version auto|latest|<semver>] — re-select the MCP launcher version in .mcp.json",
     ],
+    provisioning: {
+      execution: "Submit Bicep once with az deployment group create --no-wait, then bounded state polling (default 300 seconds, configurable 0-3600). Azure CLI invocations are bounded separately. Warning-only stderr with exit 0 is not a failure; output capture limits do not terminate az.",
+      completion: "status complete/outcome succeeded requires Azure Succeeded plus verified migration tags and local ledger completion. Running/Accepted -> in-progress; unreadable/not-found state -> blocked/outcome unknown; bookkeeping interruption after Azure Succeeded -> blocked/outcome partial; Failed/Canceled -> failed with Azure causes.",
+      tracking: "Approved runs persist before Azure writes under .swallowkit/state/provision/. runId equals the original planId and preserves the subscription, RG, deployment ID/correlation, fingerprints and migration state. inspect provision is read-only; apply provision --plan resumes without re-submitting attempted deployments. Ctrl+C/termination may leave Azure running; never cancel/delete without explicit consent.",
+      recovery: "For an older untracked baseline, plan provision --resume-deployment <name> compares the existing ARM template and non-secure parameters to the local Bicep/parameters. It observes that deployment and only tags/records it after Succeeded. Mismatches, unreadable evidence, secure parameters or non-baseline migrations block; do not use reconcile just to repair bookkeeping.",
+      diagnostics: "Results include bounded/redacted stdout/stderr, omitted-output flags, exit code, signal, failure kind, elapsed time and deployment identity. Deployment output values are not returned. Never print --debug output, keys, tokens or connection strings.",
+      approval: "Initial apply and every resume require explicit human approval. A passing local command or an ok envelope is not proof of completed Azure provisioning; inspect status, outcome and nextActions.",
+    },
     verifyChecks: {
       defaultChecks: ["structure", "drift", "typecheck", "backend-build"],
       optInChecks: ["build", "lint", "test"],

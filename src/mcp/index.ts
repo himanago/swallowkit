@@ -8,6 +8,7 @@ import * as z from "zod/v4";
 import type { MachineErrorResponse, MachineNextAction, MachineOperationStatus, MachineResponse } from "../machine/contracts";
 import { getSwallowKitVersion } from "../version";
 import { detectFromProject, getCommands } from "../utils/package-manager";
+import { provisionNextActions } from "../core/operations/provision-operations";
 import {
   MCP_DELEGATED_FROM_ENV,
   McpVersionContext,
@@ -24,7 +25,7 @@ interface MachineSuccessPayload<TData> {
   data: TData;
 }
 
-type MachineCliRunner = (args: string[]) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+type MachineCliRunner = (args: string[], signal?: AbortSignal) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 type ToolContentResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 class MachineCliError extends Error {
   constructor(message: string, readonly response: MachineErrorResponse) {
@@ -35,7 +36,7 @@ type ToolDefinition = {
   name: string;
   description: string;
   inputSchema: z.ZodTypeAny;
-  handler: (input: any) => Promise<ToolContentResult>;
+  handler: (input: any, signal?: AbortSignal) => Promise<ToolContentResult>;
 };
 type ExecaModule = typeof import("execa");
 
@@ -48,29 +49,45 @@ function resolveMachineCliEntrypoint(): string {
   return path.resolve(__dirname, "..", "cli", "index.js");
 }
 
-async function defaultMachineCliRunner(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function defaultMachineCliRunner(args: string[], signal?: AbortSignal): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const { execa } = await importModule("execa");
-  const result = await execa(process.execPath, [resolveMachineCliEntrypoint(), "machine", ...args], {
+  const child = execa(process.execPath, [resolveMachineCliEntrypoint(), "machine", ...args], {
     reject: false,
   });
-
+  const abort = () => child.kill("SIGTERM", { forceKillAfterTimeout: 6_000 });
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
+  let result: Awaited<typeof child>;
+  try { result = await child; } finally { signal?.removeEventListener("abort", abort); }
   return {
     stdout: result.stdout,
     stderr: result.stderr,
-    exitCode: result.exitCode ?? 0,
+    exitCode: result.exitCode ?? 1,
   };
 }
 
 async function executeMachineCommand<TData>(
   args: string[],
-  runMachineCli: MachineCliRunner
+  runMachineCli: MachineCliRunner,
+  signal?: AbortSignal
 ): Promise<MachineSuccessPayload<TData>> {
-  const result = await runMachineCli(args);
+  const interrupted = () => {
+    const runId = args[args.indexOf("--plan") + 1];
+    const response: MachineErrorResponse = {
+      ok: false, command: args.slice(0, 2).join("-"), status: "blocked",
+      error: { code: "provision-interrupted", message: "The local MCP wait was interrupted. Azure may continue; inspect the original checkpoint. No Azure cancellation or successful result is implied.", details: { runId, outcome: "unknown", localFailure: "cancelled" } },
+      nextActions: /^[a-f0-9]{12}$/.test(runId) ? provisionNextActions(runId) : [],
+    };
+    return new MachineCliError(response.error.message, response);
+  };
+  if (signal?.aborted) throw interrupted();
+  const result = await (signal ? runMachineCli(args, signal) : runMachineCli(args));
 
   let parsed: MachineResponse<TData>;
   try {
     parsed = JSON.parse(result.stdout) as MachineResponse<TData>;
   } catch {
+    if (signal?.aborted) throw interrupted();
     throw new Error(result.stderr || result.stdout || "Machine CLI returned invalid JSON.");
   }
 
@@ -423,14 +440,16 @@ export function buildSwallowKitToolDefinitions(
         adoptExisting: z.boolean().optional(),
         baseline: z.number().int().nonnegative().optional(),
         reconcile: z.boolean().optional(),
+        resumeDeployment: z.string().optional(),
       }),
-      handler: async ({ resourceGroup, location, swaLocation, subscription, whatIf, adoptExisting, baseline, reconcile }: { resourceGroup: string; location: string; swaLocation: string; subscription?: string; whatIf?: boolean; adoptExisting?: boolean; baseline?: number; reconcile?: boolean }) => {
+      handler: async ({ resourceGroup, location, swaLocation, subscription, whatIf, adoptExisting, baseline, reconcile, resumeDeployment }: { resourceGroup: string; location: string; swaLocation: string; subscription?: string; whatIf?: boolean; adoptExisting?: boolean; baseline?: number; reconcile?: boolean; resumeDeployment?: string }) => {
         const args = ["plan", "provision", "--resource-group", resourceGroup, "--location", location, "--swa-location", swaLocation];
         if (subscription) args.push("--subscription", subscription);
         if (whatIf) args.push("--what-if");
         if (adoptExisting) args.push("--adopt-existing");
         if (baseline !== undefined) args.push("--baseline", String(baseline));
         if (reconcile) args.push("--reconcile");
+        if (resumeDeployment) args.push("--resume-deployment", resumeDeployment);
 
         const response = await executeMachineCommand(args, runMachineCli);
         return jsonTextContent(withOperationStatus(response));
@@ -438,16 +457,32 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_apply_provision",
-      description: "Apply an approved provisioning plan. Creates billable Azure resources; approve=true is always required and must reflect explicit human consent.",
+      description: "Apply or resume an approved provision checkpoint with bounded state polling. Never resubmit an attempted deployment; finish tags/ledger only after Azure Succeeded. Check status/nextActions, not just ok. approve=true always requires explicit human consent.",
       inputSchema: z.object({
         planId: z.string(),
         approve: z.boolean().optional(),
+        waitSeconds: z.number().int().min(0).max(3600).optional(),
       }),
-      handler: async ({ planId, approve }: { planId: string; approve?: boolean }) => {
+      handler: async ({ planId, approve, waitSeconds }: { planId: string; approve?: boolean; waitSeconds?: number }, signal?: AbortSignal) => {
         const args = ["apply", "provision", "--plan", planId];
         if (approve) args.push("--approve");
+        if (waitSeconds !== undefined) args.push("--wait-seconds", String(waitSeconds));
 
-        const response = await executeMachineCommand(args, runMachineCli);
+        const response = await executeMachineCommand(args, runMachineCli, signal);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_inspect_provision",
+      description: "Read or bounded-wait for the original provision deployment. No create, cancel, delete, tag, or ledger writes. Azure Succeeded alone is partial until the original approved checkpoint finishes bookkeeping.",
+      inputSchema: z.object({
+        planId: z.string(),
+        waitSeconds: z.number().int().min(0).max(3600).optional(),
+      }),
+      handler: async ({ planId, waitSeconds }: { planId: string; waitSeconds?: number }, signal?: AbortSignal) => {
+        const args = ["inspect", "provision", "--plan", planId];
+        if (waitSeconds !== undefined) args.push("--wait-seconds", String(waitSeconds));
+        const response = await executeMachineCommand(args, runMachineCli, signal);
         return jsonTextContent(withOperationStatus(response));
       },
     },
@@ -456,9 +491,9 @@ export function buildSwallowKitToolDefinitions(
   // Every response reports which SwallowKit version answered and why it was selected.
   return definitions.map((definition) => ({
     ...definition,
-    handler: async (input: unknown) => {
+    handler: async (input: unknown, signal?: AbortSignal) => {
       try {
-        const result = await definition.handler(input);
+        const result = await definition.handler(input, signal);
         return jsonTextContent(withSwallowKitMetadata(JSON.parse(result.content[0].text)));
       } catch (error) {
         // Prerequisite failures carry nextActions; keep them structured so agents can follow them.
@@ -488,7 +523,7 @@ export function createSwallowKitMcpServer(
         description: tool.description,
         inputSchema: tool.inputSchema,
       },
-      tool.handler
+      (input, extra) => tool.handler(input, extra.signal)
     );
   }
 

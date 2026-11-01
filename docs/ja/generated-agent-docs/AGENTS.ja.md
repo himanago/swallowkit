@@ -369,6 +369,24 @@ Azure provisioning は human-approved operation です。
 なりません。広い deployment request 自体は、その workflow が要求する明示的 approval を
 付与しません。
 
+Provision は Bicep を一度送信し、元の Azure deployment を時間を区切って確認します。
+ローカルの timeout／error、出力の省略、Ctrl+C は Azure の失敗を意味しません。
+`in-progress` は Running／Accepted、`unknown` は結果を照会できない状態、
+`partial` は Azure 成功後の tag／ledger 未完了です。待機や記録の修復だけのために
+Bicep を再送したり、reconcile／adopt／cancel／delete を実行したりしないでください。
+
+`.swallowkit/state/provision/` の実行チェックポイントを保持し、
+`{{runCmd}} swallowkit machine inspect provision --plan <runId> --wait-seconds 300`
+で読み取り専用の状態確認／待機を行います。再度、人間の明示承認を得て
+`{{runCmd}} swallowkit machine apply provision --plan <runId> --approve`
+で再開してください。runId は元の planId と同じです。fingerprint、subscription、
+deployment の識別子、migration のチェックは引き続き有効です。
+Azure Succeeded と tag／ledger の確認が完了した
+`status: "complete"`／`outcome: "succeeded"` だけを全体の成功と扱ってください。
+deployment outputs の秘密値や `az --debug` の生の出力を表示してはいけません。
+旧版の未追跡 baseline は、元の target／regions と
+`plan provision --resume-deployment <name>` を使い、ARM／parameters の一致を確認します。
+
 <!-- source-section: SwallowKit Agent Skills and Runbooks -->
 ## SwallowKit Agent Skills と runbook
 

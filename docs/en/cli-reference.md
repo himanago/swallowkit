@@ -1266,7 +1266,7 @@ pnpm dlx swallowkit provision [options]
 
 | Option | Short | Description | Required |
 |--------|-------|-------------|----------|
-| `--resource-group <name>` | `-g` | Resource group name | ✅ |
+| `--resource-group <name>` | `-g` | Resource group name; required for a new preview, not checkpoint status/resume | |
 | `--subscription <id>` | | Subscription ID | |
 | `--location <region>` | | Functions/Cosmos DB region; required non-interactively | |
 | `--swa-location <region>` | | Static Web Apps region; required non-interactively | |
@@ -1275,6 +1275,10 @@ pnpm dlx swallowkit provision [options]
 | `--baseline <version>` | | Adoption baseline; currently only `0` | |
 | `--reconcile` | | Explicitly redeploy all of `main.bicep` | |
 | `--approve` | | Run the displayed Azure commands without the confirmation prompt | |
+| `--status <runId>` | | Read the original deployment/checkpoint without Azure or ledger writes | |
+| `--resume <runId>` | | Resume the original approved checkpoint; never resubmit an attempted deployment | |
+| `--resume-deployment <name>` | | Recover an older baseline after ARM/non-secure parameter verification; no deployment create | |
+| `--wait-seconds <seconds>` | | Bounded state wait, 0-3600; default 300 for apply/resume, 0 for status | |
 
 ### Region Selection
 
@@ -1359,6 +1363,20 @@ npx swallowkit provision \
 | Azure version is ahead or checksums differ | Stop without applying changes |
 
 The tag is checked again immediately before apply and before every migration. A concurrent deployment causes `stale-azure-state` rather than applying against an unexpected version.
+
+### Waiting and Recovery
+
+Deployments use `--no-wait` plus bounded polling. Running/Accepted returns `in-progress`; an unreadable/missing state returns `blocked` with `outcome: "unknown"`, not an invented Azure failure. Failed/Canceled includes sanitized Azure causes. Succeeded with incomplete tag/ledger updates is `partial`; only completed bookkeeping returns `complete`.
+
+```powershell
+pnpm exec swallowkit provision --status <runId> --wait-seconds 300
+pnpm exec swallowkit provision --resume <runId> --approve
+# Machine/MCP equivalent: runId equals original planId
+pnpm exec swallowkit machine inspect provision --plan <runId> --wait-seconds 300
+pnpm exec swallowkit machine apply provision --plan <runId> --approve
+```
+
+Keep the execution checkpoint under `.swallowkit/state/provision/`. Resume requires approval again and preserves fingerprints, subscription, deployment identity and migration checksums. Ctrl+C/hard termination may leave Azure running; no automatic cancel/delete is performed. Do not replan/reconcile just to fix waiting or bookkeeping. See [older untracked baseline recovery](./deployment-guide.md#recover-an-older-untracked-baseline) for `--resume-deployment`.
 
 ## swallowkit migrations init
 
