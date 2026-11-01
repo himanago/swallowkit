@@ -29,7 +29,7 @@ describe("init persistence instructions", () => {
         const project = path.join(root, "fictional-app");
         fs.mkdirSync(path.join(project, "app"), { recursive: true });
         fs.writeFileSync(path.join(project, "package.json"), JSON.stringify({ name: "fictional-app", scripts: {}, dependencies: {} }));
-        fs.writeFileSync(path.join(project, "next.config.ts"), "const nextConfig = {};\nexport default nextConfig;\n");
+        fs.writeFileSync(path.join(project, "next.config.ts"), "const nextConfig = { cacheComponents: true };\nexport default nextConfig;\n");
         fs.writeFileSync(path.join(project, "tsconfig.json"), '{"compilerOptions":{}}');
       }
       const child = new childProcess.ChildProcess();
@@ -51,6 +51,16 @@ describe("init persistence instructions", () => {
       cosmosDbMode: "serverless", vnet: "none", swaPlan: "free", packageManager,
     });
     const project = path.join(root, "fictional-app");
+    const home = fs.readFileSync(path.join(project, "app", "page.tsx"), "utf-8");
+    expect(home).toMatch(/^'use client'/);
+    expect(home).not.toMatch(/export const (dynamic|revalidate|fetchCache)\b/);
+    expect(home).toContain("useState");
+    expect(home).toContain("fetch('/api/greet?name=SwallowKit')");
+    expect(home).toContain("onClick={testConnection}");
+    expect(home).toContain("scaffoldConfig.models.map");
+    const config = fs.readFileSync(path.join(project, "next.config.ts"), "utf-8");
+    expect(config).toContain("cacheComponents: true");
+    expect(config).toContain("output: 'standalone'");
     const agents = fs.readFileSync(path.join(project, "AGENTS.md"), "utf-8");
     expect(agents).toBe(buildAgentsMd({ projectName: "fictional-app", backendLanguage: "typescript", packageManager }));
     expect(agents).toContain("**whether or not it uses custom APIs**");
