@@ -89,10 +89,36 @@ async function printProvisionSetup(result: ApplyProvisionResult): Promise<void> 
   for (const field of fields) {
     if (typeof outputs[field] === "string") console.log(`  ${field}: ${outputs[field]}`);
   }
-  console.log("\nCI/CD settings:");
-  console.log(`  AZURE_FUNCTIONAPP_NAME: ${typeof outputs.functionsAppName === "string" ? outputs.functionsAppName : "<functions-app-name>"}`);
-  console.log("  Retrieve AZURE_STATIC_WEB_APPS_API_TOKEN and AZURE_FUNCTIONAPP_PUBLISH_PROFILE privately from Azure Portal and save them in your CI/CD secrets.");
-  console.log("  Secret values are not printed or stored by SwallowKit. Trigger the first application deployment after configuring CI/CD.");
+  const swaName = typeof outputs.staticWebAppName === "string" ? outputs.staticWebAppName : "<swa-name>";
+  const functionsAppName = typeof outputs.functionsAppName === "string" ? outputs.functionsAppName : "<functions-app-name>";
+  const target = ["--resource-group", reference.resourceGroup, "--subscription", reference.subscription];
+  const swaTokenArgs = ["staticwebapp", "secrets", "list", "--name", swaName, ...target, "--query", "properties.apiKey", "-o", "tsv"];
+  const publishProfileArgs = ["webapp", "deployment", "list-publishing-profiles", "--name", functionsAppName, ...target, "--xml"];
+
+  console.log("\nCI/CD settings (save these as secrets in GitHub Actions or Azure Pipelines):\n");
+  console.log("  [AZURE_STATIC_WEB_APPS_API_TOKEN]");
+  console.log(await readCiCdSecret(swaTokenArgs, typeof outputs.staticWebAppName === "string"));
+  console.log("  [AZURE_FUNCTIONAPP_NAME]");
+  console.log(`    ${functionsAppName}\n`);
+  console.log("  [AZURE_FUNCTIONAPP_PUBLISH_PROFILE]");
+  console.log(await readCiCdSecret(publishProfileArgs, typeof outputs.functionsAppName === "string"));
+  console.log("  These values are shown only in this terminal; SwallowKit does not store them. Treat them as secrets.");
+  console.log("  Next: configure your CI/CD pipeline and manually trigger the first deployment (later pushes deploy automatically).");
+}
+
+// Reads a CI/CD credential for display in the human terminal only. The value is
+// never written to checkpoints, the ledger, or machine/MCP responses.
+async function readCiCdSecret(args: string[], resourceKnown: boolean): Promise<string> {
+  const manual = `    Run manually: az ${args.map((arg) => (/[\s"]/.test(arg) ? `"${arg}"` : arg)).join(" ")}\n`;
+  if (!resourceKnown) return `    ⚠️ The resource name was not in the deployment outputs.\n${manual}`;
+  try {
+    const response = await runAzCliAsync(args, { timeout: 60_000 });
+    const value = response.stdout.trim();
+    if (response.status === 0 && !response.failureKind && !response.stdoutTruncated && value) return `    ${value}\n`;
+  } catch {
+    // Fall through to the manual command; deployment itself already succeeded.
+  }
+  return `    ⚠️ Could not retrieve automatically.\n${manual}`;
 }
 
 export function describeProvisionAction(plan: Pick<ProvisionPlanData, "mode" | "resourceGroup" | "location" | "pendingMigrations">): string {

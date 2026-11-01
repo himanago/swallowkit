@@ -128,6 +128,7 @@ interface FixtureState {
   operations?: unknown[];
   outputs?: Record<string, string>;
   outputQueryFails?: boolean;
+  secretQueryFails?: boolean;
 }
 
 describe("provision execution, diagnosis and recovery using an az subprocess fixture", () => {
@@ -618,7 +619,7 @@ describe("provision execution, diagnosis and recovery using an az subprocess fix
     await runCli(["node", "swallowkit", "provision", "-g", options.resourceGroup, "--location", options.location, "--swa-location", options.swaLocation]);
     const output = logs.join("\n");
     expect(output).toContain("Provisioning completed");
-    expect(output).toContain("AZURE_FUNCTIONAPP_NAME: func-fixture");
+    expect(output).toContain("[AZURE_FUNCTIONAPP_NAME]\n    func-fixture");
     expect(output).not.toMatch(/still in progress|local wait ended|--wait-seconds/);
     expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 1 });
   }, 30_000);
@@ -630,13 +631,37 @@ describe("provision execution, diagnosis and recovery using an az subprocess fix
     await runCli(["node", "swallowkit", "provision", "-g", options.resourceGroup, "--location", options.location, "--swa-location", options.swaLocation]);
     const output = logs.join("\n");
     expect(output).toContain("Provisioning completed");
-    expect(output).toContain("AZURE_FUNCTIONAPP_NAME: func-fixture");
-    expect(output).toContain("AZURE_STATIC_WEB_APPS_API_TOKEN");
+    expect(output).toContain("[AZURE_FUNCTIONAPP_NAME]\n    func-fixture");
+    expect(output).toContain("[AZURE_STATIC_WEB_APPS_API_TOKEN]\n    fixture-swa-token-for-swa-fixture");
+    expect(output).toContain("[AZURE_FUNCTIONAPP_PUBLISH_PROFILE]\n    <publishData><publishProfile publishUrl=\"func-fixture.scm.azurewebsites.net\" /></publishData>");
     expect(output).not.toContain("secret-not-for-terminal");
     expect(output).not.toMatch(/machine |--approve|Run these Azure commands|Plan /);
     expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 1 });
-    expect(read().calls.some(args => args[0] === "staticwebapp" && args[1] === "secrets")).toBe(false);
-  });
+    const secretCalls = read().calls.filter(args => args[0] === "staticwebapp" || args[0] === "webapp");
+    expect(secretCalls).toEqual([
+      ["staticwebapp", "secrets", "list", "--name", "swa-fixture", "--resource-group", options.resourceGroup, "--subscription", expect.any(String), "--query", "properties.apiKey", "-o", "tsv"],
+      ["webapp", "deployment", "list-publishing-profiles", "--name", "func-fixture", "--resource-group", options.resourceGroup, "--subscription", expect.any(String), "--xml"],
+    ]);
+    const walk = (directory: string): string[] => fs.readdirSync(directory, { withFileTypes: true })
+      .flatMap(entry => entry.isDirectory() ? walk(path.join(directory, entry.name)) : [path.join(directory, entry.name)]);
+    for (const absolute of walk(project).filter(file => !path.basename(file).startsWith("az-state.json"))) {
+      expect(fs.readFileSync(absolute, "utf8")).not.toContain("fixture-swa-token");
+      expect(fs.readFileSync(absolute, "utf8")).not.toContain("<publishData>");
+    }
+  }, 30_000);
+
+  it("prints manual commands for CI/CD secrets when retrieval fails without failing provisioning", async () => {
+    update({ secretQueryFails: true, outputs: { functionsAppName: "func-fixture", staticWebAppName: "swa-fixture" } });
+    const logs: string[] = [];
+    jest.spyOn(console, "log").mockImplementation((text: unknown) => { logs.push(String(text)); });
+    await runCli(["node", "swallowkit", "provision", "-g", options.resourceGroup, "--location", options.location, "--swa-location", options.swaLocation]);
+    const output = logs.join("\n");
+    expect(output).toContain("Provisioning completed");
+    expect(output).toMatch(/Run manually: az staticwebapp secrets list --name swa-fixture --resource-group \S+ --subscription \S+ --query properties\.apiKey -o tsv/);
+    expect(output).toMatch(/Run manually: az webapp deployment list-publishing-profiles --name func-fixture --resource-group \S+ --subscription \S+ --xml/);
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(read()).toMatchObject({ deploymentCreates: 1, tagAttempts: 1 });
+  }, 30_000);
 
   it("keeps normal CLI terminal failure instructions human-only and does not suggest resuming as a repair", async () => {
     update({ states: ["Failed"], error: { code: "NotFound", message: "Request url is invalid." } });

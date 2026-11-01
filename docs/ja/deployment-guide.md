@@ -50,7 +50,7 @@ npx swallowkit provision --resource-group my-app-rg \
   --location japaneast --swa-location eastasia
 ```
 
-リージョンを省略した場合は対話式に選択します。通常の `provision` を実行すること自体がデプロイの指示であり、追加のコマンド承認や machine の plan／apply 操作は不要です。Azure の状態を確認し、初回は `infra/main.bicep` をデプロイして baseline 0 を記録します。成功後にはリソース名・URL と CI/CD 設定手順を表示します。秘密値は自動表示せず、利用者が非公開で取得します。内部のチェックポイントと migration 管理は、送信済み deployment の二重実行や既存アプリ設定の上書きを防ぐために維持します。エージェント向けの machine／MCP は別の入口であり、保存済み plan と明示的な人の承認が必要です。
+リージョンを省略した場合は対話式に選択します。通常の `provision` を実行すること自体がデプロイの指示であり、追加のコマンド承認や machine の plan／apply 操作は不要です。Azure の状態を確認し、初回は `infra/main.bicep` をデプロイして baseline 0 を記録します。成功後にはリソース名・URL と、CI/CD に必要な3つの値 `AZURE_STATIC_WEB_APPS_API_TOKEN`（SWA のデプロイトークン）、`AZURE_FUNCTIONAPP_NAME`、`AZURE_FUNCTIONAPP_PUBLISH_PROFILE`（発行プロファイルの XML）を表示します。これらはターミナルに表示するだけで、SwallowKit は保存しません。値を取得できなかった場合は、取得用の `az` コマンドを代わりに表示し、provision 自体は成功として扱います。内部のチェックポイントと migration 管理は、送信済み deployment の二重実行や既存アプリ設定の上書きを防ぐために維持します。エージェント向けの machine／MCP は別の入口であり、保存済み plan と明示的な人の承認が必要です。
 
 このコマンドは Bicep テンプレートを使用して以下を作成します:
 - Azure Static Web Apps
@@ -64,7 +64,7 @@ npx swallowkit provision --resource-group my-app-rg \
 
 #### 待機の中断と部分完了
 
-Bicep は `--no-wait` で一度だけ送信します。通常の `provision`（および `provision --resume`）は、Azure が `Succeeded`／`Failed`／`Canceled` になるまで元の deployment を確認し続けます。全体の待ち時間に上限はないため、10〜20分かかる deployment も1回の実行で完了まで待ち、その後にリソース情報と CI/CD の設定値を表示します。個々の az 呼び出しには制限があり、一時的な状態照会エラーは再試行します。machine／MCP の apply は、エージェントにすぐ応答を返すため、従来どおり待機時間を区切ります（既定300秒、`--wait-seconds` は0〜3600秒）。stderr に warning があっても exit code が0なら、それだけで失敗にはしません。大量の出力は読み捨て、出力上限で az を停止しません。診断には exit code、signal、timeout／通信エラー、経過時間、出力を省略した事実を含め、キーや token などを伏せます。machine／MCP は deployment outputs を返しません。通常 CLI は成功後に決められたリソース情報だけを取得し、任意の outputs や認証情報は表示しません。
+Bicep は `--no-wait` で一度だけ送信します。通常の `provision`（および `provision --resume`）は、Azure が `Succeeded`／`Failed`／`Canceled` になるまで元の deployment を確認し続けます。全体の待ち時間に上限はないため、10〜20分かかる deployment も1回の実行で完了まで待ち、その後にリソース情報と CI/CD の設定値を表示します。個々の az 呼び出しには制限があり、一時的な状態照会エラーは再試行します。machine／MCP の apply は、エージェントにすぐ応答を返すため、従来どおり待機時間を区切ります（既定300秒、`--wait-seconds` は0〜3600秒）。stderr に warning があっても exit code が0なら、それだけで失敗にはしません。大量の出力は読み捨て、出力上限で az を停止しません。診断には exit code、signal、timeout／通信エラー、経過時間、出力を省略した事実を含め、キーや token などを伏せます。machine／MCP は deployment outputs を返しません。通常 CLI は成功後、決められたリソース情報の outputs だけを読み（任意の outputs は表示しません）、SWA のデプロイトークンと Functions の発行プロファイルを `az` で取得してターミナルにだけ表示します。
 
 Ctrl+C や状態を照会できない状態の継続で待機が途中で終わった場合、Azure が `Running`／`Accepted` なら進行中と表示し、`provision-failed` にはしません。照会できない場合や DeploymentNotFound は `unknown`（`blocked`）であり、Azure の失敗を意味しません。`Failed`／`Canceled` では、秘密を伏せた Azure のエラーと deployment operations の原因を示します。`Succeeded` でも migration tag とローカル ledger が未完了なら、全体は **partial** です。
 
@@ -114,12 +114,14 @@ git push origin main
 - **GitHub Actions**: Actions タブ → 実行中のワークフローをクリック → Cancel workflow
 - **Azure Pipelines**: Pipelines → 実行中のパイプラインをクリック → Cancel
 
-#### ステップ 4-2: Azure CLI で secrets / variables を取得して登録
+#### ステップ 4-2: secrets / variables を登録
+
+`swallowkit provision` が「CI/CD settings」に表示した値を使います。自動取得できなかった値は、その横に表示された `az` コマンドで取得してください。
 
 ##### GitHub Actions の場合
 
 1. GitHub リポジトリの Settings → Secrets and variables → Actions
-2. Azure CLI で取得した値を使って以下のシークレットを追加：
+2. 以下のシークレットを追加：
   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
   - `AZURE_FUNCTIONAPP_NAME`
   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
@@ -128,7 +130,7 @@ git push origin main
 
 1. Azure DevOps → Pipelines → Library → Variable groups
 2. `azure-deployment` という名前のグループを作成
-3. Azure CLI で取得した値を使って以下を追加：
+3. 以下を追加：
   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
   - `AZURE_FUNCTIONAPP_NAME`
   - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`

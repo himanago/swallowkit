@@ -69,6 +69,20 @@ if (args[0] === "--version") {
     apply();
     save();
   }
+} else if (args[0] === "staticwebapp" && args[1] === "secrets" && args[2] === "list") {
+  if (state.secretQueryFails) {
+    console.error("ERROR: fixture secret query failed");
+    process.exitCode = 1;
+  } else {
+    process.stdout.write(`fixture-swa-token-for-${value("--name")}\n`);
+  }
+} else if (args[0] === "webapp" && args[1] === "deployment" && args[2] === "list-publishing-profiles") {
+  if (state.secretQueryFails) {
+    console.error("ERROR: fixture publish profile query failed");
+    process.exitCode = 1;
+  } else {
+    process.stdout.write(`<publishData><publishProfile publishUrl="${value("--name")}.scm.azurewebsites.net" /></publishData>\n`);
+  }
 } else if (args[0] === "deployment" && args[1] === "operation") {
   emit(state.operations ?? []);
 } else if (args[0] === "deployment" && args[2] === "export") {
