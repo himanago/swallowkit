@@ -199,6 +199,24 @@ Agent Skills 対応 runtime では `swallowkit-add-model`、`swallowkit-modify-m
 `.swallowkit/workflows/` runbook を読みます。これらは上位の implementation process から
 呼び出せる task-level capability です。
 
+### カスタム API の有無にかかわらず、永続化モデルのインフラを生成する
+
+生成される `AGENTS.md` は、カスタム API が CRUD を置き換える場合も、永続化モデルの
+作成・インフラ生成を必須としています。
+`npx swallowkit machine generate model <model> --overwrite never` (`create-model` 相当) から始め、
+スキーマを編集して shared の export を確認してください。モデル作成だけでは Cosmos DB コンテナーは生成されません。
+生成 CRUD が必要なら plan/apply scaffold を使います。`--api-only` は UI を省略するだけで、CRUD は生成します。
+カスタム API では `npx swallowkit migrations add-model <model> --dry-run` で差分を確認し、
+`npx swallowkit migrations add-model <model>` でコンテナーを生成してください。不要な CRUD の生成は必要ありません。
+pnpm を使う場合は `npx` を `pnpm exec` に置き換えます。
+
+entities、infra、artifacts、drift を inspect し、verify project を実行してください。
+モデルのコンテナー名・partition key と Bicep、マイグレーション manifest、生成台帳の対応を確認します。
+既存 baseline の接続や外部コネクターの対応も、該当する場合は検証してください。
+`--skip-infra` などで生成を延期する場合は、理由と未完了事項を明示します。
+verify が通っても、必要なインフラがない状態で完了扱いやデプロイ可能という案内をしてはなりません。
+ローカルでの生成は Azure provisioning の許可ではありません。
+
 ### エージェントへの依頼例
 
 モデル変更は、生成ファイルごとの修正ではなく、実現したい振る舞いとして依頼します。

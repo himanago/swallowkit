@@ -22,6 +22,18 @@ source-of-truth models, subject to the current result of
   `shared/index.ts`, including manually authored models. Manual exports are
   allowed; there are no managed markers and existing content is preserved.
 - For relationships, use nested schemas rather than duplicating model shapes.
+- For every new persistent model, follow the root `AGENTS.md` persistent-model
+  workflow even with custom APIs. Use `{{runCmd}} swallowkit machine generate model <model> --overwrite never`
+  (the `create-model` equivalent), preserve existing schemas, and generate the
+  required infrastructure. Model creation alone does not create a container.
+  Use plan/apply scaffold when CRUD is needed; for custom APIs replacing CRUD,
+  review `{{runCmd}} swallowkit migrations add-model <model> --dry-run`, then run
+  `{{runCmd}} swallowkit migrations add-model <model>` without unnecessary CRUD.
+  Check the model, container Bicep, migration manifest, and artifact ledger
+  correspondence, then inspect drift and verify project. For connector models,
+  verify the external connector mapping instead of generating a Cosmos container.
+  If generation is deferred, state why and what remains; do not claim completion
+  or deployment readiness while required infrastructure is missing.
 
 ## Optional model declarations (exact formats)
 
