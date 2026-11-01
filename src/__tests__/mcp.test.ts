@@ -8,6 +8,62 @@ const builtMcpEntrypoint = path.resolve(__dirname, "..", "..", "dist", "mcp", "i
 const itWhenBuiltEntrypointExists = fs.existsSync(builtMcpEntrypoint) ? it : it.skip;
 
 describe("SwallowKit MCP tool definitions", () => {
+  it.each([
+    { status: "in-progress", outcome: "in-progress", state: "Running" },
+    { status: "blocked", outcome: "partial", state: "Succeeded" },
+  ])("does not promote $outcome provisioning to complete", async ({ status, outcome, state }) => {
+    const nextActions = [{ command: "swallowkit machine inspect provision --plan 123456789abc", description: "Read original state." }];
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({ ok: true, command: "apply-provision", status, nextActions, data: { outcome, deployment: { state } } }),
+      stderr: "", exitCode: 0,
+    }));
+    const tool = buildSwallowKitToolDefinitions(runner).find(candidate => candidate.name === "swallowkit_apply_provision")!;
+    const result = await tool.handler({ planId: "123456789abc", approve: true, waitSeconds: 0 });
+    expect(runner).toHaveBeenCalledWith(["apply", "provision", "--plan", "123456789abc", "--approve", "--wait-seconds", "0"]);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ status, outcome, deployment: { state }, nextActions });
+  });
+
+  it.each([
+    { status: "requires-human", code: "approval-required" },
+    { status: "failed", code: "azure-deployment-failed" },
+  ])("preserves $code and recovery actions", async ({ status, code }) => {
+    const nextActions = [{ command: "swallowkit machine apply provision --plan 123456789abc --approve", description: "Obtain human approval." }];
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({ ok: false, command: "apply-provision", status, error: { code, message: "Fixture error." }, nextActions }),
+      stderr: "", exitCode: 1,
+    }));
+    const tool = buildSwallowKitToolDefinitions(runner).find(candidate => candidate.name === "swallowkit_apply_provision")!;
+    const result = await tool.handler({ planId: "123456789abc" });
+    expect(runner).toHaveBeenCalledWith(["apply", "provision", "--plan", "123456789abc"]);
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ status, error: { code }, nextActions });
+  });
+
+  it.each(["swallowkit_apply_provision", "swallowkit_inspect_provision"])("forwards cancellation and preserves an unknown outcome for %s", async name => {
+    const controller = new AbortController();
+    const runner = jest.fn(async (_args: string[], signal?: AbortSignal) => {
+      expect(signal).toBe(controller.signal);
+      controller.abort();
+      return { stdout: "", stderr: "", exitCode: 143 };
+    });
+    const tool = buildSwallowKitToolDefinitions(runner).find(candidate => candidate.name === name)!;
+    const result = await tool.handler({ planId: "123456789abc", approve: true }, controller.signal);
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      status: "blocked", error: { code: "provision-interrupted", details: { outcome: "unknown", localFailure: "cancelled" } },
+      nextActions: expect.arrayContaining([expect.objectContaining({ command: "swallowkit machine inspect provision --plan 123456789abc" })]),
+    });
+  });
+
+  it("does not launch provision after the MCP request was already cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const runner = jest.fn(async () => ({ stdout: "", stderr: "", exitCode: 1 }));
+    const tool = buildSwallowKitToolDefinitions(runner).find(candidate => candidate.name === "swallowkit_apply_provision")!;
+    expect((await tool.handler({ planId: "123456789abc", approve: true }, controller.signal)).isError).toBe(true);
+    expect(runner).not.toHaveBeenCalled();
+  });
+
   it("preserves blocked auth prerequisites and nextActions as structured MCP errors", async () => {
     const nextActions = [{ command: "swallowkit machine plan auth --provider swa", description: "Configure auth first." }];
     const runner = jest.fn(async () => ({

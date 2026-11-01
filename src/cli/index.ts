@@ -6,6 +6,7 @@ import * as path from "path";
 import { Command } from "commander";
 import { initCommand, devCommand, devSeedsCommand, scaffoldCommand, createModelCommand } from "./commands";
 import { provisionCommand } from "./commands/provision";
+import { AzureCliDiagnostic, formatAzureDiagnostic } from "../utils/azure-diagnostics";
 import { createMigrationCommand } from "./commands/create-migration";
 import { migrationsCommand } from "./commands/migrations";
 import { configureMcpCommand } from "./commands/configure-mcp";
@@ -365,7 +366,16 @@ export function formatCliError(error: unknown): string {
     if (details && typeof details === "object") {
       if (typeof details.nextAction === "string") lines.push(`   Next: ${details.nextAction}`);
       if (Array.isArray(details.changedFiles)) lines.push(`   Changed files: ${details.changedFiles.join(", ")}`);
+      if (typeof details.runId === "string") lines.push(`   Run: ${details.runId}`);
+      if (details.deployment && typeof details.deployment === "object") {
+        const deployment = details.deployment as { state?: string; reference?: { name?: string; id?: string; resourceGroup?: string; subscription?: string } };
+        lines.push(`   Deployment: ${deployment.reference?.id ?? deployment.reference?.name ?? "unknown"}; state: ${deployment.state ?? "unknown"}`);
+      }
+      if (Array.isArray(details.diagnostics)) {
+        for (const diagnostic of details.diagnostics as AzureCliDiagnostic[]) lines.push(formatAzureDiagnostic(diagnostic));
+      }
     }
+    for (const action of error.nextActions ?? []) lines.push(`   Next: ${action.command} — ${action.description}`);
     return lines.join("\n");
   }
   if (error instanceof Error) {

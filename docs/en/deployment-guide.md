@@ -51,7 +51,7 @@ npx swallowkit provision --resource-group my-app-rg \
   --location japaneast --swa-location eastasia
 ```
 
-If regions are omitted, the command prompts for them. On the first run it verifies that the resource group does not exist, deploys `infra/main.bicep`, and records migration baseline 0 in a resource-group tag. Before anything changes, the command reads the current Azure state, explains what will happen, lists the exact Azure CLI commands, and asks for confirmation. Nothing is saved for later; if Azure changes before the commands run, the command stops and asks you to run it again. (Agents use the separate `swallowkit machine plan provision` / `apply provision --plan` workflow.)
+If regions are omitted, the command prompts for them. On the first run it verifies that the resource group does not exist, deploys `infra/main.bicep`, and records migration baseline 0 in a resource-group tag. Before anything changes, it reads Azure state, explains the action, lists the Azure CLI commands, and asks for confirmation. The preview is in memory; after approval an execution checkpoint is saved before any Azure write. The machine/MCP flow uses the same executor with a saved plan.
 
 This creates using Bicep templates:
 - Azure Static Web Apps
@@ -62,6 +62,35 @@ This creates using Bicep templates:
 If `az` cannot be found or started, the command exits without asking for confirmation, and nothing is changed in Azure. A `az-cli-not-found` warning means `az` is not on PATH, and `az-cli-not-runnable` means it was found but failed to start. If you are not signed in, the command asks you to run `az login`. Fix the cause and run `provision` again.
 
 In non-interactive environments, pass `--location`, `--swa-location`, and `--approve`. Obtain CI/CD secrets with the Azure CLI commands later in this guide.
+
+#### Interrupted waiting and partial completion
+
+Bicep is submitted once with `--no-wait`; SwallowKit then polls the original deployment for up to 300 seconds by default. `--wait-seconds` accepts 0-3600. Individual az calls are bounded too. Warning-only stderr with exit 0 is not failure, and excess output is drained/discarded instead of killing az. Diagnostics distinguish exit code, signal, timeout/communication errors and Azure state, with bounded/redacted output and an omission flag. Deployment output values are not returned.
+
+Azure `Running`/`Accepted` returns `in-progress`, not `provision-failed`. An unreadable or not-found deployment returns `unknown` (`blocked`); it is not evidence of Azure failure. Azure `Failed`/`Canceled` reports its sanitized error and failed operation causes. Azure `Succeeded` is only **partial** until the migration tag and local ledger finish.
+
+Keep `.swallowkit/state/provision/` and use the displayed run ID (the original plan ID):
+
+```powershell
+pnpm exec swallowkit provision --status <runId> --wait-seconds 300
+# Only after reviewing the original run and approving pending steps:
+pnpm exec swallowkit provision --resume <runId> --approve
+```
+
+Status/wait is read-only. Resume rechecks the original subscription, deployment ID/correlation, fingerprints and migration checksums. It never re-submits an attempted deployment; it can finish unattempted reviewed steps and tag/ledger bookkeeping. If tag/ledger writes failed after Azure Succeeded, resume that checkpoint rather than redeploying the baseline. Ctrl+C or hard termination may leave Azure running; SwallowKit never cancels/deletes it automatically. A forcibly killed process cannot print a final result, but its pre-write checkpoint supports recovery.
+
+Cancelling an MCP provision request also stops its local machine child/wait, not the Azure deployment. Inspect the original plan/run ID before resuming; a cancelled or missing MCP response is not evidence of Azure failure.
+
+#### Recover an older untracked baseline
+
+For an interrupted bootstrap from a version without execution checkpoints, first read the original deployment; do not run a new bootstrap or `--reconcile` merely to fix tagging:
+
+```powershell
+az deployment group show --resource-group <original-rg> --name swallowkit-baseline --subscription <original-subscription> --query "{state:properties.provisioningState,error:properties.error}" -o json
+pnpm exec swallowkit provision -g <original-rg> --subscription <original-subscription> --location japaneast --swa-location eastasia --resume-deployment swallowkit-baseline
+```
+
+With a CLI containing this recovery option, the second command compares the existing deployment's exported ARM template and non-secure parameters to the original local Bicep/parameter files, presents an observation/tag-only preview, and asks for approval. It never sends a deployment create. Running deployments are tracked; after Succeeded it finishes tags/ledger. Template/parameter mismatches, unreadable evidence, secure parameters, legacy manifests, or non-baseline migration recovery block rather than guessing. Restore matching reviewed files; do not replace the manifest or weaken checks. Inspect error messages locally and redact secrets before sharing them.
 
 ### 3. Push Code
 
@@ -249,7 +278,7 @@ npx swallowkit create-migration add-search
 npx swallowkit provision -g my-app-rg --location japaneast --swa-location eastasia
 ```
 
-`provision` compares the resource-group version/checksum tag with the local manifest and applies only pending migrations in ascending order. The tag advances after each successful migration, so a failure can be recovered by planning and applying again. Never edit an applied migration; add a corrective migration instead.
+`provision` compares the resource-group version/checksum tag with the local manifest and applies only pending migrations in ascending order. The tag advances after each successful migration. An interrupted wait/tag/ledger update must resume the original execution checkpoint, not create a fresh deployment. Never edit an applied migration; add a corrective migration instead.
 
 ### Projects Created by Older SwallowKit Versions
 

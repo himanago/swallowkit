@@ -117,9 +117,12 @@ pnpm exec swallowkit machine apply provision --plan <planId> --approve
 ```
 :::
 
-- `plan provision` はローカルの決定論的プリフライトのみを行います（Bicep 解析、az CLI の有無、実行予定コマンドのプレビュー）。Azure への接続や `az login` は不要です。
-- `--what-if` を明示した場合のみ `az deployment group what-if` を実行します（`az login` 済みが前提）。
+- `plan provision` はローカル Bicep を解析し、az が使える場合は Azure の subscription／Resource Group／migration 状態を照会します。リソースは作成しませんが、オンラインの計画には Azure 接続と `az login` が必要です。az が使えない場合の offline preview は適用できません。
+- `--what-if` は追加で Azure の変更予定を照会します。リソースは変更しません。
 - provision は課金リソースを作成するため、plan は常に `requiresApproval: true`（`status: "requires-human"`）です。`apply provision` は人間の承認を反映した `--approve` がない限り実行されません。
+- 適用時は書き込み前に実行チェックポイントを保存し、Bicep を `--no-wait` で一度だけ送信して時間を区切って確認します。既定300秒、`--wait-seconds` は0〜3600秒です。`status`／`outcome`／`nextActions` を確認してください。Running／Accepted は `in-progress`、照会不能は `unknown`、Succeeded でも tag／ledger 未完了なら `partial` です。
+- `machine inspect provision --plan <runId> [--wait-seconds 300]`／`swallowkit_inspect_provision` は読み取り専用です。再度人間の承認を得て `apply provision --plan <runId> --approve`／`swallowkit_apply_provision` で元のチェックポイントから再開します。送信済み deployment は再送しません。`.swallowkit/state/provision/` を保持し、待機・記録の修復だけのために reconcile／cancel／delete を使わないでください。Ctrl+C 後も Azure は続く場合があります。
+- 旧版の未追跡 baseline は、元の target／regions と `plan provision --resume-deployment <name>` を使えます。ARM template／非 secret parameters がローカルと一致しなければ停止します。診断では秘密を伏せ、deployment outputs の値は返しません。[復旧手順](./deployment-guide.md)も確認してください。
 
 ### Responsibility Boundary / Infra Inspection
 
@@ -273,6 +276,7 @@ pnpm exec swallowkit-mcp
 - `swallowkit_apply_auth`
 - `swallowkit_plan_provision`
 - `swallowkit_apply_provision`
+- `swallowkit_inspect_provision`
 - `swallowkit_verify_project`
 - `swallowkit_explain_failure`
 

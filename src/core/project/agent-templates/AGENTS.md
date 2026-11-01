@@ -401,6 +401,24 @@ Use the `swallowkit-provision` Agent Skill or runbook and never bypass its
 approval gate. A broad request to deploy does not itself grant the explicit
 approval required by that workflow.
 
+Provision applies Bicep once and tracks the original Azure deployment with a
+bounded wait. A local timeout/error, output truncation, or Ctrl+C is not proof
+that Azure failed. `in-progress` means Azure is Running/Accepted; `unknown`
+means its result could not be read; `partial` means Azure succeeded but
+tag/ledger completion is pending. Never re-submit Bicep, reconcile, adopt,
+cancel, or delete just to repair waiting or migration bookkeeping.
+
+Retain `.swallowkit/state/provision/` execution checkpoints. Use
+`{{runCmd}} swallowkit machine inspect provision --plan <runId> --wait-seconds 300`
+for read-only status/wait, and after explicit human approval use
+`{{runCmd}} swallowkit machine apply provision --plan <runId> --approve`
+to resume. `runId` equals the original `planId`; fingerprints, subscription,
+deployment identity and migration checks remain in force. Only
+`status: "complete"` / `outcome: "succeeded"` means Azure Succeeded plus verified
+tags and local ledger. Do not print deployment output secrets or raw `az --debug`.
+For older untracked baselines use `plan provision --resume-deployment <name>`
+with original target/regions; it blocks unless ARM/parameter evidence matches.
+
 ## SwallowKit Agent Skills and Runbooks
 
 SwallowKit installs task-specific Agent Skills under:

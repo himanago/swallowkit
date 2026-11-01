@@ -7,7 +7,7 @@
  * run through cmd.exe with every argument quoted.
  */
 
-import { spawnSync, SpawnSyncOptions } from "child_process";
+import { spawn, spawnSync, SpawnSyncOptions } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -26,6 +26,20 @@ export interface AzCliResult {
   stdout: string;
   stderr: string;
   error?: Error;
+  signal: NodeJS.Signals | null;
+  elapsedMs: number;
+  failureKind?: "timeout" | "buffer" | "cancelled" | "spawn" | "signal" | "communication" | "exit";
+  errorCode?: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+}
+
+export interface AzCliRunOptions {
+  timeout?: number;
+  invocation?: AzCliInvocation | null;
+  signal?: AbortSignal;
+  /** Capture is bounded independently of the child's output volume. */
+  captureBytes?: number;
 }
 
 export type AzCliAvailability =
@@ -79,10 +93,10 @@ export function resolveAzCliInvocation(
 export function buildBatchCommandLine(script: string, args: string[]): string {
   for (const value of [script, ...args]) {
     if (/["%\r\n]/.test(value)) {
-      throw new Error(`Azure CLI argument cannot be passed safely through ${path.basename(script)}: ${JSON.stringify(value)}`);
+      throw new Error(`Azure CLI argument cannot be passed safely through ${path.basename(script)} (quotes, percent signs, or newlines).`);
     }
   }
-  return `"${[script, ...args].map((value) => `"${value}"`).join(" ")}"`;
+  return `"${[script, ...args].map((value) => `"${value.replace(/(\\+)$/, "$1$1")}"`).join(" ")}"`;
 }
 
 let cachedInvocation: AzCliInvocation | null | undefined;
@@ -103,16 +117,18 @@ export function setAzCliInvocationForTesting(invocation: AzCliInvocation | null 
 
 export function runAzCli(
   args: string[],
-  options: { timeout?: number; invocation?: AzCliInvocation | null } = {}
+  options: AzCliRunOptions = {}
 ): AzCliResult {
+  const startedAt = Date.now();
   const invocation = options.invocation === undefined ? getAzCliInvocation() : options.invocation;
   if (!invocation) {
-    return { status: null, stdout: "", stderr: "", error: Object.assign(new Error("az was not found on PATH"), { code: "ENOENT" }) };
+    return missingCliResult();
   }
   const spawnOptions: SpawnSyncOptions = {
     shell: false,
     encoding: "utf-8",
     timeout: options.timeout ?? 300_000,
+    maxBuffer: options.captureBytes ?? 1_048_576,
     env: invocation.env ? { ...process.env, ...invocation.env } : process.env,
   };
   let result;
@@ -124,14 +140,159 @@ export function runAzCli(
       })
       : spawnSync(invocation.command, [...invocation.prefixArgs, ...args], spawnOptions);
   } catch (error) {
-    return { status: null, stdout: "", stderr: "", error: error instanceof Error ? error : new Error(String(error)) };
+    return {
+      ...missingCliResult(),
+      error: error instanceof Error ? error : new Error(String(error)),
+      errorCode: (error as NodeJS.ErrnoException)?.code,
+      elapsedMs: Date.now() - startedAt,
+    };
   }
+  const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
   return {
     status: result.status,
     stdout: String(result.stdout ?? ""),
     stderr: String(result.stderr ?? ""),
+    signal: result.signal ?? null,
+    elapsedMs: Date.now() - startedAt,
+    stdoutTruncated: errorCode === "ENOBUFS",
+    stderrTruncated: errorCode === "ENOBUFS",
+    ...(errorCode ? { errorCode } : {}),
+    ...(errorCode === "ETIMEDOUT" ? { failureKind: "timeout" as const }
+      : errorCode === "ENOBUFS" ? { failureKind: "buffer" as const }
+        : result.error ? { failureKind: "spawn" as const }
+          : result.signal ? { failureKind: "signal" as const }
+            : result.status !== 0 ? { failureKind: "exit" as const } : {}),
     ...(result.error ? { error: result.error } : {}),
   };
+}
+
+function missingCliResult(): AzCliResult {
+  return {
+    status: null, stdout: "", stderr: "", signal: null, elapsedMs: 0,
+    stdoutTruncated: false, stderrTruncated: false,
+    error: Object.assign(new Error("az was not found on PATH"), { code: "ENOENT" }),
+    errorCode: "ENOENT", failureKind: "spawn",
+  };
+}
+
+/** Unlike spawnSync/maxBuffer, discarding excess output never kills the Azure CLI. */
+export async function runAzCliAsync(args: string[], options: AzCliRunOptions = {}): Promise<AzCliResult> {
+  const invocation = options.invocation === undefined ? getAzCliInvocation() : options.invocation;
+  if (!invocation) return missingCliResult();
+  const timeout = options.timeout ?? 60_000;
+  const captureBytes = options.captureBytes ?? 65_536;
+  if (!Number.isFinite(timeout) || timeout <= 0 || !Number.isInteger(captureBytes) || captureBytes < 1) {
+    throw new Error("Azure CLI timeout and captureBytes must be finite positive values.");
+  }
+  const startedAt = Date.now();
+  const result: AzCliResult = {
+    status: null, stdout: "", stderr: "", signal: null, elapsedMs: 0,
+    stdoutTruncated: false, stderrTruncated: false,
+  };
+  if (options.signal?.aborted) return { ...result, failureKind: "cancelled" };
+  let commandArgs: string[];
+  try {
+    commandArgs = invocation.batchScript
+      ? ["/d", "/s", "/v:off", "/c", buildBatchCommandLine(invocation.batchScript, args)]
+      : [...invocation.prefixArgs, ...args];
+  } catch (error) {
+    return { ...result, error: error instanceof Error ? error : new Error(String(error)), failureKind: "spawn" };
+  }
+  return new Promise<AzCliResult>((resolve) => {
+    let stdout = Buffer.alloc(0);
+    let stderr = Buffer.alloc(0);
+    let finished = false;
+    let drainTimer: NodeJS.Timeout | undefined;
+    let child: ReturnType<typeof spawn>;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      if (drainTimer) clearTimeout(drainTimer);
+      options.signal?.removeEventListener("abort", abort);
+      result.stdout = stdout.toString("utf-8");
+      result.stderr = stderr.toString("utf-8");
+      result.elapsedMs = Date.now() - startedAt;
+      if (!result.failureKind && result.status !== 0) {
+        result.failureKind = result.signal ? "signal"
+          : /ConnectionReset|ConnectionError|connection.*(?:closed|reset|aborted)|ReadTimeout|RemoteDisconnected|ETIMEDOUT|ECONNRESET/i.test(result.stderr)
+            ? "communication" : "exit";
+      }
+      resolve(result);
+    };
+    const stop = (kind: "timeout" | "cancelled") => {
+      if (finished || result.failureKind === "timeout" || result.failureKind === "cancelled") return;
+      result.failureKind = kind;
+      if (kind === "timeout") result.errorCode = "ETIMEDOUT";
+      child?.kill("SIGTERM");
+      // Descendants can inherit pipes; do not wait indefinitely for their close events.
+      drainTimer = setTimeout(() => {
+        child?.kill("SIGKILL");
+        child?.stdout?.destroy();
+        child?.stderr?.destroy();
+        result.stdoutTruncated = true;
+        result.stderrTruncated = true;
+        finish();
+      }, 1_000);
+    };
+    const abort = () => stop("cancelled");
+    const timer = setTimeout(() => stop("timeout"), timeout);
+    try {
+      child = spawn(invocation.command, commandArgs, {
+        shell: false,
+        windowsHide: true,
+        ...(invocation.batchScript ? { windowsVerbatimArguments: true } : {}),
+        env: invocation.env ? { ...process.env, ...invocation.env } : process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      result.error = error instanceof Error ? error : new Error(String(error));
+      result.errorCode = (error as NodeJS.ErrnoException)?.code;
+      result.failureKind = "spawn";
+      finish();
+      return;
+    }
+    const capture = (stream: "stdout" | "stderr", chunk: Buffer) => {
+      const buffer = stream === "stdout" ? stdout : stderr;
+      const remaining = captureBytes - buffer.length;
+      if (chunk.length > remaining) result[`${stream}Truncated`] = true;
+      if (remaining <= 0) return;
+      const combined = Buffer.concat([buffer, chunk.subarray(0, Math.max(remaining, 0))]);
+      if (stream === "stdout") stdout = combined;
+      else stderr = combined;
+    };
+    child.stdout?.on("data", (chunk: Buffer) => capture("stdout", chunk));
+    child.stderr?.on("data", (chunk: Buffer) => capture("stderr", chunk));
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      if (finished) return;
+      result.error = error;
+      result.errorCode = error.code;
+      result.failureKind ??= "spawn";
+      finish();
+    });
+    child.on("exit", (code, signal) => {
+      if (finished) return;
+      result.status = code;
+      result.signal = signal;
+      if (!drainTimer) {
+        drainTimer = setTimeout(() => {
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          result.stdoutTruncated = true;
+          result.stderrTruncated = true;
+          finish();
+        }, 1_000);
+      }
+    });
+    child.on("close", (code, signal) => {
+      if (finished) return;
+      result.status = code;
+      result.signal = signal;
+      finish();
+    });
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) abort();
+  });
 }
 
 export function checkAzCliAvailability(): AzCliAvailability {

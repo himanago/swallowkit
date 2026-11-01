@@ -214,6 +214,9 @@ Goal: bootstrap Azure once, then apply only pending versioned infrastructure mig
 - Inspect infra locally first — no \`az\` calls are needed for inspection.
 - Never edit an applied migration. Create a corrective migration instead.
 - Never use \`--reconcile\` for an ordinary model or resource addition.
+- A local az error/timeout or Ctrl+C does not prove Azure failed. Never
+  re-submit, cancel, or delete a deployment to repair a wait or bookkeeping failure.
+- Respect \`status\`, \`outcome\`, and \`nextActions\`, not just \`ok\`.
 
 ## Steps
 
@@ -221,7 +224,7 @@ Goal: bootstrap Azure once, then apply only pending versioned infrastructure mig
    \`${runCmd} swallowkit machine inspect infra\`
    - review parameters, modules, outputs, and container wiring warnings.
 2. Compute the provisioning plan (no resources are created):
-   \`${runCmd} swallowkit machine plan provision -g <resource-group> --location <region>\`
+   \`${runCmd} swallowkit machine plan provision -g <resource-group> --location <region> --swa-location <swa-region>\`
   - the plan reports \`bootstrap\`, \`migrate\`, \`noop\`, or \`adoption-required\`.
   - it lists only pending migrations and the exact \`az\` commands that would run.
   - for an older untagged environment, first run \`${runCmd} swallowkit migrations init --legacy-baseline\`, then plan with \`--adopt-existing --baseline 0 --what-if\`.
@@ -229,12 +232,35 @@ Goal: bootstrap Azure once, then apply only pending versioned infrastructure mig
 3. Present the plan to the human and wait for explicit approval.
 4. Only after approval:
    \`${runCmd} swallowkit machine apply provision --plan <planId> --approve\`
-5. Verify the deployment outputs and report them.
+5. If \`in-progress\`, \`unknown\`, or \`partial\`, retain the execution
+   checkpoint and read/wait for the original deployment:
+   \`${runCmd} swallowkit machine inspect provision --plan <runId> --wait-seconds 300\`.
+   Inspection never writes Azure tags or the local ledger.
+6. After fresh explicit human approval, resume:
+   \`${runCmd} swallowkit machine apply provision --plan <runId> --approve\`.
+   Attempted deployments are not re-submitted; remaining reviewed steps and
+   tags/ledger finish only after Azure \`Succeeded\`.
+7. Report completion only when \`status: "complete"\` and
+   \`outcome: "succeeded"\`. Never report deployment output secrets.
+
+For an older untracked bootstrap, plan with \`--resume-deployment <name>\`
+and the original RG, subscription and regions. Recovery compares its ARM
+template and non-secure parameters to local Bicep before approval. Mismatch,
+unreadable evidence or secure parameters block; do not work around this by
+using reconcile/adoption or replacing the migration manifest.
 
 ## Terminal states
 
 \`apply provision\` without \`--approve\` fails with \`approval-required\` —
 this is the guardrail working as intended, not an error to work around.
+
+Azure \`Running\`/\`Accepted\` means \`in-progress\`. An unreadable or missing
+deployment means \`unknown\`, not Azure failure. Azure \`Failed\`/\`Canceled\`
+returns sanitized Azure and operation causes. Azure \`Succeeded\` with incomplete
+tag/ledger writes means \`partial\`; resume bookkeeping without redeploying.
+The default wait is 300 seconds (0-3600 via \`--wait-seconds\`), not unlimited.
+Warning-only stderr with exit 0 is accepted. Diagnostics report local exit,
+signal, elapsed time and truncated/redacted output separately from Azure state.
 `,
   };
 
