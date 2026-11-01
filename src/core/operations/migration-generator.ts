@@ -152,6 +152,19 @@ param location string
   return migration;
 }
 
+const SUFFIXED_COSMOS_ACCOUNT_NAME = "'cosmos-${take(toLower(projectName), 30)}-${take(uniqueString(resourceGroup().id, projectName), 6)}'";
+const LEGACY_COSMOS_ACCOUNT_NAME = "'cosmos-${projectName}'";
+
+// Projects initialized before resource-group suffixes keep their original
+// account name so model migrations target the account their baseline created.
+function cosmosAccountNameExpression(session: FileOperationSession): string {
+  const mainBicep = path.join(session.rootDirectory, "infra", "main.bicep");
+  if (session.fileExists(mainBicep) && /var\s+resourceSuffix\s*=/.test(session.readFile(mainBicep))) {
+    return SUFFIXED_COSMOS_ACCOUNT_NAME;
+  }
+  return LEGACY_COSMOS_ACCOUNT_NAME;
+}
+
 export function generateModelContainerMigration(
   model: { name: string; partitionKey: string },
   session: FileOperationSession = new FileOperationSession("commit")
@@ -175,7 +188,7 @@ param projectName string
 param location string
 
 resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' existing = {
-  name: 'cosmos-\${projectName}'
+  name: ${cosmosAccountNameExpression(session)}
 }
 
 resource database 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-11-15' existing = {

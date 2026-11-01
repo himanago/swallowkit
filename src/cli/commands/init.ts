@@ -1825,9 +1825,11 @@ ${pmCmd.exec} swallowkit provision --resource-group <rg-name>
 
 This creates:
 - Static Web App (\`swa-${projectName}\`)
-- Azure Functions (\`func-${projectName}\`)
-- Cosmos DB (\`cosmos-${projectName}\`)
+- Azure Functions (\`func-${projectName}-<suffix>\`)
+- Cosmos DB (\`cosmos-${projectName}-<suffix>\`)
 - Storage Account
+
+Cosmos DB and Function App names must be globally unique, so they include a short suffix derived from the resource group. When provisioning completes, the command prints the actual resource names and the CI/CD settings to use.
 
 You will be prompted to select Azure regions:
 1. **Primary location**: For Functions and Cosmos DB (default: Japan East)
@@ -1844,12 +1846,12 @@ ${cicdChoice === 'github' ? `#### GitHub Actions
 
 2. Get Function App publish profile:
    \`\`\`bash
-   az webapp deployment list-publishing-profiles --name func-${projectName} --resource-group <rg-name> --xml
+   az webapp deployment list-publishing-profiles --name <functions-app-name> --resource-group <rg-name> --xml
    \`\`\`
 
 3. Add secrets to GitHub repository:
    - \`AZURE_STATIC_WEB_APPS_API_TOKEN\`: SWA deployment token (from step 1)
-   - \`AZURE_FUNCTIONAPP_NAME\`: \`func-${projectName}\`
+   - \`AZURE_FUNCTIONAPP_NAME\`: Functions app name printed by \`swallowkit provision\` (\`func-${projectName}-<suffix>\`)
    - \`AZURE_FUNCTIONAPP_PUBLISH_PROFILE\`: Functions publish profile (from step 2)
 
 4. Push to \`main\` branch to trigger deployment (or use **Actions** → **Run workflow** for manual deployment)` : cicdChoice === 'azure' ? `#### Azure Pipelines
@@ -1871,8 +1873,10 @@ az staticwebapp deploy --name swa-${projectName} --resource-group <rg-name> --ap
 \`\`\`bash
 cd functions
 ${pmCmd.run} build
-func azure functionapp publish func-${projectName}
-\`\`\``}
+func azure functionapp publish <functions-app-name>
+\`\`\`
+
+Use the Functions app name printed by \`swallowkit provision\`.`}
 
 ## 🔧 Available Commands
 
@@ -2049,6 +2053,14 @@ param cosmosDbMode string = '${azureConfig.cosmosDbMode}'
 @description('Enable VNet integration')
 param enableVNet bool = ${enableVNet}
 
+// Cosmos DB account and Function App names are globally unique across Azure.
+// A suffix derived from the resource group keeps names stable for redeployments
+// to the same resource group while avoiding collisions with other environments
+// and with names Azure still reserves after a previous resource group is deleted.
+var resourceSuffix = take(uniqueString(resourceGroup().id, projectName), 6)
+var cosmosAccountName = 'cosmos-\${take(toLower(projectName), 30)}-\${resourceSuffix}'
+var functionsAppName = 'func-\${take(projectName, 40)}-\${resourceSuffix}'
+
 // Shared Log Analytics Workspace (in Functions region for data residency)
 module logAnalytics 'modules/loganalytics.bicep' = {
   name: 'logAnalytics'
@@ -2102,7 +2114,7 @@ module vnet 'modules/vnet.bicep' = if (enableVNet) {
 module cosmosDbFreeTier 'modules/cosmosdb-freetier.bicep' = if (cosmosDbMode == 'freetier') {
   name: 'cosmosDb'
   params: {
-    accountName: 'cosmos-\${projectName}'
+    accountName: cosmosAccountName
     databaseName: '\${projectName}Database'
     location: location
     publicNetworkAccess: enableVNet ? 'Disabled' : 'Enabled'
@@ -2112,7 +2124,7 @@ module cosmosDbFreeTier 'modules/cosmosdb-freetier.bicep' = if (cosmosDbMode == 
 module cosmosDbServerless 'modules/cosmosdb-serverless.bicep' = if (cosmosDbMode == 'serverless') {
   name: 'cosmosDb'
   params: {
-    accountName: 'cosmos-\${projectName}'
+    accountName: cosmosAccountName
     databaseName: '\${projectName}Database'
     location: location
     publicNetworkAccess: enableVNet ? 'Disabled' : 'Enabled'
@@ -2136,7 +2148,7 @@ module cosmosPrivateEndpoint 'modules/private-endpoint-cosmos.bicep' = if (enabl
 module functionsFlex 'modules/functions-flex.bicep' = {
   name: 'functionsApp'
     params: {
-      name: 'func-\${projectName}'
+      name: functionsAppName
       location: location
       storageAccountName: 'stg\${uniqueString(resourceGroup().id, projectName)}'
       appInsightsConnectionString: appInsightsFunctions.outputs.connectionString
