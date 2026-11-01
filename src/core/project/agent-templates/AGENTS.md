@@ -274,12 +274,49 @@ SwallowKit should generate framework-owned CRUD artifacts.
 
 Do not manually recreate boilerplate that SwallowKit owns.
 
-When the task must not change Bicep or other infrastructure, still scaffold the
-model: pass `--skip-infra` to `plan scaffold` / `apply scaffold` (MCP
-`skipInfra: true`, or `swallowkit scaffold --skip-infra`). Nothing under
-`infra/` changes, the plan reports `infra-skipped`, and `verify project` still
-passes. Generate only the pending container migration later with
-`{{runCmd}} swallowkit migrations add-model <model>`.
+### Persistent models require infrastructure, even with custom APIs
+
+Whenever adding a persistent model, execute the installed SwallowKit model
+creation and infrastructure generation workflow, whether or not it has custom
+APIs. A hand-written model alone is not complete.
+
+1. Create the source-of-truth schema with
+   `{{runCmd}} swallowkit machine generate model <model> --overwrite never`
+   (the machine equivalent of `{{runCmd}} swallowkit create-model <model>`),
+   then author its domain fields in `shared/models/` and check its export from
+   `shared/index.ts`. Preserve an existing hand-written schema; do not overwrite
+   it just to run the template command. Model creation alone does **not**
+   generate a Cosmos DB container.
+2. If generated CRUD is needed, use `machine plan scaffold <model>` →
+   `machine apply scaffold --plan <planId>` to derive Functions, BFF, UI,
+   OpenAPI/native schema assets as applicable, and the container migration.
+   `--api-only` skips UI only; it still generates CRUD Functions and BFF routes.
+   If custom APIs replace CRUD, do **not** scaffold unnecessary CRUD. Instead run
+   `{{runCmd}} swallowkit migrations add-model <model> --dry-run`, review the
+   changes, then `{{runCmd}} swallowkit migrations add-model <model>` to generate
+   only the Cosmos DB container migration and its generation records.
+3. Inspect `machine inspect entities`, `machine inspect infra`,
+   `machine inspect artifacts`, and `machine inspect drift`, then run
+   `{{runCmd}} swallowkit machine verify project`. Check that the model's
+   container name and partition key match the generated Bicep under
+   `infra/migrations/`, its `sourceModel` entry in
+   `infra/migrations/manifest.json`, and `.swallowkit/artifacts.json`.
+   An existing baseline-owned container may need no new migration; verify its
+   tracked definition and wiring in `infra/main.bicep` instead. External
+   `connectorConfig` models use the configured connector rather than Cosmos DB;
+   verify that mapping instead of inventing a Cosmos container.
+
+Do not hand-edit the checksum-locked baseline or an existing migration to add
+a container; use the current migration workflow. Generation is local, not Azure
+provisioning. Deployment still follows the provisioning approval gates below.
+
+If infrastructure generation must be deferred, state the reason and the pending
+container/migration work explicitly. For CRUD, pass `--skip-infra` to
+`plan scaffold` / `apply scaffold` (MCP `skipInfra: true`). Nothing under `infra/`
+changes and the plan reports `infra-skipped`. Generate the pending migration
+later with `{{runCmd}} swallowkit migrations add-model <model>`. Even if
+`verify project` passes, do not mark the persistent model complete or describe
+the project as deployment-ready while required infrastructure is missing.
 
 Treat plan `warnings` as decisions to make, not noise. In particular,
 `user-scoped-data-without-auth` means the model looks per-user (for example a

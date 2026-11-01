@@ -208,6 +208,26 @@ Use `swallowkit-add-model`, `swallowkit-modify-model`, and
 read the corresponding `.swallowkit/workflows/` runbook. These task-level
 capabilities are designed to be invoked from a larger implementation process.
 
+### Persistent models with or without custom APIs
+
+For a new persistent model, the generated `AGENTS.md` requires model creation
+and infrastructure generation even when custom APIs replace CRUD. Start with
+`npx swallowkit machine generate model <model> --overwrite never` (the
+`create-model` equivalent), edit the schema, and check its shared export.
+Model creation alone does not create a Cosmos DB container. Use plan/apply
+scaffold for generated CRUD; `--api-only` skips UI, not CRUD. For custom APIs,
+review `npx swallowkit migrations add-model <model> --dry-run`, then run
+`npx swallowkit migrations add-model <model>` without generating unnecessary
+CRUD. With pnpm, replace `npx` with `pnpm exec`.
+
+Inspect entities, infra, artifacts, and drift, then verify project. Match the
+model's container name and partition key to its Bicep, migration manifest, and
+artifact ledger; validate existing baseline wiring or external connector mapping
+where applicable. If generation is deferred (including `--skip-infra`), report
+why and what remains. Passing verification alone does not justify completion or
+deployment readiness while required infrastructure is missing. Local generation
+does not authorize Azure provisioning.
+
 ### Example request for your agent
 
 Describe the behavior you want rather than asking for separate edits to each generated file.
