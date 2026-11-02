@@ -243,7 +243,7 @@ finding があるだけで、すべてを上書きする必要があるとは限
 | `artifact-modified` | 生成後の差分と ownership を確認します。ユーザー編集が認められる領域の変更は正常な場合があります。必要なカスタマイズを消さないでください。 |
 | `artifact-missing` | 削除が意図したものか確認し、必要な生成物を再生成します。 |
 | `generator-drift` | 生成時と実行中の SwallowKit のバージョンを確認し、更新を採用する場合は再生成の差分をレビューします。 |
-| `manifest-drift` | 実際のプロジェクト構造と記録のずれを調べ、提示された `repairAction` に従います。 |
+| `manifest-drift` | 実際のプロジェクト構造と記録のずれを調べ、提示された `repairAction` に従います。具体的には、scaffold は使わず、既存モデルをすべて skip する `swallowkit machine plan model <existing-model> --overwrite never` のあとに `swallowkit machine apply model --plan <planId>` を実行します。 |
 
 MCP は既定で `latest`、通常の CLI はプロジェクトに固定されたバージョンを使います。
 バージョン差がある場合は同じ環境だと決めつけず、各インターフェースの現在の機能を確認してください。

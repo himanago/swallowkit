@@ -252,7 +252,7 @@ A finding does not automatically mean every affected file should be overwritten.
 | `artifact-modified` | Review the post-generation diff and ownership. Changes in user-editable areas can be expected; preserve needed customizations. |
 | `artifact-missing` | Check whether deletion was intentional and regenerate artifacts that are still needed. |
 | `generator-drift` | Compare the generating and running SwallowKit versions; review regeneration changes when adopting an update. |
-| `manifest-drift` | Investigate the mismatch between the actual project structure and its records, then follow the supplied `repairAction`. |
+| `manifest-drift` | Investigate the mismatch between the actual project structure and its records, then follow the supplied `repairAction`: an all-skip `swallowkit machine plan model <existing-model> --overwrite never` followed by `swallowkit machine apply model --plan <planId>`, without scaffold. |
 
 MCP defaults to `latest`, while normal CLI commands use the project's pinned version.
 If versions differ, inspect the current capabilities of each interface instead of assuming

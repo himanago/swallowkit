@@ -100,6 +100,9 @@ describe("init persistence instructions", () => {
     expect(agents).toContain("top-level JSON array");
     expect(agents).toContain("same-origin Next.js BFF");
     expect(agents).toContain("restarting without re-seeding");
+    expect(agents).toContain("do not start, restart, or reset the Emulator yourself");
+    expect(agents).toContain("actual configured HTTP or\nHTTPS endpoint; do not guess or switch protocols");
+    expect(agents).toContain("add certificates to a trust store, install global\ntools");
     expect(agents).toContain("configured external");
     expect(agents).toContain(packageManager === "npm" ? "npx swallowkit machine ..." : "pnpm exec swallowkit machine ...");
     for (const file of [

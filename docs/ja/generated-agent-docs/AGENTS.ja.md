@@ -415,11 +415,13 @@ status が `requires-human` の場合は停止し、必要な human decision を
 `requires-human` を回避すべき error と解釈してはなりません。
 
 local data に接続・変更する前に、既存 Emulator service、endpoint、port を確認し、使用中の service を
-restart してはなりません。seed replacement や container recreation の前に、実際の endpoint、
+restart してはなりません。Emulator など必要な service が利用できない場合は blocked として報告し、
+Emulator を自分で起動、restart、reset してはなりません。seed replacement や container recreation の前に、実際の endpoint、
 実効 database/container、分離された dev/test database と port、worktree isolation を設定と起動出力で
 確認してください。既存、共有、production data は保護対象として扱い、破壊的操作の前に明示的 approval rule に
-従います。接続問題の回避目的で TLS を無効にしたり、certificate validation を迂回したり、
-machine の global setting を変更したりしてはなりません。この task で起動した process だけを停止し、
+従います。接続には実際に設定された HTTP または HTTPS endpoint を使い、protocol を推測したり切り替えたりしてはなりません。
+接続問題の回避目的で TLS を無効にしたり、certificate validation を迂回したり、certificate を trust store に
+追加したり、global tool を install したり、machine の global setting を変更したりしてはなりません。この task で起動した process だけを停止し、
 process name で無関係な service を停止してはなりません。local に残る未追跡 config や database は報告します。
 
 Azure provisioning は human-approved operation です。

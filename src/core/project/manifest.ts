@@ -364,6 +364,13 @@ export async function buildProjectManifest(projectRoot: string = process.cwd(), 
   });
 }
 
+/** Metadata-only repair guidance: an all-skip model plan/apply refreshes the manifest without CRUD scaffold. */
+export function formatManifestRepairAction(entities: Array<Pick<ProjectManifestEntity, "filePath">>): string {
+  const names = [...new Set(entities.map((entity) => path.basename(entity.filePath.replace(/\\/g, "/"), ".ts")))].sort();
+  const modelArgs = names.length > 0 ? names.join(" ") : "<existing-model>";
+  return `Run "swallowkit machine plan model ${modelArgs} --overwrite never", confirm existing model files are skipped and only SwallowKit metadata changes, then run "swallowkit machine apply model --plan <planId>". Do not use scaffold or other CRUD generation for a metadata-only repair.`;
+}
+
 export function readProjectManifest(projectRoot: string = process.cwd()): ProjectManifest | null {
   const manifestPath = path.join(projectRoot, SWALLOWKIT_MANIFEST_PATH);
   if (!fs.existsSync(manifestPath)) {

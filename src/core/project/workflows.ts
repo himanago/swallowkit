@@ -206,7 +206,7 @@ Local verification is not proof of Azure deployment.
 2. If \`summary.done\` is false:
    - \`${runCmd} swallowkit machine explain failure\` → evidence (logTail, findings, violations) and suggestedActions per check.
    - Repair:
-     - \`drift\` failures → follow each finding's \`repairAction\` (usually re-run plan/apply scaffold).
+     - \`drift\` failures → follow each finding's \`repairAction\` (artifact drift: plan/apply scaffold; stale project manifest: all-skip \`machine plan model <existing-model> --overwrite never\` then \`machine apply model --plan <planId>\`, never scaffold).
      - \`structure\` failures → follow \`suggestedFix\` per violation.
      - \`typecheck\`/\`build\`/\`lint\`/\`test\` failures → fix the code in ai-authored files.
 3. Repeat until \`summary.done: true\`.

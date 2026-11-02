@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { loadProjectManifest, buildProjectManifest, ProjectManifest, ProjectManifestEntity, SWALLOWKIT_MANIFEST_PATH } from "./manifest";
+import { loadProjectManifest, buildProjectManifest, formatManifestRepairAction, ProjectManifest, ProjectManifestEntity, SWALLOWKIT_MANIFEST_PATH } from "./manifest";
 import { toCamelCase, toKebabCase } from "../scaffold/model-parser";
 import { checkModelInfrastructure } from "../operations/model-infrastructure";
 import { withWorkingDirectory } from "../operations/runtime";
@@ -173,7 +173,7 @@ function validateManifestDrift(
       severity: "warning",
       message: `${SWALLOWKIT_MANIFEST_PATH} is out of date with the current project structure.`,
       location: { path: SWALLOWKIT_MANIFEST_PATH },
-      suggestedFix: "Run a SwallowKit generator command or refresh the manifest so inspection and validation use current metadata.",
+      suggestedFix: formatManifestRepairAction(rebuiltManifest.entities),
     });
   }
 }

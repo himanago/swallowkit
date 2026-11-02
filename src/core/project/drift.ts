@@ -14,7 +14,7 @@ import { getSwallowKitVersion } from "../../version";
 import { hashFileIfExists } from "../operations/file-session";
 import { parseModelFile } from "../scaffold/model-parser";
 import { ArtifactRecord, loadArtifactLedger } from "./artifacts";
-import { buildProjectManifest, readProjectManifest, SWALLOWKIT_MANIFEST_PATH } from "./manifest";
+import { buildProjectManifest, formatManifestRepairAction, readProjectManifest, SWALLOWKIT_MANIFEST_PATH } from "./manifest";
 
 export type DriftKind =
   | "schema-drift"
@@ -173,7 +173,7 @@ async function detectManifestDrift(projectRoot: string, findings: DriftFinding[]
       severity: "warning",
       message: `${SWALLOWKIT_MANIFEST_PATH} does not match the current project structure.`,
       path: SWALLOWKIT_MANIFEST_PATH.replace(/\\/g, "/"),
-      repairAction: "Run any SwallowKit generator command (or scaffold) to refresh the project manifest.",
+      repairAction: formatManifestRepairAction(rebuilt.entities),
     });
   }
 }

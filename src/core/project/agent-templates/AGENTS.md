@@ -432,13 +432,17 @@ decision.
 Do not reinterpret `requires-human` as an error to work around.
 
 Before connecting to or changing local data, inspect existing Emulator
-services, endpoint, and ports; do not restart a service already in use. Before
+services, endpoint, and ports; do not restart a service already in use. If the
+Emulator or another required service is unavailable, report the task as
+blocked; do not start, restart, or reset the Emulator yourself. Before
 seed replacement or container recreation, confirm the actual endpoint,
 effective database and container targets, isolated dev/test database and
 ports, and worktree isolation from configuration and startup output. Treat
 existing, shared, or production data as protected and follow explicit approval
-rules before destructive operations. Do not disable TLS, bypass certificate
-validation, or change global machine settings to work around connection
+rules before destructive operations. Connect with the actual configured HTTP or
+HTTPS endpoint; do not guess or switch protocols. Do not disable TLS, bypass
+certificate validation, add certificates to a trust store, install global
+tools, or change global machine settings to work around connection
 problems. Stop only processes started for this task, never unrelated services
 by process name, and disclose local untracked configuration or database
 leftovers.

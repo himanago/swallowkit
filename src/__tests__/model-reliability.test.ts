@@ -327,6 +327,50 @@ export const todoSchema=z.object({id:z.string(),title:z.string()});`);
     expect(snapshot()).toEqual(beforeApply);
   });
 
+  it("routes stale-manifest validation and drift to an all-skip model plan/apply that clears both", async () => {
+    await createModelOperation({ names: ["one", "learning-profile"], overwriteMode: "never" });
+    const projectManifestPath = path.join(root, ".swallowkit", "project.json");
+    const stale = JSON.parse(fs.readFileSync(projectManifestPath, "utf8"));
+    stale.entities = [];
+    fs.writeFileSync(projectManifestPath, `${JSON.stringify(stale, null, 2)}\n`);
+    const expectedRepair =
+      'Run "swallowkit machine plan model learning-profile one --overwrite never", confirm existing model files are skipped and only SwallowKit metadata changes, then run "swallowkit machine apply model --plan <planId>". Do not use scaffold or other CRUD generation for a metadata-only repair.';
+
+    const validation = JSON.parse((await machine(["validate", "project"])).stdout);
+    const staleViolation = validation.data.violations.find((violation: { code: string }) => violation.code === "manifest-out-of-date");
+    expect(staleViolation.suggestedFix).toBe(expectedRepair);
+    const drift = JSON.parse((await machine(["inspect", "drift"])).stdout);
+    const driftFinding = drift.data.findings.find((finding: { kind: string }) => finding.kind === "manifest-drift");
+    expect(driftFinding.repairAction).toBe(expectedRepair);
+    for (const guidance of [staleViolation.suggestedFix, driftFinding.repairAction]) {
+      expect(guidance).not.toMatch(/plan scaffold|apply scaffold|generate scaffold/);
+    }
+
+    const beforePlan = snapshot();
+    const planned = JSON.parse((await machine(["plan", "model", "learning-profile", "one", "--overwrite", "never"])).stdout);
+    expect(planned.ok).toBe(true);
+    const planOperations = planned.data.operations as Array<{ path: string; action: string; newHash: string | null }>;
+    expect(planOperations.filter(operation => operation.action !== "skip").map(operation => operation.path).sort())
+      .toEqual([".swallowkit/artifacts.json", ".swallowkit/project.json"]);
+    const planStateFiles = Object.keys(snapshot()).filter(file => !(file in beforePlan));
+    expect(Object.fromEntries(Object.entries(snapshot()).filter(([file]) => !planStateFiles.includes(file)))).toEqual(beforePlan);
+    expect(planStateFiles.every(file => file.startsWith(".swallowkit"))).toBe(true);
+
+    const applied = JSON.parse((await machine(["apply", "model", "--plan", planned.data.planId])).stdout);
+    expect(applied.ok).toBe(true);
+    for (const operation of planOperations) {
+      expect(hashFileIfExists(path.join(root, operation.path))).toBe(operation.newHash);
+    }
+    expect(fs.existsSync(path.join(root, "functions"))).toBe(false);
+    expect(fs.existsSync(path.join(root, "app"))).toBe(false);
+    expect(loadMigrationManifest(root).migrations).toHaveLength(2);
+
+    const cleared = JSON.parse((await machine(["validate", "project"])).stdout);
+    expect(cleared.data.violations.map((violation: { code: string }) => violation.code)).not.toContain("manifest-out-of-date");
+    const clearedDrift = JSON.parse((await machine(["inspect", "drift"])).stdout);
+    expect(clearedDrift.data.findings.map((finding: { kind: string }) => finding.kind)).not.toContain("manifest-drift");
+  });
+
   it("rejects newly discovered entity/helper inputs after planning without changing application files", async () => {
     const plan = await planModelOperation({ kind: "model", options: { names: ["probe"], overwriteMode: "never" } });
     write("shared/models/topic-mastery.ts", `import {z} from 'zod/v4';
