@@ -210,7 +210,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_validate_project",
-      description: "Validate project metadata, generated artifacts, and framework conventions.",
+      description: "Validate project metadata, generated artifacts, framework conventions, and current local Cosmos container migrations for persistent models. Returns status=failed for error-severity violations; connectors and referenced helper schemas do not require containers.",
       inputSchema: z.object({}),
       handler: async () => {
       const response = await executeMachineCommand(["validate", "project"], runMachineCli);
@@ -219,7 +219,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_generate_model",
-      description: "Generate SwallowKit model templates through the official generator.",
+      description: "Create a persistent model through the shared CLI/machine generator; newly created non-connector models also register a Cosmos container migration, while connector models remain external. Preserves existing files when overwrite=never.",
       inputSchema: z.object({
         names: z.array(z.string()).min(1),
         modelsDir: z.string().optional(),
@@ -228,7 +228,93 @@ export function buildSwallowKitToolDefinitions(
       }),
       handler: async ({ names, modelsDir, connector, overwrite }: { names: string[]; modelsDir?: string; connector?: string; overwrite?: "always" | "never" }) => {
       const response = await executeMachineCommand(["generate", "model", ...names, ...(modelsDir ? ["--models-dir", modelsDir] : []), ...(connector ? ["--connector", connector] : []), "--overwrite", overwrite || "never"], runMachineCli);
-      return jsonTextContent(response.data);
+      return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_plan_model",
+      description: "Preview model, shared export, container migration, project manifest, and artifact-ledger writes without changing project files. Use this before applying model generation.",
+      inputSchema: z.object({
+        names: z.array(z.string()).min(1),
+        modelsDir: z.string().optional(),
+        connector: z.string().optional(),
+        overwrite: z.enum(["always", "never"]).optional(),
+      }),
+      handler: async ({ names, modelsDir, connector, overwrite }: {
+        names: string[];
+        modelsDir?: string;
+        connector?: string;
+        overwrite?: "always" | "never";
+      }) => {
+        const args = ["plan", "model", ...names];
+        if (modelsDir) args.push("--models-dir", modelsDir);
+        if (connector) args.push("--connector", connector);
+        if (overwrite) args.push("--overwrite", overwrite);
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_plan_model_infrastructure",
+      description: "Preview migration, manifest, and artifact-ledger writes for an existing hand-written persistent model without changing its schema or writing project files. Optional refreshPending performs read-only Azure migration-state and deployment-history checks.",
+      inputSchema: z.object({
+        model: z.string(),
+        refreshPending: z.boolean().optional(),
+        resourceGroup: z.string().optional().describe("Required with refreshPending; Azure resource group for read-only migration-state and deployment-history checks."),
+        subscription: z.string().optional().describe("Optional Azure subscription for read-only migration-state checks."),
+      }),
+      handler: async ({ model, refreshPending, resourceGroup, subscription }: {
+        model: string;
+        refreshPending?: boolean;
+        resourceGroup?: string;
+        subscription?: string;
+      }) => {
+        const args = ["plan", "model-infrastructure", model];
+        if (refreshPending) args.push("--refresh-pending");
+        if (resourceGroup) args.push("--resource-group", resourceGroup);
+        if (subscription) args.push("--subscription", subscription);
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_apply_model",
+      description: "Apply a previously reviewed model plan after checking file fingerprints and overwrite approval.",
+      inputSchema: z.object({
+        planId: z.string(),
+        approve: z.boolean().optional(),
+      }),
+      handler: async ({ planId, approve }: { planId: string; approve?: boolean }) => {
+        const args = ["apply", "model", "--plan", planId];
+        if (approve) args.push("--approve");
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
+      },
+    },
+    {
+      name: "swallowkit_add_model_migration",
+      description: "Preview or register a Cosmos container migration for an existing hand-written model without modifying its schema. dryRun lists concrete migration/manifest writes and writes nothing. The normal create-model workflow already registers infra; do not use this for connector models.",
+      inputSchema: z.object({
+        model: z.string(),
+        dryRun: z.boolean().optional().describe("Preview concrete migration and manifest writes without writing files."),
+        refreshPending: z.boolean().optional().describe("Refresh only after read-only Azure tag/checksum and deployment-history checks prove the generated migration is pending and unattempted."),
+        resourceGroup: z.string().optional().describe("Required with refreshPending; Azure resource group for the read-only migration-state check."),
+        subscription: z.string().optional().describe("Optional Azure subscription for the read-only migration-state check."),
+      }),
+      handler: async ({ model, dryRun, refreshPending, resourceGroup, subscription }: {
+        model: string;
+        dryRun?: boolean;
+        refreshPending?: boolean;
+        resourceGroup?: string;
+        subscription?: string;
+      }) => {
+        const args = ["migrations", "add-model", model];
+        if (dryRun) args.push("--dry-run");
+        if (refreshPending) args.push("--refresh-pending");
+        if (resourceGroup) args.push("--resource-group", resourceGroup);
+        if (subscription) args.push("--subscription", subscription);
+        const response = await executeMachineCommand(args, runMachineCli);
+        return jsonTextContent(withOperationStatus(response));
       },
     },
     {
@@ -239,7 +325,7 @@ export function buildSwallowKitToolDefinitions(
         functionsDir: z.string().optional(),
         apiDir: z.string().optional(),
         apiOnly: z.boolean().optional(),
-        skipInfra: z.boolean().optional().describe("Do not create or update anything under infra/; the container migration stays pending."),
+        skipInfra: z.boolean().optional().describe("Exclude infra/ writes from this scaffold operation; existing model migrations remain registered."),
       }),
       handler: async ({ model, functionsDir, apiDir, apiOnly, skipInfra }: { model: string; functionsDir?: string; apiDir?: string; apiOnly?: boolean; skipInfra?: boolean }) => {
       const args = ["generate", "scaffold", model];
@@ -269,7 +355,7 @@ export function buildSwallowKitToolDefinitions(
         functionsDir: z.string().optional(),
         apiDir: z.string().optional(),
         apiOnly: z.boolean().optional(),
-        skipInfra: z.boolean().optional().describe("Exclude all infra/ changes (container migration) from the plan."),
+        skipInfra: z.boolean().optional().describe("Exclude infra/ writes from this scaffold plan; existing model migrations remain registered."),
       }),
       handler: async ({ model, models, functionsDir, apiDir, apiOnly, skipInfra }: { model?: string; models?: string[]; functionsDir?: string; apiDir?: string; apiOnly?: boolean; skipInfra?: boolean }) => {
         const targets = models && models.length > 0 ? models : model ? [model] : [];
@@ -330,7 +416,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_verify_project",
-      description: "Run verification checks (structure, drift, typecheck, backend-build by default; build, lint, test and custom checks from swallowkit.config verify.checks are also available) and return machine-readable evidence. backend-build compiles standalone C#/TypeScript Functions or checks Python syntax; unavailable toolchains are skipped with a reason. summary.done=true means no checks failed, not that skipped checks were validated or runtime/auth flows work. Set compact=true to suppress info-severity findings and keep the output small.",
+      description: "Run verification checks (structure, drift, typecheck, backend-build by default; build, lint, test and custom checks from swallowkit.config verify.checks are also available) and return machine-readable evidence. The structure check blocks persistent models with missing or stale registered Cosmos container migrations, excluding connector models and referenced helpers; this checks local definitions, not Azure deployment state. backend-build compiles standalone C#/TypeScript Functions or checks Python syntax; unavailable toolchains are skipped with a reason. summary.done=true means no checks failed, not that skipped checks were validated or runtime/auth flows work. Set compact=true to suppress info-severity findings and keep the output small.",
       inputSchema: z.object({
         checks: z.array(z.string()).optional(),
         compact: z.boolean().optional(),
@@ -430,7 +516,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_plan_provision",
-      description: "Plan Azure bootstrap or pending infrastructure migrations. Existing untagged environments require explicit adoption with what-if; full main.bicep redeployment requires reconcile=true. Never deploys and always requires human approval.",
+      description: "Check local persistent-model container migration completeness, then plan Azure bootstrap or pending infrastructure migrations. Missing or stale local model migrations block planning before Azure queries. Existing untagged environments require explicit adoption with what-if; full main.bicep redeployment requires reconcile=true. Never deploys and always requires human approval.",
       inputSchema: z.object({
         resourceGroup: z.string(),
         location: z.string(),

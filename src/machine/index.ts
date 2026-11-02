@@ -1,6 +1,8 @@
 import { Command, CommanderError } from "commander";
 import { isSwallowKitProject } from "../core/config";
 import { createModelOperation } from "../core/operations/create-model";
+import { addModelContainerMigration } from "../core/operations/model-migration";
+import { applyModelOperation, planModelInfrastructureOperation, planModelOperation } from "../core/operations/model-plan";
 import { applyScaffoldOperation } from "../core/operations/scaffold-apply";
 import { applyAuthOperation, planAuthOperation } from "../core/operations/auth-operations";
 import { applyProvisionOperation, inspectProvisionOperation, planProvisionOperation } from "../core/operations/provision-operations";
@@ -247,15 +249,21 @@ function createMachineProgram(): Command {
   const validate = new Command("validate");
   validate
     .command("project")
-    .description("Validate SwallowKit project metadata and conventions")
+    .description("Validate SwallowKit project metadata, conventions, and local Cosmos container migration completeness")
     .action(async () => {
-      await handleMachineAction("validate-project", async () => validateProject());
+      await handleMachineAction(
+        "validate-project",
+        async () => validateProject(),
+        (result) => ({
+          status: result.violations.some((violation) => violation.severity === "error") ? "failed" : "complete",
+        })
+      );
     });
 
   const generate = new Command("generate");
   generate
     .command("model")
-    .description("Generate model templates with deterministic JSON output")
+    .description("Create persistent model templates and register their Cosmos container migrations (except connector models)")
     .argument("<names...>", "Model names to generate")
     .option("--models-dir <dir>", "Models directory", "shared/models")
     .option("--connector <name>", "Associate the models with a configured connector")
@@ -279,6 +287,41 @@ function createMachineProgram(): Command {
       });
     });
 
+  const migrations = new Command("migrations");
+  migrations
+    .command("add-model")
+    .description("Preview, register, or backfill a model's Cosmos container migration without changing its schema")
+    .argument("<model>", "Model file or model name")
+    .option("--dry-run", "List migration and ledger writes without writing", false)
+    .option("--refresh-pending", "Refresh only when Azure tags and complete deployment history prove the migration is pending and unattempted", false)
+    .option("--resource-group <name>", "Azure resource group for read-only migration-state and deployment-history checks")
+    .option("--subscription <id>", "Azure subscription for the read-only migration-state check")
+    .action(async (model: string, options: { dryRun?: boolean; refreshPending?: boolean; resourceGroup?: string; subscription?: string }) => {
+      await handleMachineAction(
+        "migrations-add-model",
+        async () => {
+          ensureProjectForMachine();
+          return addModelContainerMigration(model, {
+            dryRun: options.dryRun,
+            refreshPending: options.refreshPending,
+            resourceGroup: options.resourceGroup,
+            subscription: options.subscription,
+            projectRoot: process.cwd(),
+          });
+        },
+        (result) => ({
+          nextActions: result.dryRun
+            ? []
+            : result.migration
+              ? [{
+                  command: "swallowkit machine plan provision",
+                  description: "Review pending infrastructure changes; applying a provision plan still requires explicit human approval.",
+                }]
+              : [],
+        })
+      );
+    });
+
   generate
     .command("scaffold")
     .description("Generate scaffold artifacts with deterministic JSON output")
@@ -286,7 +329,7 @@ function createMachineProgram(): Command {
     .option("--functions-dir <dir>", "Functions directory", "functions")
     .option("--api-dir <dir>", "BFF routes directory (Next.js: app/api; React: bff)")
     .option("--api-only", "Skip UI components; still update Functions, BFF routes, OpenAPI, and native schema assets", false)
-    .option("--skip-infra", "Do not create or update anything under infra/ (container migration is reported as pending)", false)
+    .option("--skip-infra", "Exclude infra/ writes from this scaffold operation; it does not remove existing model migrations", false)
     .action(async (model: string, options: { functionsDir?: string; apiDir?: string; apiOnly?: boolean; skipInfra?: boolean }) => {
       await handleMachineAction("generate-scaffold", async () => {
         ensureProjectForMachine();
@@ -302,13 +345,76 @@ function createMachineProgram(): Command {
 
   const plan = new Command("plan");
   plan
+    .command("model")
+    .description("Compute model, index, container migration, manifest, and artifact-ledger writes without applying them")
+    .argument("<names...>", "Model names to generate")
+    .option("--models-dir <dir>", "Models directory", "shared/models")
+    .option("--connector <name>", "Associate the models with a configured connector")
+    .option("--overwrite <mode>", "Overwrite policy: always | never", "never")
+    .action(async (names: string[], options: { modelsDir?: string; connector?: string; overwrite?: string }) => {
+      await handleMachineAction(
+        "plan-model",
+        async () => {
+          ensureProjectForMachine();
+          if (options.overwrite !== "always" && options.overwrite !== "never") {
+            throw new MachineCommandError(
+              "invalid-overwrite-mode",
+              `Unsupported overwrite mode: ${options.overwrite}. Use "always" or "never".`
+            );
+          }
+          return planModelOperation({
+            names,
+            modelsDir: options.modelsDir,
+            connector: options.connector,
+            overwriteMode: options.overwrite,
+          });
+        },
+        (modelPlan) => ({
+          status: modelPlan.requiresApproval ? "requires-human" : "complete",
+          nextActions: [{
+            command: `swallowkit machine apply model --plan ${modelPlan.planId}${modelPlan.requiresApproval ? " --approve" : ""}`,
+            description: modelPlan.requiresApproval
+              ? "Apply the model plan only after reviewing and approving the listed overwrites."
+              : "Apply the reviewed model, infrastructure migration, and metadata plan.",
+          }],
+        })
+      );
+    });
+
+  plan
+    .command("model-infrastructure")
+    .description("Preview container migration registration for an existing model without changing its schema")
+    .argument("<model>", "Model file or model name")
+    .option("--refresh-pending", "Refresh only when Azure tags and complete deployment history prove the migration is pending and unattempted")
+    .option("--resource-group <name>", "Azure resource group for read-only migration-state and deployment-history checks")
+    .option("--subscription <id>", "Azure subscription for the read-only migration-state check")
+    .action(async (model: string, options: { refreshPending?: boolean; resourceGroup?: string; subscription?: string }) => {
+      await handleMachineAction(
+        "plan-model-infrastructure",
+        async () => {
+          ensureProjectForMachine();
+          return planModelInfrastructureOperation(model, options);
+        },
+        (modelPlan) => ({
+          status: modelPlan.requiresApproval ? "requires-human" : "complete",
+          nextActions: [{
+            command: `swallowkit machine apply model --plan ${modelPlan.planId}${modelPlan.requiresApproval ? " --approve" : ""}`,
+            description: modelPlan.requiresApproval
+              ? "Apply the reviewed model infrastructure plan only after approving listed conflicts."
+              : "Apply the reviewed model container migration and metadata plan locally; Azure deployment still requires its separate human-approved provision flow.",
+          }],
+        })
+      );
+    });
+
+  plan
     .command("scaffold")
     .description("Compute the scaffold change plan without writing any files (accepts multiple models)")
     .argument("<models...>", "Model files or model names")
     .option("--functions-dir <dir>", "Functions directory", "functions")
     .option("--api-dir <dir>", "BFF routes directory (Next.js: app/api; React: bff)")
     .option("--api-only", "Skip UI components in the plan", false)
-    .option("--skip-infra", "Exclude all infra/ changes (container migration) from the plan", false)
+    .option("--skip-infra", "Exclude infra/ writes from this scaffold plan; existing model migrations remain registered", false)
     .action(async (models: string[], options: { functionsDir?: string; apiDir?: string; apiOnly?: boolean; skipInfra?: boolean }) => {
       await handleMachineAction(
         "plan-scaffold",
@@ -343,7 +449,7 @@ function createMachineProgram(): Command {
                 .filter((planData) => planData.warnings.some((warning) => warning.startsWith("infra-skipped:")))
                 .map((planData) => ({
                   command: `swallowkit migrations add-model ${planData.model}`,
-                  description: `Later, when infrastructure changes are allowed, generate only the Cosmos DB container migration for ${planData.model}.`,
+                  description: `If no container migration is registered for ${planData.model}, backfill it with migrations add-model; this scaffold plan did not change infra/.`,
                 })),
             ],
           };
@@ -384,7 +490,7 @@ function createMachineProgram(): Command {
 
   plan
     .command("provision")
-    .description("Review local infrastructure and current Azure state without writes (requires az login)")
+    .description("Check local model-container migrations, then review Azure state without writes (requires az login)")
     .requiredOption("-g, --resource-group <name>", "Resource group name")
     .requiredOption("--location <region>", "Primary location for Functions and Cosmos DB")
     .requiredOption("--swa-location <region>", "Static Web App location")
@@ -425,6 +531,37 @@ function createMachineProgram(): Command {
     });
 
   const apply = new Command("apply");
+  apply
+    .command("model")
+    .description("Apply a model plan after checking input fingerprints and overwrite approval")
+    .requiredOption("--plan <planId>", "Previously computed model plan")
+    .option("--approve", "Approve overwriting existing user-owned model files", false)
+    .action(async (options: { plan: string; approve?: boolean }) => {
+      await handleMachineAction(
+        "apply-model",
+        async () => {
+          ensureProjectForMachine();
+          return applyModelOperation({ planId: options.plan, approve: options.approve });
+        },
+        (result) => ({
+          nextActions: [
+            ...("infrastructureFiles" in result.result && result.result.infrastructureFiles.length > 0
+              ? [{
+                  command: "swallowkit machine plan provision",
+                  description: "Review the registered container migration; applying a provision plan still requires explicit human approval.",
+                }]
+              : "migration" in result.result && result.result.migration
+                ? [{
+                    command: "swallowkit machine plan provision",
+                    description: "Review the registered container migration; applying a provision plan still requires explicit human approval.",
+                  }]
+                : []),
+            { command: "swallowkit machine verify project", description: "Verify project structure, drift, and generated-code checks." },
+          ],
+        })
+      );
+    });
+
   apply
     .command("scaffold")
     .description("Apply scaffold changes, verifying plan freshness and overwrite approval (accepts multiple models)")
@@ -491,7 +628,7 @@ function createMachineProgram(): Command {
                   .filter((result) => result.warnings.some((warning) => warning.startsWith("infra-skipped:")))
                   .map((result) => ({
                     command: `swallowkit migrations add-model ${result.model}`,
-                    description: `The Cosmos DB container migration for ${result.model} is still pending; generate it when infrastructure changes are allowed.`,
+                    description: `If no container migration is registered for ${result.model}, backfill it with migrations add-model; this scaffold operation did not change infra/.`,
                   })),
               ],
             };
@@ -574,7 +711,7 @@ function createMachineProgram(): Command {
   const verify = new Command("verify");
   verify
     .command("project")
-    .description("Run verification checks (structure, drift, typecheck, backend-build) with machine-readable evidence")
+    .description("Run verification checks (including local persistent-model container migration completeness) with machine-readable evidence")
     .option(
       "--checks <ids>",
       "Comma-separated check ids to run (structure,drift,typecheck,backend-build,build,lint,test, plus custom ids from swallowkit.config verify.checks); quote CSV values in PowerShell"
@@ -651,6 +788,7 @@ function createMachineProgram(): Command {
   program.addCommand(inspect);
   program.addCommand(validate);
   program.addCommand(generate);
+  program.addCommand(migrations);
   program.addCommand(plan);
   program.addCommand(apply);
   program.addCommand(verify);

@@ -274,12 +274,61 @@ SwallowKit should generate framework-owned CRUD artifacts.
 
 Do not manually recreate boilerplate that SwallowKit owns.
 
-When the task must not change Bicep or other infrastructure, still scaffold the
-model: pass `--skip-infra` to `plan scaffold` / `apply scaffold` (MCP
-`skipInfra: true`, or `swallowkit scaffold --skip-infra`). Nothing under
-`infra/` changes, the plan reports `infra-skipped`, and `verify project` still
-passes. Generate only the pending container migration later with
-`{{runCmd}} swallowkit migrations add-model <model>`.
+### Persistent models require infrastructure, even with custom APIs
+
+Whenever adding a persistent model, execute the installed SwallowKit model
+creation and infrastructure generation workflow, whether or not it has custom
+APIs. A hand-written model alone is not complete.
+
+1. Preview source-of-truth schema creation and its registered Cosmos container
+   migration with
+   `{{runCmd}} swallowkit machine plan model <model> --overwrite never`, then
+   apply the returned plan with
+   `{{runCmd}} swallowkit machine apply model --plan <planId>`. The plan lists
+   schema, shared export, migration, manifest, and artifact-ledger writes and
+   writes no generated files before apply. Then author domain fields in
+   `shared/models/` and check its export from `shared/index.ts`. For a
+   hand-written schema or a model whose template was skipped, run
+   `{{runCmd}} swallowkit machine plan model-infrastructure <model>` and apply
+   the returned plan with
+   `{{runCmd}} swallowkit machine apply model --plan <planId>`; this adds
+   infrastructure records without overwriting the schema or generating CRUD.
+2. If generated CRUD is needed, use `machine plan scaffold <model>` →
+   `machine apply scaffold --plan <planId>` to derive Functions, BFF, UI,
+   OpenAPI/native schema assets as applicable.
+   `--api-only` skips UI only; it still generates CRUD Functions and BFF routes.
+   If custom APIs replace CRUD, do **not** scaffold unnecessary CRUD; the model
+   migration from step 1 (or the backfill command above) is sufficient.
+3. Inspect `machine inspect entities`, `machine inspect infra`,
+   `machine inspect artifacts`, and `machine inspect drift`, then run
+   `{{runCmd}} swallowkit machine verify project`. Check that the model's
+   container name and partition key match the generated Bicep under
+   `infra/migrations/`, its `sourceModel` entry in
+   `infra/migrations/manifest.json`, and `.swallowkit/artifacts.json`.
+   An existing baseline-owned container may need no new migration; verify its
+   tracked definition and wiring in `infra/main.bicep` instead. External
+   `connectorConfig` models use the configured connector rather than Cosmos DB;
+   verify that mapping instead of inventing a Cosmos container.
+
+Do not hand-edit the checksum-locked baseline or an existing migration to add
+a container; use the current migration workflow. Generation is local, not Azure
+provisioning. Deployment still follows the provisioning approval gates below.
+
+If infrastructure generation must be deferred, state the reason and the pending
+container/migration work explicitly. For CRUD, pass `--skip-infra` to
+`plan scaffold` / `apply scaffold` (MCP `skipInfra: true`). Nothing under `infra/`
+changes during that scaffold plan and the plan reports `infra-skipped`. Generate
+any missing model migration later with
+`{{runCmd}} swallowkit machine plan model-infrastructure <model>` and apply
+the reviewed plan with `{{runCmd}} swallowkit machine apply model --plan <planId>`.
+If an unapplied container definition must be refreshed after editing its partition
+key, preview with
+`{{runCmd}} swallowkit machine plan model-infrastructure <model> --refresh-pending --resource-group <name>`;
+this checks the target's migration tag and deployment history before changing the template.
+Applied, attempted, unknown, or user-modified migrations are not rewritten.
+`verify project` fails while a required local migration is missing or stale.
+A passing verify confirms local model-to-container definitions only; it does
+not prove that Azure has been provisioned or that deployment succeeded.
 
 Treat plan `warnings` as decisions to make, not noise. In particular,
 `user-scoped-data-without-auth` means the model looks per-user (for example a

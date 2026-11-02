@@ -193,16 +193,108 @@ describe("SwallowKit MCP tool definitions", () => {
     });
   });
 
+  it("delegates add_model_migration with preview and verified-pending refresh options", async () => {
+    const data = {
+      model: "learning-profile",
+      dryRun: true,
+      operations: [
+        { path: "infra/migrations/0001-create-learning-profile-container/main.bicep", action: "modify" },
+        { path: ".swallowkit/artifacts.json", action: "update" },
+      ],
+    };
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({ ok: true, command: "migrations-add-model", status: "complete", data }),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const tool = buildSwallowKitToolDefinitions(runner as MachineCliRunner)
+      .find((candidate) => candidate.name === "swallowkit_add_model_migration");
+    expect(tool).toBeDefined();
+
+    const result = await tool!.handler({
+      model: "learning-profile",
+      dryRun: true,
+      refreshPending: true,
+      resourceGroup: "rg-sample",
+      subscription: "11111111-1111-1111-1111-111111111111",
+    });
+    expect(runner).toHaveBeenCalledWith([
+      "migrations", "add-model", "learning-profile", "--dry-run", "--refresh-pending",
+      "--resource-group", "rg-sample", "--subscription", "11111111-1111-1111-1111-111111111111",
+    ]);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ status: "complete", ...data });
+  });
+
+  it("delegates model plan and apply with the reviewed plan id", async () => {
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({
+        ok: true,
+        command: "plan-model",
+        status: "complete",
+        data: { planId: "model-plan-123", operations: [{ path: "shared/models/todo.ts", action: "create" }] },
+      }),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const tools = buildSwallowKitToolDefinitions(runner as MachineCliRunner);
+    const planTool = tools.find((candidate) => candidate.name === "swallowkit_plan_model");
+    const applyTool = tools.find((candidate) => candidate.name === "swallowkit_apply_model");
+    expect(planTool).toBeDefined();
+    expect(applyTool).toBeDefined();
+
+    await planTool!.handler({ names: ["todo"], overwrite: "never" });
+    expect(runner).toHaveBeenLastCalledWith([
+      "plan", "model", "todo", "--overwrite", "never",
+    ]);
+
+    const result = await applyTool!.handler({ planId: "model-plan-123", approve: true });
+    expect(runner).toHaveBeenLastCalledWith([
+      "apply", "model", "--plan", "model-plan-123", "--approve",
+    ]);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ status: "complete" });
+  });
+
+  it("delegates schema-preserving model infrastructure plans with read-only refresh options", async () => {
+    const runner = jest.fn(async () => ({
+      stdout: JSON.stringify({
+        ok: true,
+        command: "plan-model-infrastructure",
+        status: "complete",
+        data: { planId: "infra-plan-123", operations: [{ path: "infra/migrations/manifest.json", action: "modify" }] },
+      }),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const tool = buildSwallowKitToolDefinitions(runner as MachineCliRunner)
+      .find((candidate) => candidate.name === "swallowkit_plan_model_infrastructure");
+    expect(tool).toBeDefined();
+    const result = await tool!.handler({
+      model: "learning-profile",
+      refreshPending: true,
+      resourceGroup: "rg-sample",
+      subscription: "11111111-1111-1111-1111-111111111111",
+    });
+    expect(runner).toHaveBeenLastCalledWith([
+      "plan", "model-infrastructure", "learning-profile", "--refresh-pending",
+      "--resource-group", "rg-sample", "--subscription", "11111111-1111-1111-1111-111111111111",
+    ]);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ status: "complete", planId: "infra-plan-123" });
+  });
+
   it("exposes the agent-loop tools (plan/apply/artifacts/drift/verify/explain)", () => {
     const names = buildSwallowKitToolDefinitions(jest.fn() as unknown as MachineCliRunner).map((tool) => tool.name);
     expect(names).toEqual(
       expect.arrayContaining([
         "swallowkit_plan_scaffold",
         "swallowkit_apply_scaffold",
+        "swallowkit_add_model_migration",
         "swallowkit_inspect_artifacts",
         "swallowkit_inspect_drift",
         "swallowkit_verify_project",
         "swallowkit_explain_failure",
+        "swallowkit_plan_model",
+        "swallowkit_plan_model_infrastructure",
+        "swallowkit_apply_model",
       ])
     );
   });

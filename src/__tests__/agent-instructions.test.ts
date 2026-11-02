@@ -1,6 +1,9 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { BackendLanguage, FrontendFramework } from "../types";
+import { PackageManager, getCommands } from "../utils/package-manager";
+import { buildWorkflowDocs } from "../core/project/workflows";
 import {
   AGENT_TEMPLATE_FILES,
   AgentInstructionContext,
@@ -19,6 +22,19 @@ const representativeContext: AgentInstructionContext = {
 };
 
 const repositoryRoot = path.resolve(__dirname, "../..");
+const frontends: FrontendFramework[] = ["nextjs", "react"];
+const backendLanguages: BackendLanguage[] = ["typescript", "csharp", "python"];
+const packageManagers: PackageManager[] = ["npm", "pnpm"];
+const persistentModelContexts: AgentInstructionContext[] = frontends.flatMap((frontend) =>
+  backendLanguages.flatMap((backendLanguage) =>
+    packageManagers.map((packageManager) => ({
+      projectName: "persistent-app",
+      frontend,
+      backendLanguage,
+      packageManager,
+    }))
+  )
+);
 
 describe("coding-agent instruction contract", () => {
   it("applies SwallowKit before implementation and composes with external processes", () => {
@@ -133,6 +149,68 @@ describe("coding-agent instruction contract", () => {
     }
   });
 
+  it.each(persistentModelContexts)(
+    "writes the init persistent-model contract for $frontend/$backendLanguage/$packageManager",
+    (context) => {
+      const tempDir = fs.mkdtempSync(path.join(repositoryRoot, ".tmp-persistent-agent-docs-"));
+      try {
+        // init uses this writer for both frontend variants.
+        writeAgentInstructionFiles(tempDir, context);
+        const agents = fs.readFileSync(path.join(tempDir, "AGENTS.md"), "utf-8").replace(/\s+/g, " ");
+        const sharedModels = fs.readFileSync(
+          path.join(tempDir, ".github", "instructions", AGENT_TEMPLATE_FILES.sharedModelsInstructions),
+          "utf-8"
+        );
+        const runCmd = getCommands(context.packageManager).exec;
+        for (const document of [agents, sharedModels]) {
+          expect(document).toContain(`${runCmd} swallowkit machine plan model <model> --overwrite never`);
+          expect(document).toContain(`${runCmd} swallowkit machine apply model --plan <planId>`);
+          expect(document).toContain(`${runCmd} swallowkit machine plan model-infrastructure <model>`);
+          expect(document).toContain(`${runCmd} swallowkit machine apply model --plan <planId>`);
+          expect(document).toContain("custom APIs");
+          expect(document).toContain("required local migration is missing or stale");
+          expect(document).not.toMatch(/\{\{[A-Za-z]+\}\}/);
+        }
+        expect(agents).toContain("A hand-written model alone is not complete");
+        expect(agents).toContain("registered Cosmos container migration");
+        expect(agents).toContain("do **not** scaffold unnecessary CRUD");
+        expect(agents).toContain("`--api-only` skips UI only");
+        expect(agents).toContain("`machine apply scaffold --plan <planId>`");
+        expect(agents).toContain(`${runCmd} swallowkit machine verify project`);
+        for (const inspect of ["entities", "infra", "artifacts", "drift"]) {
+          expect(agents).toContain(`machine inspect ${inspect}`);
+        }
+        for (const record of ["infra/migrations/manifest.json", ".swallowkit/artifacts.json", "sourceModel"]) {
+          expect(agents).toContain(record);
+        }
+        expect(agents).toContain("container name and partition key");
+        expect(agents).toContain("baseline-owned container");
+        expect(agents).toContain("External `connectorConfig` models");
+        expect(agents).toContain("state the reason and the pending");
+        expect(agents).toContain("`verify project` fails while a required local migration is missing or stale");
+        expect(sharedModels).toContain("verify fails while a");
+        expect(agents).toContain("Generation is local, not Azure provisioning");
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each(["npx", "pnpm exec"])("aligns the add-model runbook and skill content for %s", (runCmd) => {
+    const workflow = buildWorkflowDocs(runCmd).find((doc) => doc.skillName === "swallowkit-add-model");
+    expect(workflow).toBeDefined();
+    expect(workflow?.skillDescription).toContain("including models with custom APIs");
+    expect(workflow?.content).toContain(`${runCmd} swallowkit machine plan model <name> --overwrite never`);
+    expect(workflow?.content).toContain(`${runCmd} swallowkit machine apply model --plan <planId>`);
+    expect(workflow?.content).toContain("If custom APIs replace CRUD, skip scaffold");
+    expect(workflow?.content).toContain(`${runCmd} swallowkit machine plan model-infrastructure <name>`);
+    expect(workflow?.content).toContain("without changing schema bytes or generating CRUD");
+    expect(workflow?.content).toContain("--refresh-pending");
+    expect(workflow?.content).toContain("infra/migrations/manifest.json");
+    expect(workflow?.content).toContain(".swallowkit/artifacts.json");
+    expect(workflow?.content).toContain("verify fails while required local container migrations are missing or stale");
+  });
+
   it("covers the requested model-change, new-feature, BFF, and deployment scenarios", () => {
     const agentsMd = buildAgentsMd(representativeContext);
     const pathInstructions = buildPathSpecificInstructions(representativeContext);
@@ -200,6 +278,17 @@ describe("coding-agent documentation synchronization", () => {
     ].map((match) => match[1]);
 
     expect(translatedSourceSections).toEqual(sourceSections);
+    expect(translation).toContain("カスタム API の有無にかかわらず");
+    expect(translation).toContain("手書きモデルを追加しただけでは完了ではありません");
+    expect(translation).toContain("{{runCmd}} swallowkit machine plan model <model> --overwrite never");
+    expect(translation).toContain("{{runCmd}} swallowkit machine plan model-infrastructure <model>");
+    expect(translation).toContain("{{runCmd}} swallowkit machine apply model --plan <planId>");
+    expect(translation).toContain("不要な CRUD を scaffold してはなりません");
+    expect(translation).toContain("理由と未完了");
+    expect(translation).toContain("デプロイ可能と案内したりしてはなりません");
+    for (const record of ["infra/migrations/manifest.json", ".swallowkit/artifacts.json", "sourceModel"]) {
+      expect(translation).toContain(record);
+    }
   });
 
   it("exposes matching major EN/JA guide topics and both sidebar entries", () => {

@@ -391,6 +391,7 @@ describe("plan / apply / drift / verify machine commands", () => {
     createNativeBackendFixture(tempDir, "csharp");
     writeFile(path.join(tempDir, "shared", "models", "answer-record.ts"), createModelSource("AnswerRecord"));
     createInfrastructureFixture(tempDir);
+    addLegacyContainerToInfrastructure(tempDir, "todo");
     addLegacyContainerToInfrastructure(tempDir, "answer-record");
     const original = initializeLegacyMigrations(tempDir);
     const restoreCodegenMocks = mockSuccessfulNativeCodegen();
@@ -456,7 +457,7 @@ describe("plan / apply / drift / verify machine commands", () => {
     createProjectFixture(tempDir);
     writeFile(
       path.join(tempDir, "shared", "models", "todo.ts"),
-      `${createModelSource("Todo")}\nexport const partitionKey = '/tenantId';\n`
+      `${createModelSource("Todo", "\n  tenantId: z.string(),")}\nexport const partitionKey = '/tenantId';\n`
     );
     createInfrastructureFixture(tempDir);
     addLegacyContainerToInfrastructure(tempDir, "todo");
@@ -515,7 +516,7 @@ describe("plan / apply / drift / verify machine commands", () => {
     expect(plan.response.data.options.skipInfra).toBe(true);
     expect(plan.response.data.operations.filter((operation: { path: string }) => operation.path.startsWith("infra/"))).toEqual([]);
     expect(plan.response.data.warnings).toEqual(expect.arrayContaining([
-      expect.stringMatching(/^infra-skipped: The Cosmos DB container migration for Todo was not generated/),
+      expect.stringMatching(/^infra-skipped: This scaffold operation did not change infra\/ for Todo/),
     ]));
     expect(plan.response.nextActions).toContainEqual(expect.objectContaining({ command: "swallowkit migrations add-model todo" }));
 
@@ -527,12 +528,16 @@ describe("plan / apply / drift / verify machine commands", () => {
 
     const verify = await runMachine(machineArgs("verify", "project", "--checks", "structure,drift"));
     expect(verify.exitCode).toBe(0);
-    expect(verify.response.data.summary.done).toBe(true);
+    expect(verify.response.data.summary.done).toBe(false);
+    expect(verify.response.data.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "structure", status: "fail" }),
+    ]));
     const drift = await runMachine(machineArgs("inspect", "drift"));
     expect(drift.response.data.findings.filter((finding: { severity: string }) => finding.severity !== "info")).toEqual([]);
 
     const dryRun = await addModelContainerMigration("todo", { dryRun: true });
     expect(dryRun.operations.map((operation) => operation.path)).toEqual([
+      ".swallowkit/artifacts.json",
       "infra/migrations/0001-create-todo-container/main.bicep",
       MIGRATION_MANIFEST_PATH.replace(/\\/g, "/"),
     ]);
@@ -1063,6 +1068,8 @@ export type Todo = z.infer<typeof Todo>;
 
   it("verifies the project and explains failures", async () => {
     createProjectFixture(tempDir);
+    createInfrastructureFixture(tempDir);
+    initializeLegacyMigrations(tempDir);
     await runMachine(machineArgs("apply", "scaffold", "todo", "--api-only"));
 
     const verify = await runMachine(machineArgs("verify", "project", "--checks", "structure,drift"));

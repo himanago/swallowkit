@@ -689,6 +689,82 @@ describe("generated project matrix", () => {
     if (!process.env.SWALLOWKIT_KEEP_MATRIX) fs.rmSync(workRoot, { recursive: true, force: true });
   });
 
+  it("blocks a Zod record model before writing generated consumer artifacts", async () => {
+    const root = path.join(workRoot, "unsupported-record", PROJECT);
+    await createSkeleton(root, "react", "csharp", "js");
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(root);
+      write(path.join(root, "shared", "models", "learning-profile.ts"), `import { z } from 'zod/v4';
+export const TopicMastery = z.object({ topicId: z.string(), score: z.number() });
+export const LearningProfile = z.object({
+  id: z.string(),
+  userId: z.string(),
+  masteryByTopic: z.record(z.string(), TopicMastery),
+});
+export type LearningProfile = z.infer<typeof LearningProfile>;
+export const partitionKey = '/userId';
+`);
+      const before = snapshotTree(root);
+      const response = await runMachine(["plan", "scaffold", "learning-profile"]);
+      const after = snapshotTree(root);
+
+      expect(response.status).toBe("blocked");
+      expect(response.error.details).toMatchObject({
+        filePath: expect.stringContaining("learning-profile.ts"),
+        schemaName: "LearningProfile",
+        field: "masteryByTopic",
+        reason: "ZodRecord",
+      });
+      expect(after).toEqual(before);
+      expect(fs.existsSync(path.join(root, ".swallowkit", "artifacts.json"))).toBe(false);
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
+  it("compiles React and C# output for arrays of a separately exported embedded helper schema", async () => {
+    const root = path.join(workRoot, "embedded-helper-array", PROJECT);
+    await createSkeleton(root, "react", "csharp", "js");
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(root);
+      mockNativeToolchainValidation();
+      write(path.join(root, "shared", "models", "topic-mastery.ts"), `import { z } from 'zod/v4';
+export const TopicMastery = z.object({ topicId: z.string(), score: z.number() });
+export type TopicMastery = z.infer<typeof TopicMastery>;
+`);
+      write(path.join(root, "shared", "models", "learning-profile.ts"), `import { z } from 'zod/v4';
+import { TopicMastery } from './topic-mastery';
+export const LearningProfile = z.object({
+  id: z.string(),
+  mastery: z.array(TopicMastery),
+});
+export type LearningProfile = z.infer<typeof LearningProfile>;
+`);
+      const plan = await runMachine(["plan", "scaffold", "learning-profile", "--skip-infra"]);
+      expect(plan.status).toBe("complete");
+      const apply = await runMachine(["apply", "scaffold", "--plan", plan.data.planId]);
+      expect(apply.status).toBe("complete");
+
+      const sharedIndex = path.join(root, "shared", "index.ts");
+      const errors = [
+        ...typecheck(path.join(root, "tsconfig.json"), sharedIndex),
+        ...typecheck(path.join(root, "bff", "tsconfig.json"), sharedIndex, {
+          "@azure/functions": path.join(repoRoot, "node_modules", "azure-functions-v3"),
+        }),
+      ];
+      expect(errors).toEqual([]);
+      if (DOTNET && process.env.SWALLOWKIT_TEST_SKIP_DOTNET !== "1") {
+        expect(await dotnetBuild(path.join(root, "functions"))).toEqual([]);
+      } else if (REQUIRE_TOOLCHAINS && process.env.SWALLOWKIT_TEST_SKIP_DOTNET !== "1") {
+        throw new Error(".NET SDK is required (SWALLOWKIT_REQUIRE_TOOLCHAINS=1) but was not found");
+      }
+    } finally {
+      process.chdir(previousCwd);
+    }
+  }, 60_000);
+
   describe.each(CASES)("$name", (testCase) => {
     const blocked = expectedBlock(testCase.auth, testCase.policy);
 

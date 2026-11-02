@@ -12,6 +12,7 @@ import { getSwallowKitVersion } from "../../version";
 import {
   ArtifactOwnership,
   RecordedFileOperation,
+  getActiveFileSession,
   hashFileIfExists,
 } from "../operations/file-session";
 
@@ -104,16 +105,27 @@ export interface RecordArtifactContext {
 export function recordSessionOperations(
   operations: RecordedFileOperation[],
   context: RecordArtifactContext = {},
-  projectRoot: string = process.cwd()
+  projectRoot: string = process.cwd(),
+  fileSession?: import("../operations/file-session").FileOperationSession
 ): ArtifactLedger {
-  const ledger: ArtifactLedger = loadArtifactLedger(projectRoot) ?? {
+  const activeSession = fileSession ?? getActiveFileSession();
+  const ledgerPath = path.join(projectRoot, SWALLOWKIT_ARTIFACTS_PATH);
+  let currentLedger = loadArtifactLedger(projectRoot);
+  if (activeSession?.fileExists(ledgerPath)) {
+    try {
+      currentLedger = JSON.parse(activeSession.readFile(ledgerPath)) as ArtifactLedger;
+    } catch {
+      currentLedger = null;
+    }
+  }
+  const ledger: ArtifactLedger = currentLedger ?? {
     version: SWALLOWKIT_ARTIFACTS_VERSION,
     swallowkitVersion: getSwallowKitVersion(),
     artifacts: [],
   };
 
   const byPath = new Map(ledger.artifacts.map((record) => [record.path, record] as const));
-  const now = new Date().toISOString();
+  const now = activeSession?.generatedAt ?? new Date().toISOString();
   const generatorVersion = getSwallowKitVersion();
 
   for (const operation of operations) {
@@ -167,7 +179,19 @@ export function recordSessionOperations(
     swallowkitVersion: generatorVersion,
     artifacts: Array.from(byPath.values()),
   };
-  saveArtifactLedger(updated, projectRoot);
+  if (activeSession) {
+    const sorted: ArtifactLedger = {
+      ...updated,
+      swallowkitVersion: getSwallowKitVersion(),
+      artifacts: [...updated.artifacts].sort((a, b) => a.path.localeCompare(b.path)),
+    };
+    activeSession.writeFile(ledgerPath, JSON.stringify(sorted, null, 2) + "\n", {
+      ownership: "metadata",
+      generator: "artifact-ledger",
+    });
+  } else {
+    saveArtifactLedger(updated, projectRoot);
+  }
   return updated;
 }
 

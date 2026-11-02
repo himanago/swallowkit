@@ -199,6 +199,33 @@ Agent Skills 対応 runtime では `swallowkit-add-model`、`swallowkit-modify-m
 `.swallowkit/workflows/` runbook を読みます。これらは上位の implementation process から
 呼び出せる task-level capability です。
 
+### カスタム API の有無にかかわらず、永続化モデルのインフラを生成する
+
+新しい永続化モデルでは、
+`machine plan model <model> --overwrite never` を preview し、返された plan を
+`machine apply model --plan <planId>` で適用します。スキーマを作成し、
+connector 以外のモデル用 Cosmos コンテナー migration を登録します。
+対話 CLI の `create-model` も同じ generator を使います。
+スキーマを編集し、shared の export を確認してください。モデル生成は Azure へのデプロイや
+CRUD 生成を行いません。手書きモデルでは `machine plan model-infrastructure <model>` で
+preview し、返された plan を `machine apply model --plan <planId>` で適用すると、
+スキーマの内容を変更せずコンテナー migration を追加できます。
+生成 CRUD が必要な場合のみ plan/apply scaffold を使います。`--api-only` は UI を省略するだけで、CRUD は生成します。
+pnpm を使う場合は `npx` を `pnpm exec` に置き換えます。
+
+migration 生成後に partition key を変更した場合は、
+`npx swallowkit machine plan model-infrastructure <model> --refresh-pending --resource-group <name>`
+で明示的に pending 定義の更新を preview します。読み取り専用のリモート確認を行い、
+適用済み・デプロイ試行済み・状態不明・手編集済みの migration は拒否します。
+dry-run とローカルのモデル生成は Azure の provisioning を行いません。
+
+entities、infra、artifacts、drift を inspect し、verify project を実行してください。
+モデルのコンテナー名・partition key と Bicep、マイグレーション manifest、生成台帳の対応を確認します。
+既存 baseline の接続や外部コネクターの対応も、該当する場合は検証してください。
+`--skip-infra` などで生成を延期する場合は、理由と未完了事項を明示します。
+verify が通っても、必要なインフラがない状態で完了扱いやデプロイ可能という案内をしてはなりません。
+ローカルでの生成は Azure provisioning の許可ではありません。
+
 ### エージェントへの依頼例
 
 モデル変更は、生成ファイルごとの修正ではなく、実現したい振る舞いとして依頼します。

@@ -259,6 +259,54 @@ CRUD artifact は SwallowKit が生成すべきです。
 
 SwallowKit が所有する boilerplate を手作業で再作成してはなりません。
 
+### カスタム API の有無にかかわらず、永続化モデルにはインフラ生成が必要
+
+永続化モデルを追加するときは、カスタム API の有無にかかわらず、インストールされている
+SwallowKit のモデル作成・インフラ生成手順を実行してください。手書きモデルを追加しただけでは完了ではありません。
+
+1. `{{runCmd}} swallowkit machine plan model <model> --overwrite never` で
+   source-of-truth schema、shared export、Cosmos コンテナー migration、manifest、
+   生成台帳の書き込み予定を確認し、返された plan を
+   `{{runCmd}} swallowkit machine apply model --plan <planId>` で適用します。
+   plan は apply 前に生成ファイルを書き込みません。
+   `shared/models/` にドメインのフィールドを記述し、`shared/index.ts` の export を確認してください。
+   手書きスキーマやテンプレートをスキップしたモデルは、
+   `{{runCmd}} swallowkit machine plan model-infrastructure <model>` で確認後、
+   返された plan を `{{runCmd}} swallowkit machine apply model --plan <planId>`
+   で適用してください。スキーマを変更せず backfill できます。
+2. 生成 CRUD が必要なら `machine plan scaffold <model>` →
+   `machine apply scaffold --plan <planId>` で Functions、BFF、UI、必要な OpenAPI／native schema
+   asset を生成します。`--api-only` は UI だけを省略し、
+   CRUD Functions と BFF route は生成します。
+   カスタム API が CRUD を置き換える場合、不要な CRUD を scaffold してはなりません。
+   手順 1 で生成した migration（または backfill）だけで十分です。
+3. `machine inspect entities`、`machine inspect infra`、`machine inspect artifacts`、
+   `machine inspect drift` で確認し、`{{runCmd}} swallowkit machine verify project` を実行します。
+   モデルのコンテナー名・partition key が、`infra/migrations/` の Bicep、
+   `infra/migrations/manifest.json` の `sourceModel`、`.swallowkit/artifacts.json` と対応することを確認してください。
+   既存の baseline-owned コンテナーでは新規マイグレーションが不要な場合があります。
+   その場合は追跡済みの定義と `infra/main.bicep` の接続を確認してください。
+   外部 `connectorConfig` モデルは Cosmos DB ではなく設定済みのコネクターを使うため、
+   Cosmos コンテナーを追加せず、その対応を検証してください。
+
+コンテナー追加のために checksum-locked baseline や既存マイグレーションを手編集してはなりません。
+現在のマイグレーション手順を使用してください。生成はローカル操作であり、Azure provisioning ではありません。
+デプロイには後述の provisioning 承認ゲートが引き続き適用されます。
+
+インフラ生成を延期する場合は、理由と未完了のコンテナー／マイグレーション作業を明示してください。
+CRUD では `plan scaffold` / `apply scaffold` に `--skip-infra` (MCP は `skipInfra: true`) を指定します。
+`infra/` は変更されず、plan は `infra-skipped` を返します。
+手書き・スキップしたモデルで migration が未登録なら、後で
+`{{runCmd}} swallowkit machine plan model-infrastructure <model>` で preview し、
+返された plan を `{{runCmd}} swallowkit machine apply model --plan <planId>`
+で適用してください。partition key の変更後に pending migration を更新する場合も、
+`{{runCmd}} swallowkit machine plan model-infrastructure <model> --refresh-pending --resource-group <name>`
+で明示的に preview します。
+この読み取り専用確認では target の migration tag と deployment history を検証します。
+適用済み・デプロイ試行済み・状態不明・手編集済みの migration は書き換えられません。
+`verify project` が通っても、必要なインフラがない状態で永続化モデルを完了扱いにしたり、
+デプロイ可能と案内したりしてはなりません。
+
 <!-- source-section: Authentication -->
 ## Authentication
 

@@ -36,10 +36,10 @@ export function buildWorkflowDocs(runCmd: string): WorkflowDoc[] {
     title: "Add a new model (autonomous loop)",
     skillName: "swallowkit-add-model",
     skillDescription:
-      "Add a new data model to a SwallowKit project and deterministically derive CRUD Functions, BFF routes, UI pages, and Cosmos DB infra from it using the plan/apply/verify loop. Use when asked to add a model, entity, resource, table, or a new CRUD feature.",
+      "Add a new persistent model, including models with custom APIs, and generate required infrastructure. Derive CRUD Functions, BFF routes, and UI only when needed using the plan/apply/verify loop. Use when asked to add a model, entity, resource, table, or a new CRUD feature.",
     content: `# Workflow: Add a new model
 
-Goal: add a data model and derive CRUD/BFF/UI/infra deterministically.
+Goal: add a persistent model and generate its required infrastructure, even with custom APIs. A hand-written model alone is not complete.
 
 ## Responsibility boundary
 
@@ -50,16 +50,24 @@ Goal: add a data model and derive CRUD/BFF/UI/infra deterministically.
 ## Steps
 
 1. Create the model file (deterministic template):
-   \`${runCmd} swallowkit machine generate model <name> --overwrite never\`
+   \`${runCmd} swallowkit machine plan model <name> --overwrite never\`
+   then apply the returned plan with
+   \`${runCmd} swallowkit machine apply model --plan <planId>\`.
+   - This previews schema, shared export, container migration, project manifest, and artifact-ledger writes;
+     no generated project files are written before apply.
+     For a hand-written schema, use \`${runCmd} swallowkit machine plan model-infrastructure <name>\`
+     and apply it with \`${runCmd} swallowkit machine apply model --plan <planId>\` to backfill
+     its container migration without changing schema bytes or generating CRUD.
 2. Edit \`shared/models/<name>.ts\` — add domain fields (free-form authoring).
    - Native C#/Python types follow Zod, not names: \`z.iso.datetime()\` for dates, \`z.number().int()\` for integers.
    - \`<model>Id\` fields reference a model only when it exists in \`shared/models\`; otherwise declare
      \`export const references = { fieldId: 'Model' }\` (or \`false\` to opt out).
-3. Compute the change plan (writes nothing):
+3. When CRUD is needed, compute the change plan (writes nothing):
    \`${runCmd} swallowkit machine plan scaffold <name>\`
    - \`status: "requires-human"\` → review \`data.conflicts\`; only proceed with \`--approve\` if overwriting is intended.
-   - Must not change Bicep/infrastructure? Add \`--skip-infra\` to plan and apply. Nothing under \`infra/\` changes and
-     the plan warns \`infra-skipped\`; later run \`${runCmd} swallowkit migrations add-model <name>\` to add only the container migration.
+   - Must not change Bicep/infrastructure during the CRUD scaffold? Add \`--skip-infra\` to plan and apply. Nothing under \`infra/\` changes and
+     the plan warns \`infra-skipped\`; the model container migration should already be registered by step 1 (or the backfill command).
+     State the reason and pending infrastructure work; verify fails while required local container migrations are missing or stale, and a passing verify does not prove Azure provisioning succeeded.
    - Read \`data.warnings\`. \`user-scoped-data-without-auth\` means generated CRUD would expose every user's documents;
      add auth (\`swallowkit-add-auth\`) and owner-scoped ai-authored endpoints before exposing the model.
    - \`auth-policy-without-auth\` blocks generation before file writes: configure authentication with plan/apply auth,
@@ -69,11 +77,24 @@ Goal: add a data model and derive CRUD/BFF/UI/infra deterministically.
      Single-provider \`auth.provider\` supports role lists only; named policies block with \`auth-named-policy-requires-named-scheme\`.
    - Scaffold appends missing exports to \`shared/index.ts\` for hand-authored models too.
      Manual exports are allowed; no managed markers exist in that file.
-4. Apply:
+   - If custom APIs replace CRUD, skip scaffold (including \`--api-only\`, which still generates CRUD).
+     The model migration from step 1 (or the backfill command) is sufficient.
+     Keep the schema exported from \`shared/index.ts\`. External connector models need their connector mapping, not a Cosmos container.
+   - If the partition key changes after migration generation, preview
+     \`${runCmd} swallowkit machine plan model-infrastructure <name> --refresh-pending --resource-group <name>\`.
+     Only a proven unapplied migration can be refreshed; applied, attempted, unknown, or user-modified definitions block without writes.
+4. Apply the reviewed CRUD scaffold plan, if needed:
    \`${runCmd} swallowkit machine apply scaffold --plan <planId>\`
 5. Verify:
-   \`${runCmd} swallowkit machine verify project\`
+   - Inspect \`machine inspect entities\`, \`machine inspect infra\`, \`machine inspect artifacts\`, and \`machine inspect drift\`.
+     Match the model's container name and partition key to its Bicep, \`sourceModel\` in
+     \`infra/migrations/manifest.json\`, and \`.swallowkit/artifacts.json\`.
+     For a baseline-owned container, verify the tracked definition and \`infra/main.bicep\` wiring instead of requiring a new migration.
+     Do not hand-edit a checksum-locked baseline or an existing migration.
+   - Run \`${runCmd} swallowkit machine verify project\`.
    - \`summary.done: false\` → \`${runCmd} swallowkit machine explain failure\` and repair, then re-verify.
+   - Required infrastructure still missing? Report the reason and remaining work, not completion or deployment readiness.
+     Local generation does not provision Azure; follow the separate provision workflow and human approval gates.
 6. If \`dev-seeds/\` exists, update seed JSON for the new model. Seeds are only
    applied by \`${runCmd} swallowkit dev --seed-env <environment>\` — editing the
    JSON alone does nothing.

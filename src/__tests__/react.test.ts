@@ -43,6 +43,8 @@ import {
 } from "../cli/commands/dev";
 import { addAuthCommand } from "../cli/commands/add-auth";
 import { captureConsoleMessages } from "../core/operations/runtime";
+import { initializeLegacyMigrations } from "../core/operations/migration-generator";
+import { addModelContainerMigration } from "../core/operations/model-migration";
 
 interface TestRequest {
   method: string;
@@ -548,6 +550,10 @@ describe("React project integration", () => {
       fs.existsSync(path.join(project, "bff", "src", "todo", "index.ts"))
     ).toBe(false);
     await applyScaffoldOperation({ planId: plan.planId });
+    fs.mkdirSync(path.join(project, "infra"), { recursive: true });
+    fs.writeFileSync(path.join(project, "infra", "main.bicep"), "targetScope = 'resourceGroup'\n");
+    initializeLegacyMigrations(project);
+    await addModelContainerMigration(path.join(project, "shared", "models", "todo.ts"), { projectRoot: project });
     const { manifest } = await buildProjectManifest(project);
     expect(manifest.frontendFramework).toBe("react");
     expect(

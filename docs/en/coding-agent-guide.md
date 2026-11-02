@@ -208,6 +208,35 @@ Use `swallowkit-add-model`, `swallowkit-modify-model`, and
 read the corresponding `.swallowkit/workflows/` runbook. These task-level
 capabilities are designed to be invoked from a larger implementation process.
 
+### Persistent models with or without custom APIs
+
+For a new persistent model, preview
+`machine plan model <model> --overwrite never` and apply the returned plan with
+`machine apply model --plan <planId>`. It creates the schema and registers its
+Cosmos container migration for non-connector models. The interactive
+`create-model` command uses the same generator. Edit the schema and check its
+shared export; model generation does not deploy to Azure or generate CRUD. For a hand-written model, use
+`npx swallowkit machine plan model-infrastructure <model>` and apply the returned
+plan with `npx swallowkit machine apply model --plan <planId>` to add the
+container migration without changing schema bytes. Use plan/apply scaffold only
+when generated CRUD is needed; `--api-only` skips UI, not CRUD. With pnpm,
+replace `npx` with `pnpm exec`.
+
+If the partition key changes after migration generation, preview an explicit
+pending-definition refresh with
+`npx swallowkit machine plan model-infrastructure <model> --refresh-pending --resource-group <name>`.
+This performs read-only remote checks and blocks applied, attempted, unknown,
+or user-modified migrations. A dry run and local model generation do not
+provision Azure.
+
+Inspect entities, infra, artifacts, and drift, then verify project. Match the
+model's container name and partition key to its Bicep, migration manifest, and
+artifact ledger; validate existing baseline wiring or external connector mapping
+where applicable. If generation is deferred (including `--skip-infra`), report
+why and what remains. Verify blocks missing or stale local container migrations,
+but a passing verification confirms only local definitions, not Azure
+provisioning. Local generation does not authorize Azure provisioning.
+
 ### Example request for your agent
 
 Describe the behavior you want rather than asking for separate edits to each generated file.
