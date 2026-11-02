@@ -280,21 +280,25 @@ Whenever adding a persistent model, execute the installed SwallowKit model
 creation and infrastructure generation workflow, whether or not it has custom
 APIs. A hand-written model alone is not complete.
 
-1. Create the source-of-truth schema with
-   `{{runCmd}} swallowkit machine generate model <model> --overwrite never`
-   (the machine equivalent of `{{runCmd}} swallowkit create-model <model>`),
-   then author its domain fields in `shared/models/` and check its export from
-   `shared/index.ts`. Preserve an existing hand-written schema; do not overwrite
-   it just to run the template command. Model creation alone does **not**
-   generate a Cosmos DB container.
+1. Preview source-of-truth schema creation and its registered Cosmos container
+   migration with
+   `{{runCmd}} swallowkit machine plan model <model> --overwrite never`, then
+   apply the returned plan with
+   `{{runCmd}} swallowkit machine apply model --plan <planId>`. The plan lists
+   schema, shared export, migration, manifest, and artifact-ledger writes and
+   writes no generated files before apply. Then author domain fields in
+   `shared/models/` and check its export from `shared/index.ts`. For a
+   hand-written schema or a model whose template was skipped, run
+   `{{runCmd}} swallowkit machine plan model-infrastructure <model>` and apply
+   the returned plan with
+   `{{runCmd}} swallowkit machine apply model --plan <planId>`; this adds
+   infrastructure records without overwriting the schema or generating CRUD.
 2. If generated CRUD is needed, use `machine plan scaffold <model>` →
    `machine apply scaffold --plan <planId>` to derive Functions, BFF, UI,
-   OpenAPI/native schema assets as applicable, and the container migration.
+   OpenAPI/native schema assets as applicable.
    `--api-only` skips UI only; it still generates CRUD Functions and BFF routes.
-   If custom APIs replace CRUD, do **not** scaffold unnecessary CRUD. Instead run
-   `{{runCmd}} swallowkit migrations add-model <model> --dry-run`, review the
-   changes, then `{{runCmd}} swallowkit migrations add-model <model>` to generate
-   only the Cosmos DB container migration and its generation records.
+   If custom APIs replace CRUD, do **not** scaffold unnecessary CRUD; the model
+   migration from step 1 (or the backfill command above) is sufficient.
 3. Inspect `machine inspect entities`, `machine inspect infra`,
    `machine inspect artifacts`, and `machine inspect drift`, then run
    `{{runCmd}} swallowkit machine verify project`. Check that the model's
@@ -313,8 +317,15 @@ provisioning. Deployment still follows the provisioning approval gates below.
 If infrastructure generation must be deferred, state the reason and the pending
 container/migration work explicitly. For CRUD, pass `--skip-infra` to
 `plan scaffold` / `apply scaffold` (MCP `skipInfra: true`). Nothing under `infra/`
-changes and the plan reports `infra-skipped`. Generate the pending migration
-later with `{{runCmd}} swallowkit migrations add-model <model>`. Even if
+changes during that scaffold plan and the plan reports `infra-skipped`. Generate
+any missing model migration later with
+`{{runCmd}} swallowkit machine plan model-infrastructure <model>` and apply
+the reviewed plan with `{{runCmd}} swallowkit machine apply model --plan <planId>`.
+If an unapplied container definition must be refreshed after editing its partition
+key, preview with
+`{{runCmd}} swallowkit machine plan model-infrastructure <model> --refresh-pending --resource-group <name>`;
+this checks the target's migration tag and deployment history before changing the template.
+Applied, attempted, unknown, or user-modified migrations are not rewritten. Even if
 `verify project` passes, do not mark the persistent model complete or describe
 the project as deployment-ready while required infrastructure is missing.
 

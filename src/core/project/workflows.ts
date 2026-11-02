@@ -50,9 +50,14 @@ Goal: add a persistent model and generate its required infrastructure, even with
 ## Steps
 
 1. Create the model file (deterministic template):
-   \`${runCmd} swallowkit machine generate model <name> --overwrite never\`
-   - This is the machine equivalent of \`${runCmd} swallowkit create-model <name>\`.
-     Preserve existing schemas; model creation alone does not generate a Cosmos DB container.
+   \`${runCmd} swallowkit machine plan model <name> --overwrite never\`
+   then apply the returned plan with
+   \`${runCmd} swallowkit machine apply model --plan <planId>\`.
+   - This previews schema, shared export, container migration, project manifest, and artifact-ledger writes;
+     no generated project files are written before apply.
+     For a hand-written schema, use \`${runCmd} swallowkit machine plan model-infrastructure <name>\`
+     and apply it with \`${runCmd} swallowkit machine apply model --plan <planId>\` to backfill
+     its container migration without changing schema bytes or generating CRUD.
 2. Edit \`shared/models/<name>.ts\` — add domain fields (free-form authoring).
    - Native C#/Python types follow Zod, not names: \`z.iso.datetime()\` for dates, \`z.number().int()\` for integers.
    - \`<model>Id\` fields reference a model only when it exists in \`shared/models\`; otherwise declare
@@ -60,8 +65,8 @@ Goal: add a persistent model and generate its required infrastructure, even with
 3. When CRUD is needed, compute the change plan (writes nothing):
    \`${runCmd} swallowkit machine plan scaffold <name>\`
    - \`status: "requires-human"\` → review \`data.conflicts\`; only proceed with \`--approve\` if overwriting is intended.
-   - Must not change Bicep/infrastructure? Add \`--skip-infra\` to plan and apply. Nothing under \`infra/\` changes and
-     the plan warns \`infra-skipped\`; later run \`${runCmd} swallowkit migrations add-model <name>\` to add only the container migration.
+   - Must not change Bicep/infrastructure during the CRUD scaffold? Add \`--skip-infra\` to plan and apply. Nothing under \`infra/\` changes and
+     the plan warns \`infra-skipped\`; the model container migration should already be registered by step 1 (or the backfill command).
      State the reason and pending infrastructure work; a passing verify does not mean the model is complete or deployment-ready.
    - Read \`data.warnings\`. \`user-scoped-data-without-auth\` means generated CRUD would expose every user's documents;
      add auth (\`swallowkit-add-auth\`) and owner-scoped ai-authored endpoints before exposing the model.
@@ -73,9 +78,11 @@ Goal: add a persistent model and generate its required infrastructure, even with
    - Scaffold appends missing exports to \`shared/index.ts\` for hand-authored models too.
      Manual exports are allowed; no managed markers exist in that file.
    - If custom APIs replace CRUD, skip scaffold (including \`--api-only\`, which still generates CRUD).
-     Review \`${runCmd} swallowkit migrations add-model <name> --dry-run\`, then run
-     \`${runCmd} swallowkit migrations add-model <name>\` to generate only the container migration and generation records.
+     The model migration from step 1 (or the backfill command) is sufficient.
      Keep the schema exported from \`shared/index.ts\`. External connector models need their connector mapping, not a Cosmos container.
+   - If the partition key changes after migration generation, preview
+     \`${runCmd} swallowkit machine plan model-infrastructure <name> --refresh-pending --resource-group <name>\`.
+     Only a proven unapplied migration can be refreshed; applied, attempted, unknown, or user-modified definitions block without writes.
 4. Apply the reviewed CRUD scaffold plan, if needed:
    \`${runCmd} swallowkit machine apply scaffold --plan <planId>\`
 5. Verify:

@@ -147,7 +147,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
 
   program
     .command("create-model <names...>")
-    .description("Create model template files with id, createdAt, and updatedAt fields")
+    .description("Create persistent model templates and register their Cosmos container migrations")
     .option("--models-dir <dir>", "Models directory", "shared/models")
     .option("--connector <name>", "Associate model with a connector defined in swallowkit.config.js")
     .action((names, options) => {
@@ -164,7 +164,7 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
     .option("--functions-dir <dir>", "Azure Functions directory", "functions")
     .option("--api-dir <dir>", "BFF routes directory (Next.js: app/api; React: bff)")
     .option("--api-only", "Skip UI components; still update Functions, BFF routes, OpenAPI, and native schema assets", false)
-    .option("--skip-infra", "Do not create or update anything under infra/ (generate the container migration later with migrations add-model)", false)
+    .option("--skip-infra", "Exclude infra/ writes from this scaffold operation; existing model migrations remain registered", false)
     .option("--dry-run", "Show planned file changes without writing anything", false)
     .action(async (model, options) => {
       if (options.dryRun) {

@@ -1,10 +1,12 @@
+import * as fs from "fs";
 import * as path from "path";
 import * as ts from "typescript";
 import { ensureSwallowKitProject, loadConfig } from "../config";
-import { toPascalCase } from "../scaffold/model-parser";
+import { getAllModels, parseModelFile, toPascalCase } from "../scaffold/model-parser";
 import { syncProjectManifest } from "../project/manifest";
 import { recordSessionOperations } from "../project/artifacts";
 import { FileOperationSession, getActiveFileSession } from "./file-session";
+import { generateModelContainerMigration } from "./migration-generator";
 
 const CREATE_MODEL_GENERATOR = "create-model";
 
@@ -20,6 +22,7 @@ export interface CreateModelOperationResult {
   createdFiles: string[];
   skippedFiles: string[];
   updatedIndex: boolean;
+  infrastructureFiles: string[];
   connectorType?: "rdb" | "api";
 }
 
@@ -91,7 +94,12 @@ export const connectorConfig = {
 `;
 }
 
-export function updateSharedIndex(modelPath: string, schemaName: string, session: FileOperationSession): boolean {
+export function updateSharedIndex(
+  modelPath: string,
+  schemaName: string,
+  session: FileOperationSession,
+  sourceModel?: string
+): boolean {
   const indexPath = path.join(process.cwd(), "shared", "index.ts");
   session.registerInput(indexPath);
   const content = session.fileExists(indexPath) ? session.readFile(indexPath) : "";
@@ -145,6 +153,7 @@ export function updateSharedIndex(modelPath: string, schemaName: string, session
   session.writeFile(indexPath, updated, {
     ownership: "extension-point",
     generator: CREATE_MODEL_GENERATOR,
+    sourceModel,
   });
   return true;
 }
@@ -168,22 +177,25 @@ export async function createModelOperation(options: CreateModelOperationOptions)
 
   const modelsDir = options.modelsDir || "shared/models";
 
-  const session = getActiveFileSession() ?? new FileOperationSession("commit");
+  const activeSession = getActiveFileSession();
   // jest 等の環境で path.resolve の内部 cwd キャッシュが process.chdir と食い違うことが
   // あるため、cwd を明示的に固定して絶対パスを組み立てる。
   const projectRoot = process.cwd();
+  const session = new FileOperationSession("collect", projectRoot, activeSession?.generatedAt);
   const resolveFromRoot = (relativePath: string) =>
     path.isAbsolute(relativePath) ? relativePath : path.join(projectRoot, relativePath);
 
   const createdFiles: string[] = [];
   const skippedFiles: string[] = [];
+  const infrastructureFiles: string[] = [];
+  const generatedModels: Array<Awaited<ReturnType<typeof parseModelFile>>> = [];
   let updatedIndex = false;
+
+  const existingModels = await getAllModels(modelsDir);
 
   for (const name of options.names) {
     const kebabName = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const filePath = path.join(modelsDir, `${kebabName}.ts`);
-    const pascalName = toPascalCase(name);
-
     if (session.fileExists(resolveFromRoot(filePath))) {
       const overwriteMode = options.overwriteMode || "prompt";
       const shouldOverwrite = overwriteMode === "always"
@@ -203,27 +215,58 @@ export async function createModelOperation(options: CreateModelOperationOptions)
     const content = options.connector && connectorType
       ? generateConnectorModelTemplate(name, options.connector, connectorType)
       : generateModelTemplate(name);
+    const temporaryDirectory = fs.mkdtempSync(path.join(projectRoot, ".swallowkit-create-model-"));
+    let modelInfo: Awaited<ReturnType<typeof parseModelFile>>;
+    try {
+      const temporaryModelPath = path.join(temporaryDirectory, path.basename(filePath));
+      fs.writeFileSync(temporaryModelPath, content, "utf-8");
+      modelInfo = await parseModelFile(temporaryModelPath);
+    } finally {
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+    modelInfo.filePath = resolveFromRoot(filePath);
+
     session.writeFile(resolveFromRoot(filePath), content, {
       ownership: "user-owned",
       generator: CREATE_MODEL_GENERATOR,
-      sourceModel: pascalName,
+      sourceModel: modelInfo.name,
     });
+    generatedModels.push(modelInfo);
     createdFiles.push(filePath.replace(/\\/g, "/"));
 
-    if (updateSharedIndex(resolveFromRoot(filePath), pascalName, session)) {
+    if (updateSharedIndex(resolveFromRoot(filePath), modelInfo.schemaName, session, modelInfo.name)) {
       updatedIndex = true;
+    }
+    if (!modelInfo.connectorConfig) {
+      generateModelContainerMigration(modelInfo, session);
+      infrastructureFiles.push(
+        ...session.operations
+          .filter((operation) => operation.sourceModel === modelInfo.name && operation.path.startsWith("infra/") && operation.action !== "skip")
+          .map((operation) => operation.path)
+      );
     }
   }
 
-  if (session.mode === "commit") {
-    recordSessionOperations(session.operations, {});
-    await syncProjectManifest();
+  const targetSession = activeSession ?? new FileOperationSession("commit", projectRoot);
+  session.applyTo(targetSession);
+
+  for (const modelInfo of generatedModels) {
+    recordSessionOperations(
+      targetSession.operations.filter((operation) => operation.sourceModel === modelInfo.name),
+      { schemaHash: modelInfo.semanticFingerprint, sourceModel: modelInfo.name },
+      projectRoot,
+      targetSession
+    );
+  }
+  if (generatedModels.length > 0) {
+    await syncProjectManifest(projectRoot, [...existingModels, ...generatedModels]);
   }
 
   return {
     createdFiles,
     skippedFiles,
     updatedIndex,
+    infrastructureFiles: [...new Set(infrastructureFiles)].sort(),
     ...(connectorType ? { connectorType } : {}),
   };
 }

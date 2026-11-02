@@ -56,6 +56,9 @@ npx swallowkit machine <command> <subcommand> [options]
 | `validate project` | 構造化された validation violation を返す |
 | `generate model` | `create-model` を非対話 JSON モードで実行する |
 | `generate scaffold` | `scaffold` を非対話 JSON モードで実行する |
+| `plan model` | スキーマ、shared export、コンテナー migration、manifest、生成台帳の変更を、プロジェクトに書き込まず preview する |
+| `plan model-infrastructure` | 既存スキーマの bytes を変更せずコンテナー migration の登録を preview する。pending refresh の Azure 確認は読み取り専用 |
+| `apply model` | 入力 fingerprint と上書き承認を検証して model plan を適用する |
 | `plan scaffold` | 書き込まずに scaffold の変更計画（planId 付き）を返す（複数 model 対応） |
 | `apply scaffold` | plan の鮮度・承認を検証して scaffold を適用する（複数 model 対応） |
 | `plan auth` | 書き込まずに add-auth の変更計画を返す（`--allowed-providers` で SWA identity provider を指定） |
@@ -70,7 +73,10 @@ npx swallowkit machine <command> <subcommand> [options]
 ```bash
 npx swallowkit machine inspect project
 npx swallowkit machine validate project
-npx swallowkit machine generate model todo --overwrite never
+npx swallowkit machine plan model todo --overwrite never
+npx swallowkit machine apply model --plan <planId>
+npx swallowkit machine plan model-infrastructure handwritten-model
+npx swallowkit machine apply model --plan <planId>
 npx swallowkit machine generate scaffold todo --api-only
 npx swallowkit machine plan scaffold todo
 npx swallowkit machine plan scaffold todo note learner
@@ -725,7 +731,9 @@ cd my-awesome-app
 
 ## swallowkit create-model
 
-`shared/models/` 配下に 1 つ以上の Zod モデル雛形ファイルを生成します。
+`shared/models/` 配下に 1 つ以上の Zod モデル雛形を生成します。新規の
+非 connector モデルでは Cosmos コンテナー用 migration も生成・登録します。
+Azure の provisioning や CRUD の生成は行いません。
 
 ### 使用法
 
@@ -754,6 +762,7 @@ pnpm dlx swallowkit create-model <names...> [options]
 - ファイル名は kebab-case、スキーマ名と型名は PascalCase に正規化
 - `shared/index.ts` に不足する再エクスポートを追記（なければ作成）。既存内容は保持
 - 初期スキーマに `id`、`name`、`createdAt`、`updatedAt` を含める
+- コンテナー Bicep、migration manifest エントリ、生成ファイル所有権記録を生成
 
 例:
 
@@ -795,17 +804,18 @@ npx swallowkit create-model backlog-issue --connector backlog
 
 ### 既存ファイルがある場合
 
-対象ファイルがすでに存在する場合は、上書きするかどうかを確認します。`no` を選ぶとそのモデルだけスキップされ、他のモデルの処理は続行されます。
+対象ファイルがすでに存在する場合は、上書きするかどうかを確認します。`no` を選ぶとそのモデルだけスキップされ、他のモデルの処理は続行されます。スキップしたモデルのインフラは backfill されません。手書きモデルのスキーマを変更せずに登録するには `migrations add-model <name>` を使います。
 
 ### 典型的な流れ
 
 ```bash
 npx swallowkit create-model todo
 # shared/models/todo.ts を編集
-npx swallowkit scaffold shared/models/todo.ts
+npx swallowkit migrations add-model todo --dry-run # 手書きまたはスキップしたモデルの場合のみ
+npx swallowkit scaffold shared/models/todo.ts # CRUD が必要な場合のみ
 ```
 
-まず `create-model` でスキーマのひな形を作り、その後で業務要件に合わせて Zod モデルを編集してから `scaffold` を実行します。
+`scaffold` や `provision` の前に生成された Zod モデルを編集します。migration が pending の状態で partition key を変更した場合は、`migrations add-model <name> --refresh-pending --resource-group <name> --dry-run` を明示して preview してください。読み取り専用のリモート確認を行い、適用済み・デプロイ試行済み・状態不明・手編集済みの migration は安全性を証明できなければ拒否します。
 
 ## swallowkit add-connector
 
@@ -1105,7 +1115,7 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 | `--functions-dir <dir>` | Azure Functions ディレクトリ | `functions` |
 | `--api-dir <dir>` | BFF ディレクトリ | Next.js: `app/api`、React: `bff` |
 | `--api-only` | UI コンポーネントのみをスキップします。Functions、BFF ルート、OpenAPI、ネイティブスキーマ資産は更新されます。 | `false` |
-| `--skip-infra` | `infra/` 配下を一切作成・変更しません。コンテナー用 migration は未生成として報告され（`infra-skipped`）、後から `migrations add-model` で追加できます。`machine plan/apply/generate scaffold` と MCP（`skipInfra`）でも使えます。 | `false` |
+| `--skip-infra` | この scaffold 操作では `infra/` 配下を作成・変更しません（`infra-skipped`）。既存のモデル migration は削除されません。未登録の場合は後から `migrations add-model` で追加できます。`machine plan/apply/generate scaffold` と MCP（`skipInfra`）でも使えます。 | `false` |
 | `--dry-run` | 書き込まずに変更予定のファイル一覧と競合を表示します | `false` |
 
 ### Connector モデルの動作
@@ -1351,14 +1361,27 @@ npx swallowkit dev --seed-env local
 
 ## swallowkit migrations add-model
 
-モデルの Cosmos DB コンテナー用 migration だけを生成します。`scaffold --skip-infra` の後に使います。
+スキーマを上書きせず CRUD も生成せずに、モデルの Cosmos DB コンテナー migration を登録・backfill します。
 
 ```bash
 npx swallowkit migrations add-model probe-item --dry-run
 npx swallowkit migrations add-model probe-item
 ```
 
-`infra/migrations/<version>-create-<model>-container/main.bicep` を作成し、`infra/migrations/manifest.json` に追記します。同じモデルで再実行しても変更はありません。コネクターモデルにはコンテナーがありません。
+Machine/MCP では `machine plan model-infrastructure <model>` で preview し、
+返された plan を `machine apply model --plan <planId>` で適用してください。
+migration、manifest、生成台帳の書き込みを fingerprint 付きで確認できます。
+
+`infra/migrations/<version>-create-<model>-container/main.bicep` を作成し、`infra/migrations/manifest.json` を更新して、生成ファイル所有権を記録します。同じモデルで再実行しても、明示的に安全な pending 定義を更新する場合を除いて変更はありません。コネクターモデルにはコンテナーがありません。
+
+migration が pending の間に partition key を変更した場合のみ、明示的な target と読み取り専用の状態確認を指定して更新します：
+
+```bash
+npx swallowkit migrations add-model probe-item --refresh-pending --resource-group <name> --dry-run
+npx swallowkit migrations add-model probe-item --refresh-pending --resource-group <name>
+```
+
+Azure CLI の選択中 subscription 以外が対象なら `--subscription <id>` を追加してください。dry-run は書き込みません。適用済み・デプロイ試行済み・状態不明・手編集済みの migration は拒否します。デプロイされた可能性のある migration は編集しないでください。
 
 ## swallowkit configure-mcp
 

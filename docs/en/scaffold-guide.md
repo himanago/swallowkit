@@ -16,7 +16,9 @@ For schema design concepts, see [Core concepts](/en/concepts).
 
 ### 1. Create Model Template
 
-Use the `create-model` command to generate a model template with `id`, `createdAt`, and `updatedAt` fields:
+Use `create-model` to generate a model template with `id`, `createdAt`, and
+`updatedAt` fields and register its Cosmos container migration. This does not
+deploy Azure resources or generate CRUD:
 
 ::: code-group
 ```bash [npm]
@@ -339,7 +341,14 @@ npx swallowkit machine plan scaffold probe-item --skip-infra
 npx swallowkit machine apply scaffold --plan <planId>
 ```
 
-Nothing under `infra/` changes. The plan includes an `infra-skipped` warning and a `nextActions` entry. `inspect drift` and `verify project` do not treat the missing container migration as an error. Generate it later with `swallowkit migrations add-model probe-item`, or plan scaffold again without `--skip-infra`.
+Nothing under `infra/` changes as part of this scaffold plan. The plan includes
+an `infra-skipped` warning and a `nextActions` entry. A container migration
+already registered by `create-model` remains in the project; if the model was
+hand-written or skipped, preview
+`swallowkit machine plan model-infrastructure probe-item` and apply the returned
+plan with `swallowkit machine apply model --plan <planId>`. `inspect drift` and `verify project` may not treat a missing
+migration as an error, so a passing verify is not proof that required
+infrastructure exists or that the project is deployment-ready.
 
 ## Per-User Data Warning
 
@@ -348,6 +357,10 @@ Generated CRUD does not scope documents to the authenticated principal. When a m
 ## Native Backend Schema Types (C# / Python)
 
 C# and Python schema assets are derived from Zod through OpenAPI. Types come from the Zod definition, never from field names:
+
+`z.record(...)` is currently unsupported for persistent models. Model analysis
+fails closed with a structured `ZodRecord` diagnostic rather than dropping the
+field or generating an incorrectly typed target model.
 
 | Zod | OpenAPI | C# | Python |
 | --- | --- | --- | --- |

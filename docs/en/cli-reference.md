@@ -55,6 +55,9 @@ npx swallowkit machine <command> <subcommand> [options]
 | `validate project` | Return structured validation violations |
 | `generate model` | Run `create-model` in non-interactive JSON mode |
 | `generate scaffold` | Run `scaffold` in non-interactive JSON mode |
+| `plan model` | Preview schema, shared export, container migration, manifest, and artifact-ledger writes without changing project files |
+| `plan model-infrastructure` | Preview container migration registration for an existing schema without changing model bytes; optional pending refresh checks are read-only |
+| `apply model` | Apply a model plan after checking input fingerprints and overwrite approval |
 | `plan scaffold` | Compute the scaffold change plan (with planId) without writing files; accepts multiple models |
 | `apply scaffold` | Apply scaffold changes with plan freshness and approval checks; accepts multiple models |
 | `plan auth` | Compute the add-auth change plan without writing files (`--allowed-providers` sets SWA identity providers) |
@@ -69,7 +72,10 @@ npx swallowkit machine <command> <subcommand> [options]
 ```bash
 npx swallowkit machine inspect project
 npx swallowkit machine validate project
-npx swallowkit machine generate model todo --overwrite never
+npx swallowkit machine plan model todo --overwrite never
+npx swallowkit machine apply model --plan <planId>
+npx swallowkit machine plan model-infrastructure handwritten-model
+npx swallowkit machine apply model --plan <planId>
 npx swallowkit machine generate scaffold todo --api-only
 npx swallowkit machine plan scaffold todo
 npx swallowkit machine plan scaffold todo note learner
@@ -615,7 +621,9 @@ cd my-awesome-app
 
 ## swallowkit create-model
 
-Create one or more Zod model template files under `shared/models/`.
+Create one or more Zod model templates under `shared/models/`. For each newly
+created non-connector model, also generate and register its Cosmos container
+migration; this does not provision Azure or generate CRUD.
 
 ### Usage
 
@@ -644,6 +652,7 @@ For each model name, the command:
 - normalizes the file name to kebab-case and the schema/type name to PascalCase
 - appends a missing re-export to `shared/index.ts` (creating the index if needed), preserving existing content
 - includes `id`, `name`, `createdAt`, and `updatedAt` in the starter schema
+- generates the container Bicep, migration manifest entry, and artifact ownership record
 
 Example:
 
@@ -685,17 +694,18 @@ npx swallowkit create-model backlog-issue --connector backlog
 
 ### Existing file behavior
 
-If the target file already exists, the command asks whether it should overwrite that file. If you answer `no`, that model is skipped and the remaining models continue.
+If the target file already exists, the command asks whether it should overwrite that file. If you answer `no`, that model is skipped and the remaining models continue; it does not backfill infrastructure for skipped files. Use `migrations add-model <name>` to register a handwritten model without changing its schema.
 
 ### Typical workflow
 
 ```bash
 npx swallowkit create-model todo
 # edit shared/models/todo.ts
-npx swallowkit scaffold shared/models/todo.ts
+npx swallowkit migrations add-model todo --dry-run # only needed for a handwritten or skipped model
+npx swallowkit scaffold shared/models/todo.ts # only when CRUD is needed
 ```
 
-Use `create-model` to create the initial schema stub, then customize the generated Zod model before running `scaffold`.
+Customize the generated Zod model before running `scaffold` or `provision`. To refresh an unapplied container definition after changing its partition key, explicitly preview `migrations add-model <name> --refresh-pending --resource-group <name> --dry-run`; it performs read-only remote checks and blocks if applied, attempted, unknown, or modified migration state cannot be proven safe.
 
 ## swallowkit add-connector
 
@@ -995,7 +1005,7 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 | `--functions-dir <dir>` | Azure Functions directory | `functions` |
 | `--api-dir <dir>` | BFF directory | `app/api` (Next.js), `bff` (React) |
 | `--api-only` | Skip UI components only. Functions, BFF routes, OpenAPI, and native schema assets are still updated. | `false` |
-| `--skip-infra` | Do not create or update anything under `infra/`. The container migration is reported as pending (`infra-skipped`); add it later with `migrations add-model`. Also available on `machine plan/apply/generate scaffold` and MCP (`skipInfra`). | `false` |
+| `--skip-infra` | Do not create or update anything under `infra/` as part of this scaffold operation. Existing model migrations are not removed; if the model has no registered container migration, add it later with `migrations add-model`. Also available on `machine plan/apply/generate scaffold` and MCP (`skipInfra`). | `false` |
 | `--dry-run` | Show planned file changes and conflicts without writing anything | `false` |
 
 ### Connector model behavior
@@ -1229,14 +1239,35 @@ npx swallowkit dev --seed-env local
 
 ## swallowkit migrations add-model
 
-Generate only the Cosmos DB container migration for a model, for example after `scaffold --skip-infra`:
+Register or backfill the Cosmos DB container migration for a model without
+overwriting its schema or generating CRUD:
 
 ```bash
 npx swallowkit migrations add-model probe-item --dry-run
 npx swallowkit migrations add-model probe-item
 ```
 
-It writes `infra/migrations/<version>-create-<model>-container/main.bicep` and appends it to `infra/migrations/manifest.json`. Running it again for the same model changes nothing. Connector models have no container.
+Machine/MCP callers should use `machine plan model-infrastructure <model>` and
+apply the returned plan with `machine apply model --plan <planId>` so the
+migration, manifest, and artifact-ledger writes are fingerprinted and reviewed
+before applying.
+
+It writes `infra/migrations/<version>-create-<model>-container/main.bicep`,
+updates `infra/migrations/manifest.json`, and records generated-file ownership.
+Running it again for the same model changes nothing unless explicitly refreshing
+a proven-unapplied definition. Connector models have no container.
+
+After editing a partition key while its migration is still pending, refresh it
+only with an explicit target and read-only state check:
+
+```bash
+npx swallowkit migrations add-model probe-item --refresh-pending --resource-group <name> --dry-run
+npx swallowkit migrations add-model probe-item --refresh-pending --resource-group <name>
+```
+
+Add `--subscription <id>` when the target subscription is not selected in Azure
+CLI. A dry run writes nothing. Applied, attempted, unknown, or user-modified
+migrations are blocked; never edit a migration that may have been deployed.
 
 ## swallowkit configure-mcp
 

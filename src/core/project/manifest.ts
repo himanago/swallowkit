@@ -4,6 +4,8 @@ import { getBackendLanguage, getFrontendFramework, getFullConfig, normalizeAuthC
 import { getAllModels, toCamelCase, toKebabCase } from "../scaffold/model-parser";
 import { AuthConfig, BackendLanguage, FrontendFramework, ConnectorDefinition, ModelAuthPolicy, ModelConnectorConfig } from "../../types";
 import { captureConsoleMessages, withWorkingDirectory } from "../operations/runtime";
+import { getActiveFileSession } from "../operations/file-session";
+import type { ModelInfo } from "../scaffold/model-parser";
 
 const CONFIG_CANDIDATES = [
   "swallowkit.config.js",
@@ -308,7 +310,7 @@ function buildSystemRoutes(projectRoot: string, frontend: FrontendFramework, aut
   ];
 }
 
-export async function buildProjectManifest(projectRoot: string = process.cwd()): Promise<{
+export async function buildProjectManifest(projectRoot: string = process.cwd(), modelsOverride?: ModelInfo[]): Promise<{
   manifest: ProjectManifest;
   diagnostics: string[];
 }> {
@@ -321,7 +323,7 @@ export async function buildProjectManifest(projectRoot: string = process.cwd()):
     const config = getFullConfig(configPath || undefined);
     const configValidation = validateConfig(config);
     const { result: entities, messages } = await captureConsoleMessages(async () => {
-      const models = await getAllModels("shared/models");
+      const models = modelsOverride ?? await getAllModels("shared/models");
       return models.map((model) => ({
         name: model.name,
         displayName: model.displayName,
@@ -418,10 +420,17 @@ export async function loadProjectManifest(projectRoot: string = process.cwd()): 
   };
 }
 
-export async function syncProjectManifest(projectRoot: string = process.cwd()): Promise<ProjectManifest> {
-  const { manifest } = await buildProjectManifest(projectRoot);
+export async function syncProjectManifest(projectRoot: string = process.cwd(), modelsOverride?: ModelInfo[]): Promise<ProjectManifest> {
+  const { manifest } = await buildProjectManifest(projectRoot, modelsOverride);
   const manifestPath = path.join(projectRoot, SWALLOWKIT_MANIFEST_PATH);
-  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
-  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf-8");
+  const activeSession = getActiveFileSession();
+  if (activeSession) manifest.generatedAt = activeSession.generatedAt;
+  const content = JSON.stringify(manifest, null, 2) + "\n";
+  if (activeSession) {
+    activeSession.writeFile(manifestPath, content, { ownership: "metadata", generator: "project-manifest" });
+  } else {
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+    fs.writeFileSync(manifestPath, content, "utf-8");
+  }
   return manifest;
 }

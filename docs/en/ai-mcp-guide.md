@@ -68,11 +68,13 @@ Validation returns structured violations for:
 
 ::: code-group
 ```bash [npm]
-npx swallowkit machine generate model todo --overwrite never
+npx swallowkit machine plan model todo --overwrite never
+npx swallowkit machine apply model --plan <planId>
 npx swallowkit machine generate scaffold todo --api-only
 ```
 ```bash [pnpm]
-pnpm exec swallowkit machine generate model todo --overwrite never
+pnpm exec swallowkit machine plan model todo --overwrite never
+pnpm exec swallowkit machine apply model --plan <planId>
 pnpm exec swallowkit machine generate scaffold todo --api-only
 ```
 :::
@@ -269,6 +271,10 @@ The server exposes explicit tools only:
 - `swallowkit_inspect_infra`
 - `swallowkit_validate_project`
 - `swallowkit_generate_model`
+- `swallowkit_plan_model`
+- `swallowkit_plan_model_infrastructure`
+- `swallowkit_apply_model`
+- `swallowkit_add_model_migration`
 - `swallowkit_scaffold_model`
 - `swallowkit_plan_scaffold`
 - `swallowkit_apply_scaffold`
@@ -281,6 +287,19 @@ The server exposes explicit tools only:
 - `swallowkit_explain_failure`
 
 The MCP layer does not implement framework logic on its own. It delegates each tool call to the machine CLI.
+`swallowkit_generate_model` registers a container migration for newly created
+non-connector models. `swallowkit_add_model_migration` is the schema-preserving
+backfill for hand-written models; `dryRun` lists concrete migration/manifest
+writes without writing. Its `refreshPending` option is opt-in and performs
+read-only Azure migration-tag and deployment-history checks against the
+specified resource group before a pending definition may be refreshed.
+For a plan/apply backfill of a hand-written schema, use
+`swallowkit_plan_model_infrastructure` and pass its reviewed `planId` to
+`swallowkit_apply_model`; this preserves the schema and fingerprints all planned
+migration, manifest, and artifact-ledger writes.
+For previewable persistent-model generation, use `swallowkit_plan_model` and
+apply its reviewed `planId` with `swallowkit_apply_model`; the preview includes
+the schema, shared export, migration, manifest, and artifact ledger.
 
 ## Generated Project Bootstrap
 

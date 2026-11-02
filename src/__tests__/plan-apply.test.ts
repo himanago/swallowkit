@@ -515,7 +515,7 @@ describe("plan / apply / drift / verify machine commands", () => {
     expect(plan.response.data.options.skipInfra).toBe(true);
     expect(plan.response.data.operations.filter((operation: { path: string }) => operation.path.startsWith("infra/"))).toEqual([]);
     expect(plan.response.data.warnings).toEqual(expect.arrayContaining([
-      expect.stringMatching(/^infra-skipped: The Cosmos DB container migration for Todo was not generated/),
+      expect.stringMatching(/^infra-skipped: This scaffold operation did not change infra\/ for Todo/),
     ]));
     expect(plan.response.nextActions).toContainEqual(expect.objectContaining({ command: "swallowkit migrations add-model todo" }));
 
@@ -533,6 +533,7 @@ describe("plan / apply / drift / verify machine commands", () => {
 
     const dryRun = await addModelContainerMigration("todo", { dryRun: true });
     expect(dryRun.operations.map((operation) => operation.path)).toEqual([
+      ".swallowkit/artifacts.json",
       "infra/migrations/0001-create-todo-container/main.bicep",
       MIGRATION_MANIFEST_PATH.replace(/\\/g, "/"),
     ]);

@@ -68,11 +68,13 @@ validation は構造化 violation として以下を返します。
 
 ::: code-group
 ```bash [npm]
-npx swallowkit machine generate model todo --overwrite never
+npx swallowkit machine plan model todo --overwrite never
+npx swallowkit machine apply model --plan <planId>
 npx swallowkit machine generate scaffold todo --api-only
 ```
 ```bash [pnpm]
-pnpm exec swallowkit machine generate model todo --overwrite never
+pnpm exec swallowkit machine plan model todo --overwrite never
+pnpm exec swallowkit machine apply model --plan <planId>
 pnpm exec swallowkit machine generate scaffold todo --api-only
 ```
 :::
@@ -269,6 +271,10 @@ pnpm exec swallowkit-mcp
 - `swallowkit_inspect_infra`
 - `swallowkit_validate_project`
 - `swallowkit_generate_model`
+- `swallowkit_plan_model`
+- `swallowkit_plan_model_infrastructure`
+- `swallowkit_apply_model`
+- `swallowkit_add_model_migration`
 - `swallowkit_scaffold_model`
 - `swallowkit_plan_scaffold`
 - `swallowkit_apply_scaffold`
@@ -281,6 +287,18 @@ pnpm exec swallowkit-mcp
 - `swallowkit_explain_failure`
 
 MCP 層は framework ロジックを持たず、各 Tool 呼び出しを machine CLI に委譲します。
+`swallowkit_generate_model` は新規の非 connector モデルにコンテナー migration を登録します。
+`swallowkit_add_model_migration` は手書きモデルをスキーマ変更せず backfill する操作です。
+`dryRun` は具体的な migration / manifest の書き込み予定を表示しますが、書き込みません。
+`refreshPending` は opt-in であり、pending 定義を更新する前に指定された resource group の
+Azure migration tag と deployment history を読み取り専用で確認します。
+手書きスキーマの backfill を plan/apply で行う場合は
+`swallowkit_plan_model_infrastructure` を使い、返された `planId` を
+`swallowkit_apply_model` に渡します。スキーマを保持し、migration、manifest、
+生成台帳への書き込みを fingerprint 付きで確認できます。
+永続化モデル生成を preview する場合は `swallowkit_plan_model` を使い、
+返された `planId` を `swallowkit_apply_model` に渡します。preview にはスキーマ、shared export、
+migration、manifest、生成台帳が含まれます。
 
 ## 生成プロジェクトでの bootstrap
 

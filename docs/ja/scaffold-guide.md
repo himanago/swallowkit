@@ -16,7 +16,8 @@ C# または Python バックエンドでは、OpenAPI ドキュメントの出�
 
 ### 1. モデルの雛形を作成
 
-`create-model` コマンドで、`id`、`createdAt`、`updatedAt` を含むモデルの雛形を生成します：
+`create-model` コマンドで、`id`、`createdAt`、`updatedAt` を含むモデルの雛形と
+Cosmos コンテナー用 migration を登録します。Azure リソースのデプロイや CRUD 生成は行いません：
 
 ::: code-group
 ```bash [npm]
@@ -339,7 +340,7 @@ npx swallowkit machine plan scaffold probe-item --skip-infra
 npx swallowkit machine apply scaffold --plan <planId>
 ```
 
-`infra/` 配下は一切変更されません。plan には `infra-skipped` の警告と `nextActions` が含まれます。`inspect drift` と `verify project` は、コンテナー用 migration が未生成であることをエラーとして扱いません。後から `swallowkit migrations add-model probe-item` で migration だけを生成するか、`--skip-infra` なしで plan し直してください。
+この scaffold plan では `infra/` 配下を変更しません。plan には `infra-skipped` の警告と `nextActions` が含まれます。`create-model` で登録済みのコンテナー migration はプロジェクト内に残ります。手書きまたはスキップされたモデルでは `swallowkit machine plan model-infrastructure probe-item` で preview し、返された plan を `swallowkit machine apply model --plan <planId>` で適用してください。`inspect drift` や `verify project` が migration 不足をエラーにしない場合があるため、verify 成功だけでは必要なインフラの存在やデプロイ可能性を証明できません。
 
 ## ユーザー単位のデータに関する警告
 
@@ -348,6 +349,8 @@ npx swallowkit machine apply scaffold --plan <planId>
 ## ネイティブバックエンドのスキーマ型（C# / Python）
 
 C# と Python のスキーマ資産は、Zod から OpenAPI を経由して生成します。型はフィールド名ではなく Zod の定義で決まります。
+
+`z.record(...)` は現在、永続化モデルではサポートされません。フィールドを削除したり誤った型のモデルを生成したりせず、構造化された `ZodRecord` 診断でモデル解析を失敗させます。
 
 | Zod | OpenAPI | C# | Python |
 | --- | --- | --- | --- |

@@ -93,7 +93,7 @@ export function inspectCapabilities(): CapabilitiesContract {
         name: "schema",
         required: true,
         description:
-          "Zod object schema; the schema constant and the inferred type share the same PascalCase name. `id` MUST be a required string — generated CRUD, UI, and repositories assume it is always present. Only `createdAt` / `updatedAt` are optional (backend-managed).",
+          "Zod object schema; the schema constant and inferred type share the same PascalCase name. The filename-matching export is selected even when helper schemas appear first. `id` MUST be a required string. z.record is currently rejected with file/schema/field diagnostics because its value type is not mapped across every generated target.",
         format:
           "export const Todo = z.object({ id: z.string(), title: z.string().min(1), createdAt: z.string().optional(), updatedAt: z.string().optional() });\nexport type Todo = z.infer<typeof Todo>;",
       },
@@ -214,7 +214,7 @@ export function inspectCapabilities(): CapabilitiesContract {
         "String formats (email/uuid/url), refinements, and transforms are not re-implemented natively; the BFF Zod schemas remain the authoritative validation.",
       ],
       buildNote:
-        "create-model and plan/apply scaffold append missing model exports to shared/index.ts, including manually authored models. Manual exports are allowed (no markers); existing content is preserved. verify typecheck resolves the shared package from its built dist/. SwallowKit rebuilds shared automatically during verify; when typechecking manually, build shared first.",
+        "create-model writes a new persistent model, its missing shared/index.ts export, and a registered Cosmos container migration with artifact ownership/fingerprints in one staged operation. Connector models do not get Cosmos containers. For a hand-written model, migrations add-model registers only the container and never edits the schema; --dry-run writes nothing. After editing a generated model's partition key, use --refresh-pending with the target resource group; it only refreshes a generated migration when Azure migration tags/checksums, complete deployment history, and the generated file's ownership fingerprint prove that no deployment was applied or attempted. Applied, attempted, unknown, or modified state blocks. verify typecheck resolves the shared package from its built dist/; a passing verify is not proof that required pending infrastructure has been provisioned.",
     },
     seeding: {
       createTemplates: "swallowkit create-dev-seeds <environment> — writes dev-seeds/<environment>/<model>.json templates.",
@@ -225,11 +225,11 @@ export function inspectCapabilities(): CapabilitiesContract {
       "inspect project | entities | routes | artifacts | boundaries | infra | drift | capabilities; inspect provision --plan <runId> [--wait-seconds <0-3600>]",
       "validate project",
       "generate model <names...> | generate scaffold <model>",
-      "plan scaffold <models...> [--api-only] [--skip-infra] | plan auth --provider <p> [--scheme <name>] [--allowed-providers <csv>] | plan provision -g <rg> --location <loc> --swa-location <loc> [--adopt-existing --baseline 0 --what-if] [--reconcile --what-if] [--resume-deployment <name>]",
-      "apply scaffold [models...] --plan <id> [--approve] [--skip-infra] | apply auth --plan <id> [--approve] | apply provision --plan <id> --approve [--wait-seconds <0-3600>] (also resumes the same execution checkpoint)",
+      "migrations add-model <model> [--dry-run] [--refresh-pending --resource-group <rg> [--subscription <id>]] — register a handwritten model without changing its schema; pending refresh is allowed only after Azure tag/checksum, complete deployment history, and generated-file fingerprints prove it safe",
+      "plan model <names...> [--models-dir <dir>] [--connector <name>] [--overwrite never|always] | plan model-infrastructure <model> [--refresh-pending --resource-group <rg> [--subscription <id>]] | plan scaffold <models...> [--api-only] [--skip-infra] | plan auth --provider <p> [--scheme <name>] [--allowed-providers <csv>] | plan provision -g <rg> --location <loc> --swa-location <loc> [--adopt-existing --baseline 0 --what-if] [--reconcile --what-if] [--resume-deployment <name>]",
+      "apply model --plan <id> [--approve] | apply scaffold [models...] --plan <id> [--approve] [--skip-infra] | apply auth --plan <id> [--approve] | apply provision --plan <id> --approve [--wait-seconds <0-3600>] (also resumes the same execution checkpoint)",
       "verify project [--checks <ids>] [--compact]",
       "explain failure [--check <id>]",
-      "(regular CLI) migrations add-model <model> [--dry-run] — generate only the container migration after scaffold --skip-infra",
       "(regular CLI) configure-mcp [--version auto|latest|<semver>] — re-select the MCP launcher version in .mcp.json",
     ],
     provisioning: {

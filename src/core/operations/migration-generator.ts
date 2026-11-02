@@ -107,7 +107,7 @@ function initializeMigrations(projectRoot: string, legacy: boolean): MigrationMa
     `${JSON.stringify(manifest, null, 2)}\n`,
     { ownership: "metadata", generator: GENERATOR }
   );
-  recordSessionOperations(session.operations, {}, projectRoot);
+  recordSessionOperations(session.operations, {}, projectRoot, session);
   return manifest;
 }
 
@@ -167,7 +167,8 @@ function cosmosAccountNameExpression(session: FileOperationSession): string {
 
 export function generateModelContainerMigration(
   model: { name: string; partitionKey: string },
-  session: FileOperationSession = new FileOperationSession("commit")
+  session: FileOperationSession = new FileOperationSession("commit"),
+  options: { allowPendingRefresh?: boolean } = {}
 ): InfrastructureMigration | null {
   const manifest = readManifestForSession(session);
   const existing = manifest.migrations.find((migration) => migration.source === "model" && migration.sourceModel === model.name);
@@ -225,7 +226,7 @@ resource container 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/container
 output containerName string = container.name
 `;
   const absoluteTemplate = path.join(session.rootDirectory, template);
-  if (existing && session.fileExists(absoluteTemplate) && session.readFile(absoluteTemplate) !== bicep) {
+  if (existing && session.fileExists(absoluteTemplate) && session.readFile(absoluteTemplate) !== bicep && !options.allowPendingRefresh) {
     throw new MachineCommandError(
       "applied-migration-immutable",
       `The generated migration for model ${model.name} differs from the current schema. Create a new explicit migration instead of changing container properties.`,

@@ -35,6 +35,7 @@ import {
   findBaselineDrift,
   getMigrationTagKey,
   loadMigrationManifest,
+  resolveMigrations,
   replaceMigrationManifest,
   selectPendingMigrations,
 } from "../project/migrations";
@@ -55,6 +56,102 @@ export interface PlanProvisionOptions {
   reconcile?: boolean;
   /** Attach an existing, matching baseline deployment without submitting Bicep again. */
   resumeDeployment?: string;
+}
+
+export function readRemoteMigrationState(
+  projectRoot: string,
+  resourceGroup: string,
+  subscription?: string,
+  targetVersion?: number
+): { state: MigrationState; appliedVersion: number; subscription: string } {
+  const manifest = loadMigrationManifest(projectRoot);
+  if (!RESOURCE_GROUP_PATTERN.test(resourceGroup)) {
+    throw new MachineCommandError("invalid-arguments", `Invalid resource group name: ${resourceGroup}`, undefined, "failed");
+  }
+  if (subscription && !SUBSCRIPTION_PATTERN.test(subscription)) {
+    throw new MachineCommandError("invalid-arguments", "Subscription must be a GUID.", undefined, "failed");
+  }
+  const azCli = checkAzCliAvailability();
+  if (!azCli.available) {
+    throw new MachineCommandError("azure-cli-unavailable", azCli.detail, { reason: azCli.reason }, "blocked");
+  }
+  const resolvedSubscription = subscription ?? resolveSubscription({
+    resourceGroup,
+    location: "japaneast",
+    swaLocation: "eastasia",
+  });
+  const group = inspectRemoteGroup({
+    resourceGroup,
+    location: "japaneast",
+    swaLocation: "eastasia",
+    subscription: resolvedSubscription,
+  });
+  const unfinishedRun = readRuns(projectRoot).find((run) =>
+    run.plan.resourceGroup === resourceGroup &&
+    run.plan.subscription === resolvedSubscription &&
+    run.outcome !== "succeeded"
+  );
+  if (unfinishedRun) {
+    throw new MachineCommandError(
+      "migration-refresh-provision-attempted",
+      `Provision run ${unfinishedRun.runId} for ${resourceGroup} has not completed successfully; refusing to refresh a migration while deployment state may be partial.`,
+      { runId: unfinishedRun.runId, outcome: unfinishedRun.outcome },
+      "blocked"
+    );
+  }
+  if (!group.exists) {
+    const state: MigrationState = {
+      schemaVersion: 1,
+      version: 0,
+      checksum: manifest.baseline.checksum,
+    };
+    return { state, appliedVersion: 0, subscription: resolvedSubscription };
+  }
+  const tag = group.tags[getMigrationTagKey(manifest.projectId)];
+  if (!tag) {
+    throw new MachineCommandError("azure-migration-state-unknown", `Resource group ${resourceGroup} has no SwallowKit migration tag; refusing to refresh a possibly applied migration.`, undefined, "blocked");
+  }
+  const state = decodeMigrationState(tag);
+  const expectedChecksum = checksumAtVersion(manifest, state.version, projectRoot);
+  if (state.checksum !== expectedChecksum) {
+    throw new MachineCommandError("migration-checksum-mismatch", `Azure migration state for ${resourceGroup} does not match the local migration history.`, { version: state.version }, "blocked");
+  }
+  if (targetVersion !== undefined) {
+    const deployments = runAz([
+      "deployment", "group", "list",
+      "--resource-group", resourceGroup,
+      ...subscriptionArgs(resolvedSubscription),
+      "--query", "[?starts_with(name, 'swallowkit-migration')].{name:name,state:properties.provisioningState}",
+      "-o", "json",
+    ], 60_000);
+    if (deployments.status !== 0 || deployments.failureKind || deployments.stdoutTruncated) {
+      throw azQueryError("azure-state-query-failed", `Could not verify prior deployment attempts for migration ${targetVersion}`, deployments);
+    }
+    let attempts: Array<{ name?: string; state?: string }>;
+    try {
+      attempts = JSON.parse(deployments.stdout);
+    } catch {
+      throw azQueryError("azure-state-query-failed", `Invalid deployment history response for migration ${targetVersion}`, deployments);
+    }
+    if (!Array.isArray(attempts) || attempts.some((attempt) => typeof attempt?.name !== "string" || typeof attempt?.state !== "string")) {
+      throw new MachineCommandError("azure-state-query-failed", `Azure returned incomplete deployment history for migration ${targetVersion}.`, undefined, "blocked");
+    }
+    const relevantAttempts = attempts.filter((attempt) => {
+      if (attempt.name === "swallowkit-migration") return true;
+      const versioned = /^swallowkit-migration-(\d+)-/.exec(attempt.name!);
+      if (!versioned) return true;
+      return Number(versioned[1]) >= targetVersion;
+    });
+    if (relevantAttempts.length > 0) {
+      throw new MachineCommandError(
+        "migration-refresh-provision-attempted",
+        `Azure has a deployment attempt that could include migration ${targetVersion} (${relevantAttempts.map((attempt) => `${attempt.name}:${attempt.state}`).join(", ")}), but its migration tag is still at ${state.version}; refusing to rewrite the template.`,
+        { version: targetVersion, appliedVersion: state.version, deployments: relevantAttempts },
+        "blocked"
+      );
+    }
+  }
+  return { state, appliedVersion: state.version, subscription: resolvedSubscription };
 }
 
 export type ProvisionMode = "offline" | "bootstrap" | "adoption-required" | "adopt" | "migrate" | "noop" | "reconcile" | "recover";
@@ -208,8 +305,59 @@ function tagCommand(resourceId: string, key: string, state: MigrationState, expe
   return { file: "az", args: ["tag", "update", "--resource-id", resourceId, "--operation", "Merge", "--tags", `${key}=${encodeMigrationState(state)}`, "-o", "none"], kind: "tag", expectedState };
 }
 
-function bootstrapTagCommand(options: PlanProvisionOptions, key: string, state: MigrationState): ProvisionCommand {
-  return { file: "az", args: ["group", "update", "--name", options.resourceGroup, "--set", `tags.${key}=${encodeMigrationState(state)}`, ...subscriptionArgs(options.subscription), "-o", "none"], kind: "tag", expectedState: null };
+function bootstrapTagCommand(
+  options: PlanProvisionOptions,
+  key: string,
+  state: MigrationState,
+  expectedState: MigrationState | null = null
+): ProvisionCommand {
+  return {
+    file: "az",
+    args: ["group", "update", "--name", options.resourceGroup, "--set", `tags.${key}=${encodeMigrationState(state)}`, ...subscriptionArgs(options.subscription), "-o", "none"],
+    kind: "tag",
+    expectedState,
+  };
+}
+
+function buildMigrationCommands(
+  migrations: ResolvedMigration[],
+  options: PlanProvisionOptions,
+  tagKey: string,
+  initialState: MigrationState,
+  projectName: string,
+  resourceId?: string
+): ProvisionCommand[] {
+  const commands: ProvisionCommand[] = [];
+  let expectedState = initialState;
+  for (const migration of migrations) {
+    commands.push({
+      file: "az",
+      args: [
+        "deployment", "group", "create",
+        "--name", `swallowkit-migration-${migration.version}-${migration.checksum.slice(0, 12)}`,
+        "--resource-group", options.resourceGroup,
+        "--template-file", path.join(process.cwd(), migration.template),
+        ...(migration.parameters ? ["--parameters", path.join(process.cwd(), migration.parameters)] : []),
+        "--parameters", `projectName=${projectName}`, `location=${options.location}`,
+        ...subscriptionArgs(options.subscription),
+        "--no-wait", "--query", DEPLOYMENT_QUERY, "-o", "json",
+      ],
+      kind: "migration",
+      expectedState,
+    });
+    const nextState: MigrationState = {
+      schemaVersion: 1,
+      version: migration.version,
+      checksum: migration.cumulativeChecksum,
+    };
+    commands.push(
+      resourceId
+        ? tagCommand(resourceId, tagKey, nextState, expectedState)
+        : bootstrapTagCommand(options, tagKey, nextState, expectedState)
+    );
+    expectedState = nextState;
+  }
+  return commands;
 }
 
 function runBaseWhatIf(options: PlanProvisionOptions, mainBicepPath: string, parametersPath: string): string {
@@ -450,7 +598,21 @@ export async function planProvisionOperation(
         baseline: { ...manifest.baseline, files: baselineFiles, checksum: computeBaselineChecksum(baselineFiles) },
       };
       const baselineState: MigrationState = { schemaVersion: 1, version: 0, checksum: manifestAfterApply.baseline.checksum };
-      commandSpecs = [...buildBootstrapCommands(options, mainBicepPath, parametersPath), bootstrapTagCommand(options, migrationTagKey, baselineState)];
+      pendingMigrations = resolveMigrations(manifest, projectRoot);
+      commandSpecs = [
+        ...buildBootstrapCommands(options, mainBicepPath, parametersPath),
+        bootstrapTagCommand(options, migrationTagKey, baselineState),
+        ...buildMigrationCommands(
+          pendingMigrations,
+          options,
+          migrationTagKey,
+          baselineState,
+          pendingMigrations.length > 0 ? readProjectName(parametersPath) : ""
+        ),
+      ];
+      if (pendingMigrations.length > 0) {
+        warnings.push("The bootstrap plan includes all registered model/custom migrations after the baseline and records each version in order.");
+      }
       if (options.whatIf) warnings.push("what-if-skipped: Resource-group-scope what-if requires the target resource group to exist.");
     } else {
       if (baselineDrift.length > 0 && !options.reconcile) {
@@ -518,29 +680,14 @@ export async function planProvisionOperation(
       } else {
         pendingMigrations = selectPendingMigrations(manifest, remoteState, projectRoot);
         mode = pendingMigrations.length > 0 ? "migrate" : "noop";
-        commandSpecs = [];
-        const projectName = pendingMigrations.length > 0 ? readProjectName(parametersPath) : "";
-        let expectedState = remoteState;
-        for (const migration of pendingMigrations) {
-          commandSpecs.push({
-            file: "az",
-            args: [
-              "deployment", "group", "create",
-              "--name", `swallowkit-migration-${migration.version}-${migration.checksum.slice(0, 12)}`,
-              "--resource-group", options.resourceGroup,
-              "--template-file", path.join(projectRoot, migration.template),
-              ...(migration.parameters ? ["--parameters", path.join(projectRoot, migration.parameters)] : []),
-              "--parameters", `projectName=${projectName}`, `location=${options.location}`,
-              ...subscriptionArgs(options.subscription),
-              "--no-wait", "--query", DEPLOYMENT_QUERY, "-o", "json",
-            ],
-            kind: "migration",
-            expectedState,
-          });
-          const nextState = { schemaVersion: 1 as const, version: migration.version, checksum: migration.cumulativeChecksum };
-          commandSpecs.push(tagCommand(remoteGroup.id!, migrationTagKey, nextState, expectedState));
-          expectedState = nextState;
-        }
+        commandSpecs = buildMigrationCommands(
+          pendingMigrations,
+          options,
+          migrationTagKey,
+          remoteState,
+          pendingMigrations.length > 0 ? readProjectName(parametersPath) : "",
+          remoteGroup.id
+        );
       }
     }
   } else if (options.whatIf || options.adoptExisting || options.reconcile || options.resumeDeployment) {

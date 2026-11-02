@@ -9,7 +9,8 @@ import * as ts from "typescript";
 
 import { ModelConnectorConfig, ModelAuthPolicy } from "../../types";
 import { MachineCommandError } from "../../machine/errors";
-import { hashContent } from "../operations/file-session";
+import { findArtifactRecord, loadArtifactLedger } from "../project/artifacts";
+import { getActiveFileSession, hashContent } from "../operations/file-session";
 
 export type SchemaParserMode = "static-ast" | "dynamic";
 
@@ -81,38 +82,42 @@ export interface NestedSchemaRef {
   isArray: boolean; // 配列参照か
   isOptional: boolean; // オプショナルか
   displayField: string; // 表示用フィールド（例: "name"）
+  sourceHash?: string;
 }
 
 /**
  * モデルファイルを解析して ModelInfo を返す
  */
-export async function parseModelFile(modelPath: string, options: ModelParserOptions = {}): Promise<ModelInfo> {
+async function parseModelFileInternal(
+  modelPath: string,
+  options: ModelParserOptions,
+  dependencyStack: Set<string>
+): Promise<ModelInfo> {
   if (!fs.existsSync(modelPath)) {
     throw new Error(`Model file not found: ${modelPath}`);
   }
 
+  const resolvedModelPath = path.resolve(modelPath);
+  if (dependencyStack.has(resolvedModelPath)) {
+    throw new Error(`Circular model schema dependency detected: ${modelPath}`);
+  }
+  const nextDependencyStack = new Set(dependencyStack);
+  nextDependencyStack.add(resolvedModelPath);
+  const activeSession = getActiveFileSession();
+  const projectRelativePath = activeSession && path.relative(activeSession.rootDirectory, resolvedModelPath);
+  if (
+    activeSession &&
+    projectRelativePath &&
+    !projectRelativePath.startsWith("..") &&
+    !projectRelativePath.split(path.sep).some((segment) => segment.startsWith(".swallowkit-create-model-"))
+  ) {
+    activeSession.registerInput(resolvedModelPath);
+  }
+
   const content = fs.readFileSync(modelPath, "utf-8");
   const fileName = path.basename(modelPath, ".ts");
-  
-  // モデル名を推定（ファイル名を PascalCase に変換）
   const modelName = toPascalCase(fileName);
-  
-  // スキーマ変数名を抽出
-  // コメント内のコードパターンを誤認識しないよう、先にコメントを除去してから正規表現を適用する
-  // パターン1: export const todoSchema = z.object({ ... })  (camelCase + Schema接尾辞)
-  // パターン2: export const Todo = z.object({ ... })         (Zod公式パターン)
-  const contentWithoutComments = content
-    .replace(/\/\*[\s\S]*?\*\//g, '')  // ブロックコメントを除去
-    .replace(/\/\/.*/g, '');           // 行コメントを除去
-  let schemaMatch = contentWithoutComments.match(/export\s+const\s+(\w+Schema)\s*=/);
-  if (!schemaMatch) {
-    schemaMatch = contentWithoutComments.match(/export\s+const\s+(\w+)\s*=\s*z\.object\s*\(/);
-  }
-  if (!schemaMatch) {
-    throw new Error(`Could not find exported schema in ${modelPath}. Expected patterns:\n  - export const xxxSchema = z.object({ ... })\n  - export const Xxx = z.object({ ... })`);
-  }
-  
-  const schemaName = schemaMatch[1];
+  const schemaName = resolveModelSchemaName(modelPath, content, modelName);
   
   // displayName を抽出（例: export const displayName = 'Task'）
   const displayNameMatch = content.match(/export\s+const\s+displayName\s*=\s*['"]([^'"]+)['"]/);  
@@ -175,7 +180,61 @@ export async function parseModelFile(modelPath: string, options: ModelParserOpti
     semanticFingerprint: "",
   };
   modelInfo.semanticFingerprint = createModelSemanticFingerprint(modelInfo);
+  for (const reference of nestedSchemaRefs) {
+    const dependencyPath = resolveModelImportPath(modelPath, reference.importPath);
+    if (dependencyPath && !nextDependencyStack.has(dependencyPath)) {
+      await parseModelFileInternal(dependencyPath, options, nextDependencyStack);
+    }
+  }
   return modelInfo;
+}
+
+export async function parseModelFile(modelPath: string, options: ModelParserOptions = {}): Promise<ModelInfo> {
+  return parseModelFileInternal(modelPath, options, new Set());
+}
+
+function resolveModelImportPath(modelPath: string, importPath: string): string | null {
+  const basePath = path.resolve(path.dirname(modelPath), importPath);
+  const candidates = path.extname(basePath) ? [basePath] : [`${basePath}.ts`, `${basePath}.js`];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
+function resolveModelSchemaName(modelPath: string, content: string, modelName: string): string {
+  const source = ts.createSourceFile(modelPath, content, ts.ScriptTarget.Latest, true);
+  const candidates: string[] = [];
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement) ||
+        !statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || !declaration.initializer ||
+          !ts.isCallExpression(declaration.initializer) ||
+          !ts.isPropertyAccessExpression(declaration.initializer.expression) ||
+          declaration.initializer.expression.name.text !== "object") continue;
+      candidates.push(declaration.name.text);
+    }
+  }
+
+  const normalizedModelName = modelName.toLowerCase();
+  const matching = candidates.filter((candidate) =>
+    candidate.toLowerCase() === normalizedModelName ||
+    candidate.toLowerCase() === `${normalizedModelName}schema`
+  );
+  if (matching.length === 1) return matching[0];
+  if (matching.length > 1 || (matching.length === 0 && candidates.length > 1)) {
+    throw new MachineCommandError(
+      "model-schema-ambiguous",
+      `Could not select the schema for ${modelName} in ${modelPath}.`,
+      { filePath: modelPath, model: modelName, candidates: matching.length > 0 ? matching : candidates },
+      "blocked"
+    );
+  }
+  if (candidates.length === 1) return candidates[0];
+  throw new MachineCommandError(
+    "model-schema-not-found",
+    `Could not find an exported Zod object schema for ${modelName} in ${modelPath}.`,
+    { filePath: modelPath, model: modelName, candidates },
+    "blocked"
+  );
 }
 
 export function createModelSemanticFingerprint(model: Omit<ModelInfo, "semanticFingerprint" | "filePath">): string {
@@ -217,12 +276,8 @@ function detectNestedSchemaRefs(
         importMap.set(name, importPath);
       } else {
         // Zod公式パターン: インポート先ファイルで z.object として定義されているか確認
-        const dir = path.dirname(modelPath);
-        let targetPath = path.resolve(dir, importPath);
-        if (!targetPath.endsWith('.ts') && !targetPath.endsWith('.js')) {
-          targetPath += '.ts';
-        }
-        if (fs.existsSync(targetPath)) {
+        const targetPath = resolveModelImportPath(modelPath, importPath);
+        if (targetPath) {
           const targetContent = fs.readFileSync(targetPath, 'utf-8');
           const isZodSchema = new RegExp(`(?:export\\s+)?const\\s+${name}\\s*=\\s*z\\.object\\s*\\(`).test(targetContent);
           if (isZodSchema) {
@@ -245,6 +300,9 @@ function detectNestedSchemaRefs(
   
   // 3. 各フィールドでインポートしたスキーマ変数が使われているか検出
   for (const [schemaVarName, importPath] of importMap) {
+    const dependencyPath = resolveModelImportPath(modelPath, importPath);
+    const sourceHash = dependencyPath ? hashContent(fs.readFileSync(dependencyPath, "utf-8")) : undefined;
+    if (dependencyPath) getActiveFileSession()?.registerInput(dependencyPath);
     // スキーマ名からモデル名を推定: categorySchema -> Category
     const modelName = schemaVarName.replace(/Schema$/, '');
     const pascalModelName = modelName.charAt(0).toUpperCase() + modelName.slice(1);
@@ -281,6 +339,7 @@ function detectNestedSchemaRefs(
           isArray,
           isOptional,
           displayField,
+          ...(sourceHash ? { sourceHash } : {}),
         });
       }
     }
@@ -358,6 +417,7 @@ function mergeNestedSchemaInfo(fields: FieldInfo[], nestedRefs: NestedSchemaRef[
   for (const ref of nestedRefs) {
     const field = fields.find(f => f.name === ref.fieldName);
     if (field) {
+      if (field.isNestedSchema === false) continue;
       field.isNestedSchema = true;
       field.nestedSchemaName = ref.schemaName;
       field.nestedModelName = ref.modelName;
@@ -433,19 +493,42 @@ const STRING_FORMATS: Record<string, FieldFormat> = {
 function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] | null {
   const source = ts.createSourceFile(modelPath, fs.readFileSync(modelPath, "utf-8"), ts.ScriptTarget.Latest, true);
   const constants = new Map<string, ts.Expression>();
-  const importedObjectSchemas = new Set<string>();
+  const importedObjectSchemas = new Map<string, boolean>();
+  const objectHasId = (expression: ts.Expression | undefined): boolean | undefined => {
+    if (!expression || !ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression) ||
+        expression.expression.name.text !== "object" || !expression.arguments[0] ||
+        !ts.isObjectLiteralExpression(expression.arguments[0])) {
+      return undefined;
+    }
+    return expression.arguments[0].properties.some((property) =>
+      (ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property) || ts.isPropertySignature(property)) &&
+      ((ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) && property.name.text === "id")
+    );
+  };
   for (const statement of source.statements) {
     if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier) &&
         statement.moduleSpecifier.text.startsWith(".") && statement.importClause?.namedBindings &&
         ts.isNamedImports(statement.importClause.namedBindings)) {
       const base = path.resolve(path.dirname(modelPath), statement.moduleSpecifier.text);
-      const targetPath = [base, `${base}.ts`, path.join(base, "index.ts")].find(candidate => fs.existsSync(candidate));
+      const targetPath = [base, `${base}.ts`, `${base}.js`, path.join(base, "index.ts")].find(candidate =>
+        fs.existsSync(candidate) && fs.statSync(candidate).isFile()
+      );
       if (targetPath) {
-        const targetContent = fs.readFileSync(targetPath, "utf-8");
+        const targetSource = ts.createSourceFile(
+          targetPath,
+          fs.readFileSync(targetPath, "utf-8"),
+          ts.ScriptTarget.Latest,
+          true
+        );
         for (const element of statement.importClause.namedBindings.elements) {
           const importedName = element.propertyName?.text ?? element.name.text;
-          if (new RegExp(`(?:export\\s+)?const\\s+${importedName}\\s*=\\s*z\\.object\\s*\\(`).test(targetContent)) {
-            importedObjectSchemas.add(element.name.text);
+          const declaration = targetSource.statements
+            .filter(ts.isVariableStatement)
+            .flatMap((variableStatement) => variableStatement.declarationList.declarations)
+            .find((candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === importedName);
+          const hasId = declaration && objectHasId(declaration.initializer);
+          if (hasId !== undefined) {
+            importedObjectSchemas.set(element.name.text, hasId);
           }
         }
       }
@@ -613,7 +696,13 @@ function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] |
       const resolved = constants.get(expression.text);
       if (resolved) return parseExpression(resolved);
       return importedObjectSchemas.has(expression.text)
-        ? { type: "object", isOptional: false, isNullable: false, isArray: false }
+        ? {
+            type: "object",
+            isOptional: false,
+            isNullable: false,
+            isArray: false,
+            ...(!importedObjectSchemas.get(expression.text) ? { isNestedSchema: false } : {}),
+          }
         : null;
     }
     if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression)) return null;
@@ -638,7 +727,10 @@ function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] |
       if (!literal || !ts.isObjectLiteralExpression(literal)) return null;
       // Unsupported members keep the previous untyped-object behavior instead of failing the whole model.
       const objectFields = parseObjectFields(literal);
-      return objectFields ? base("object", { objectFields }) : base("object");
+      const hasId = objectHasId(expression);
+      return objectFields
+        ? base("object", { objectFields, ...(hasId === false ? { isNestedSchema: false } : {}) })
+        : base("object", hasId === false ? { isNestedSchema: false } : {});
     }
     if (method === "array" && expression.arguments[0]) {
       const element = parseExpression(expression.arguments[0]);
@@ -769,6 +861,7 @@ function describe(key, input) {
       info.type = 'object';
       const shape = typeof d.shape === 'function' ? d.shape() : d.shape;
       info.objectFields = Object.keys(shape).map((child) => describe(child, shape[child]));
+      if (!Object.prototype.hasOwnProperty.call(shape, 'id')) info.isNestedSchema = false;
     } else if (d.type === 'enum') {
       info.type = 'string';
       enumValues = Object.values(d.entries || {}).map(String);
@@ -817,6 +910,7 @@ function describe(key, input) {
       info.type = 'object';
       const shape = typeof def.shape === 'function' ? def.shape() : def.shape;
       info.objectFields = Object.keys(shape).map((child) => describe(child, shape[child]));
+      if (!Object.prototype.hasOwnProperty.call(shape, 'id')) info.isNestedSchema = false;
     } else if (name === 'ZodEnum' || name === 'ZodNativeEnum') {
       info.type = 'string';
       const values = s.options || def.values || def.entries;
@@ -885,6 +979,24 @@ if (rootShape) {
           diagnostics: ["Dynamic schema evaluation requires permission to start a Node.js child process."],
           nextAction: "Re-run in an environment that permits normal Node.js child process execution.",
         },
+        "blocked"
+      );
+    }
+    const unsupportedFieldMatches = Array.from(
+      `${nodeError.message ?? ""}\n${"stderr" in nodeError ? String(nodeError.stderr) : ""}`.matchAll(
+        /Error: Unsupported or ambiguous Zod field "([^"]+)" \(([^)]+)\)/g
+      )
+    );
+    const unsupportedField = unsupportedFieldMatches.at(-1);
+    if (unsupportedField) {
+      const field = unsupportedField[1];
+      const zodType = unsupportedField[2];
+      const reason = `Zod${zodType[0].toUpperCase()}${zodType.slice(1)}`;
+      const explanation = `Zod ${zodType} fields are not supported by every generated backend target.`;
+      throw new MachineCommandError(
+        "schema-field-unsupported",
+        `Cannot analyze ${path.basename(modelPath)} schema ${schemaName}, field ${field}: ${explanation}`,
+        { filePath: modelPath, schemaName, field, reason, explanation },
         "blocked"
       );
     }
@@ -1180,18 +1292,91 @@ export async function getAllModels(modelsDir: string = "shared/models"): Promise
   
   const files = fs.readdirSync(fullModelsDir);
   const modelFiles = files.filter(file => file.endsWith('.ts'));
+  const ledger = loadArtifactLedger(cwd);
   
   const models: ModelInfo[] = [];
   
   for (const file of modelFiles) {
-    try {
-      const modelPath = path.join(fullModelsDir, file);
-      const modelInfo = await parseModelFile(modelPath);
-      models.push(modelInfo);
-    } catch (error: any) {
-      console.warn(`⚠️  Failed to parse model file ${file}: ${error.message}`);
+    const modelPath = path.join(fullModelsDir, file);
+    const relativePath = path.relative(cwd, modelPath).replace(/\\/g, "/");
+    const artifact = findArtifactRecord(ledger, relativePath);
+    if (relativePath === "shared/models/auth.ts" && artifact?.generator === "add-auth") {
+      continue;
+    }
+    models.push(await parseModelFile(modelPath));
+  }
+
+  const modelByPath = new Map(models.map((model) => [path.resolve(model.filePath), model]));
+  const hasRequiredStringId = (model: ModelInfo) => model.fields.some(
+    (field) => field.name === "id" && field.type === "string" && !field.isArray && !field.isOptional && !field.isNullable
+  );
+  const hasIdField = (model: ModelInfo) => model.fields.some((field) => field.name === "id");
+  const hasPersistenceEvidence = (model: ModelInfo) => {
+    const relativePath = path.relative(cwd, model.filePath).replace(/\\/g, "/");
+    const artifact = findArtifactRecord(ledger, relativePath);
+    return Boolean(
+      artifact?.sourceModel === model.name ||
+      model.connectorConfig ||
+      model.authPolicy ||
+      model.partitionKey !== "/id"
+    );
+  };
+  const entities = new Set<string>();
+  for (const model of models) {
+    if (hasRequiredStringId(model) || hasIdField(model) || hasPersistenceEvidence(model)) {
+      entities.add(path.resolve(model.filePath));
+      if (!hasRequiredStringId(model)) {
+        throw new MachineCommandError(
+          "model-entity-id-required",
+          `Persistent model ${model.name} must declare a required string id field.`,
+          {
+            filePath: model.filePath,
+            schemaName: model.schemaName,
+            field: "id",
+            reason: "Persistent models require id: z.string() with no optional, nullable, or array wrapper.",
+          },
+          "blocked"
+        );
+      }
     }
   }
-  
-  return models;
+
+  const reachableHelpers = new Set<string>();
+  const pending = Array.from(entities);
+  while (pending.length > 0) {
+    const currentPath = pending.pop()!;
+    const current = modelByPath.get(currentPath);
+    if (!current) continue;
+    for (const reference of current.nestedSchemaRefs) {
+      const dependencyPath = resolveModelImportPath(current.filePath, reference.importPath);
+      if (!dependencyPath) continue;
+      const resolvedDependency = path.resolve(dependencyPath);
+      const dependency = modelByPath.get(resolvedDependency);
+      if (dependency && !entities.has(resolvedDependency) && !reachableHelpers.has(resolvedDependency)) {
+        reachableHelpers.add(resolvedDependency);
+        pending.push(resolvedDependency);
+      }
+    }
+  }
+
+  const unclassified = models.filter((model) => {
+    const resolvedPath = path.resolve(model.filePath);
+    return !entities.has(resolvedPath) && !reachableHelpers.has(resolvedPath);
+  });
+  if (unclassified.length > 0) {
+    const model = unclassified[0];
+    throw new MachineCommandError(
+      "model-classification-ambiguous",
+      `Could not determine whether ${model.name} is a persistent entity or a helper schema. Add a required string id field for an entity or reference the helper from a persistent model.`,
+      {
+        filePath: model.filePath,
+        schemaName: model.schemaName,
+        candidates: unclassified.map((candidate) => candidate.name),
+        reason: "A schema without a required string id must be reachable as a nested helper from a persistent entity.",
+      },
+      "blocked"
+    );
+  }
+
+  return models.filter((model) => entities.has(path.resolve(model.filePath)));
 }

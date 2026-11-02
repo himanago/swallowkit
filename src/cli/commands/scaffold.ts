@@ -68,8 +68,8 @@ interface ScaffoldOptions {
 }
 
 export function buildInfraSkippedWarning(modelName: string, modelArgument: string): string {
-  return `infra-skipped: The Cosmos DB container migration for ${modelName} was not generated (--skip-infra); infra/ was left unchanged. ` +
-    `Generate it later with "swallowkit migrations add-model ${modelArgument}", or re-plan scaffold without --skip-infra.`;
+  return `infra-skipped: This scaffold operation did not change infra/ for ${modelName} (--skip-infra). ` +
+    `If no container migration is registered, add it with "swallowkit migrations add-model ${modelArgument}", or re-plan scaffold without --skip-infra.`;
 }
 
 const USER_SCOPE_FIELD = /^(user|owner|learner|member|account|customer|student|author|creator|profile|person|employee|patient)Id$/i;
