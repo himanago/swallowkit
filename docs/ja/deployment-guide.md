@@ -140,6 +140,22 @@ git push origin main
 - **GitHub Actions**: Actions タブ → 失敗したワークフローを選択 → Re-run all jobs
 - **Azure Pipelines**: Pipelines → 失敗したパイプラインを選択 → Run pipeline
 
+### Cosmos DB の初期データ投入（GitHub Actions / TypeScript・C#・Python）
+
+TypeScript / C# / Python の生成プロジェクトには `.github/workflows/initialize-cosmos-seeds.yml` が含まれます。これは手動実行専用の別ワークフローで、通常の push デプロイでは seed を投入しません。データ定義は既存の `dev-seeds/<name>/` をそのまま利用します。例として `npx swallowkit create-dev-seeds local` でテンプレートを作成するか、ローカル Emulator の内容を `npx swallowkit create-dev-seeds local --from-emulator` で明示的にエクスポートします。JSON を確認・編集し、`npx swallowkit dev --seed-env local` でローカル検証してください。**このローカルコマンドは Emulator の対象コンテナーを置き換えますが、Azure の初期化は置換しません。** Azure に投入するファイルだけをレビューしてコミットしてください。
+
+リポジトリの `main` から **Actions → Initialize Azure Cosmos DB seed data → Run workflow** を実行し、`seed_name` にディレクトリ名を入力します。`AZURE_FUNCTIONAPP_NAME` に設定済みの Function App 名も確認入力し、完全一致させてください。`main` 以外の ref、不正な名前、seed ディレクトリ／JSON の欠落、未知モデル、Zod 検証失敗、500 ドキュメントまたは合計 4 MiB を超える seed は拒否されます。ビルド済みの shared Zod スキーマで検証した後、対象データを一時 TypeScript / C# / Python Function に固定してデプロイ・呼び出しし、保存済みの通常版 Functions パッケージを再デプロイします。Function の HTTP リクエストから seed 名、任意 JSON、コンテナー名を指定することはできません。
+
+Azure への投入は Create-only です。存在しないアイテムは作成し、内容が同じ既存アイテムは Cosmos システムプロパティを無視してスキップし、異なる場合は競合として失敗します。既存アイテムやコンテナーの置換・削除は行いません。失敗しても先行アイテムが書き込まれている場合があります。表示された件数・競合を確認してから再実行してください。同一 seed の再実行は、既に作成済みの同一アイテムを壊しません。
+
+一時 Function は `authLevel: anonymous` を明示し、さらに `Authorization: Bearer` ヘッダー内の暗号学的に安全な UUID v4 を要求します。GitHub Actions は UUID 生値をマスクし、一時パッケージには SHA-256 ハッシュと期限だけを埋め込みます。token は15分で期限切れになります。これは一時 bearer credential による認証であり、**GitHub の実行者 ID を確認するものではありません**。デプロイは既存の `Azure/functions-action` と `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` を継続利用します。Publish Profile は OIDC より制約があり、OIDC 移行は今回の対象外・将来の改善事項です。Subscription / Resource Group の照合も行いません。実行可能な主体は既存の GitHub Actions 実行権限、ブランチ保護、secret アクセス制御に依存します。本番では `main` とデプロイ実行者を適切に制限してください。
+
+同期 Function の処理期限は180秒で、Azure Functions HTTP Trigger の230秒制限より短くしています。入力上限は500ドキュメント・合計4 MiBです。HTTP 呼び出しがタイムアウトしたり書き込み結果が不明になった場合、成功扱いにはせずワークフローは失敗しますが、通常版への復元は試行します。Create-only のためレビュー済み seed の再試行は安全ですが、先に部分結果と競合を確認してください。通常デプロイと初期化デプロイは同一の非キャンセル型 concurrency group で直列化されます。
+
+この二段階デプロイは、初回構築・アプリ公開前の初期化を基本用途としてください。稼働中の Flex Consumption Function App へのパッケージ再デプロイは、停止や実行中リクエストへの影響を生じる可能性があります。利用中のアプリに適用する場合は、停止時間と処理影響を事前評価してください。Cosmos DB のネットワークや firewall は緩和しません。Cosmos が Private Endpoint 限定の場合も、既存の VNet / Managed Identity 設定で Functions から接続できる必要があります。GitHub-hosted runner が Function App の HTTP endpoint に到達できない場合も失敗し、自動で公開設定を変更することはありません。
+
+通常版への復元に失敗した場合、ワークフローは失敗し復旧エラーを表示します。既存 Publish Profile の問題を解消後、`main` から **Deploy Azure Functions** を実行して通常版を再デプロイしてください。タイムアウトは書き込み未実行を意味しません。再試行の前に部分結果を確認してください。
+
 ## 生成されるリソース
 
 ### Azure Static Web Apps

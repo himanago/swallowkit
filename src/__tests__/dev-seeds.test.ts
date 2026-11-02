@@ -8,12 +8,14 @@ import {
   buildDefaultCosmosDatabaseName,
   buildSeedTemplateDocument,
   getContainerNameForModel,
+  loadAzureBootstrapSeedFiles,
   loadDevSeedFiles,
   normalizeSeedIdentifier,
   parseCosmosConnectionString,
   parseSeedDocuments,
   prepareSeedDocumentsForExport,
   resolveLocalCosmosConnectionInfo,
+  validateAzureSeedName,
 } from "../cli/commands/dev-seeds";
 
 describe("dev seed helpers", () => {
@@ -78,6 +80,80 @@ describe("dev seed helpers", () => {
       containerName: "Todos",
       documents: [{ id: "todo-001", title: "First task" }],
     });
+  });
+
+  it("loads and validates an Azure seed set from the existing dev-seeds layout", async () => {
+    const seedsDir = path.join(tempDir, "dev-seeds", "bootstrap-01");
+    fs.mkdirSync(seedsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(seedsDir, "todo.json"),
+      JSON.stringify([{
+        id: "todo-001",
+        title: "First task",
+        completed: false,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        _etag: "metadata",
+      }]),
+      "utf-8"
+    );
+
+    const loaded = await loadAzureBootstrapSeedFiles("bootstrap-01", [createBasicModelInfo()]);
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]).toMatchObject({
+      containerName: "Todos",
+      documents: [{
+        id: "todo-001",
+        title: "First task",
+        completed: false,
+      }],
+    });
+    expect(loaded[0].documents[0]).not.toHaveProperty("_etag");
+  });
+
+  it.each(["../outside", "nested/name", "name.", "$(whoami)", ""])(
+    "rejects unsafe Azure seed names: %s",
+    (seedName) => {
+      expect(() => validateAzureSeedName(seedName)).toThrow(/seed_name/);
+    }
+  );
+
+  it("rejects missing seed directories and unknown model files for Azure initialization", async () => {
+    await expect(loadAzureBootstrapSeedFiles("missing", [createBasicModelInfo()])).rejects.toThrow(/does not exist/);
+
+    const seedsDir = path.join(tempDir, "dev-seeds", "bootstrap-02");
+    fs.mkdirSync(seedsDir, { recursive: true });
+    fs.writeFileSync(path.join(seedsDir, "unknown.json"), JSON.stringify([{ id: "unknown-001" }]), "utf-8");
+
+    await expect(loadAzureBootstrapSeedFiles("bootstrap-02", [createBasicModelInfo()])).rejects.toThrow(/does not match a model/);
+  });
+
+  it("validates the model schema and partition key for Azure seed documents", async () => {
+    const seedsDir = path.join(tempDir, "dev-seeds", "bootstrap-03");
+    fs.mkdirSync(seedsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(seedsDir, "todo.json"),
+      JSON.stringify([{ id: "todo-001", title: 7, completed: false, createdAt: "2026-01-01", updatedAt: "2026-01-01" }]),
+      "utf-8"
+    );
+
+    await expect(loadAzureBootstrapSeedFiles("bootstrap-03", [createBasicModelInfo()])).rejects.toThrow(/title.*string/);
+
+    fs.writeFileSync(
+      path.join(seedsDir, "todo.json"),
+      JSON.stringify([{ id: "todo-001", title: "Valid", completed: false, createdAt: "2026-01-01", updatedAt: "2026-01-01" }]),
+      "utf-8"
+    );
+    const model = createBasicModelInfo({
+      partitionKey: "/tenantId",
+      fields: [
+        ...createBasicModelInfo().fields,
+        { name: "tenantId", type: "string", isOptional: false, isArray: false },
+      ],
+    });
+
+    await expect(loadAzureBootstrapSeedFiles("bootstrap-03", [model])).rejects.toThrow(/partition key "tenantId"/);
   });
 
   it("rejects seed documents without ids", async () => {
