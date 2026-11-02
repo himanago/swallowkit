@@ -1,6 +1,8 @@
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
+import { createAiAgentFiles } from "../cli/commands/init";
+import * as mcpConfig from "../core/project/mcp-config";
+import { parseSeedDocuments, getContainerNameForModel } from "../cli/commands/dev-seeds";
 import { BackendLanguage, FrontendFramework } from "../types";
 import { PackageManager, getCommands } from "../utils/package-manager";
 import { buildWorkflowDocs } from "../core/project/workflows";
@@ -131,7 +133,7 @@ describe("coding-agent instruction contract", () => {
   });
 
   it("writes the generated integration files from the builders", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-agent-docs-"));
+    const tempDir = fs.mkdtempSync(path.join(repositoryRoot, ".tmp-agent-docs-"));
     try {
       const documents = writeAgentInstructionFiles(tempDir, representativeContext);
       expect(fs.readFileSync(path.join(tempDir, "AGENTS.md"), "utf-8")).toBe(documents.agentsMd);
@@ -153,9 +155,10 @@ describe("coding-agent instruction contract", () => {
     "writes the init persistent-model contract for $frontend/$backendLanguage/$packageManager",
     (context) => {
       const tempDir = fs.mkdtempSync(path.join(repositoryRoot, ".tmp-persistent-agent-docs-"));
+      const log = jest.spyOn(console, "log").mockImplementation(() => undefined);
+      const lookup = jest.spyOn(mcpConfig, "lookupPublishedLatestVersion").mockReturnValue("1.1.4");
       try {
-        // init uses this writer for both frontend variants.
-        writeAgentInstructionFiles(tempDir, context);
+        createAiAgentFiles(tempDir, context.projectName, context.backendLanguage, context.packageManager, context.frontend);
         const agents = fs.readFileSync(path.join(tempDir, "AGENTS.md"), "utf-8").replace(/\s+/g, " ");
         const sharedModels = fs.readFileSync(
           path.join(tempDir, ".github", "instructions", AGENT_TEMPLATE_FILES.sharedModelsInstructions),
@@ -190,11 +193,110 @@ describe("coding-agent instruction contract", () => {
         expect(agents).toContain("`verify project` fails while a required local migration is missing or stale");
         expect(sharedModels).toContain("verify fails while a");
         expect(agents).toContain("Generation is local, not Azure provisioning");
+
+        for (const rule of [
+          "use Azure Cosmos DB in production and Cosmos DB Emulator locally",
+          "not bypassed with File/JSON/SQLite/InMemory application storage",
+          "Explicit unit-test doubles are allowed",
+          "not database evidence",
+          "standard connection settings and effective database name",
+          "worktree-isolated name resolved by `swallowkit dev`",
+          "unnecessary custom database/path/storage options or production startup flags",
+          "Explicit alternate-persistence requirements",
+          "External `connectorConfig` models use the configured connector rather than Cosmos DB",
+          "dev-seeds/<environment>/learning-profile.json",
+          "not `LearningProfiles.json`",
+          "top-level array of documents",
+          "basenames, containers, and inserted counts",
+          "All-skipped files",
+          "Do not inject demo data on HTTP requests, backend startup, or an empty database",
+          "bespoke reset APIs/UI, importers, or demo flags",
+          "Offline fixture generation is allowed",
+          "not invoked by the backend",
+          "Legitimate business initialization is distinct",
+          "readiness probes are mechanical evidence",
+          "actual application through the configured frontend's same-origin BFF, standalone Functions, and database",
+          "restart the application without re-seeding",
+          "validation failures, nonexistent IDs",
+          "authentication/authorization paths",
+          "Emulator versus Azure Cosmos DB",
+          "mock AI versus real AI service calls",
+          "fixed development identity versus real authentication",
+          "passed, skipped, or warned",
+          "HTTP success does not clear `AzureWebJobsStorage` warnings",
+          "blockers or explicitly unverified behavior",
+          "A documentation-only change does not require live database verification",
+          "Inspect existing Emulator/server processes and occupied ports",
+          "Do not restart user services to free a port",
+          "actual endpoint, effective database name, and target containers",
+          "verify isolation from resolved settings and logs",
+          "Existing production, shared, or user data requires the applicable human approval",
+          "Do not disable TLS validation",
+          "configured HTTP/HTTPS endpoint",
+          "never bulk-kill by process name",
+          "Disclose local untracked configuration and test database leftovers",
+          "Never invent or implicitly grant human approval",
+          "must not switch to normal CLI to bypass it",
+          "Authentication is a **plan/apply operation**",
+          "Never hand-write `auth.schemes` entries",
+          "Do not bypass plan/apply by manually editing deterministic artifacts",
+        ]) {
+          expect(agents).toContain(rule);
+        }
+        expect(agents).toContain(`${runCmd} swallowkit dev --seed-env <environment>`);
+        expect(agents).toContain(`${runCmd} swallowkit dev`);
+        if (context.frontend === "react") {
+          expect(agents).toContain("Use http://localhost:4280 for the app");
+          expect(agents).toContain("managed BFF (7073)");
+          expect(agents).toContain("BFF (SWA managed Functions)");
+        } else {
+          expect(agents).toContain("Use http://localhost:3000 for the app");
+          expect(agents).toContain("BFF (Next.js API routes)");
+          expect(agents).not.toContain("7073");
+          expect(agents).not.toContain("runs Vite");
+        }
+        for (const adapterPath of ["CLAUDE.md", path.join(".github", "copilot-instructions.md")]) {
+          const adapter = fs.readFileSync(path.join(tempDir, adapterPath), "utf-8");
+          expect(adapter).toContain("root `AGENTS.md`");
+          expect(adapter).toContain("runtime evidence");
+          expect(adapter).not.toContain("learning-profile.json");
+        }
+        const backendRules = fs.readFileSync(
+          path.join(tempDir, ".github", "instructions", AGENT_TEMPLATE_FILES.azureFunctionsInstructions), "utf-8"
+        );
+        expect(backendRules).toContain("Follow root `AGENTS.md` for the persistence contract");
+        expect(backendRules).toContain(`Backend language: ${context.backendLanguage === "csharp" ? "C#" : context.backendLanguage === "python" ? "Python" : "TypeScript"}.`);
+        for (const [fileName, skill] of [
+          ["add-model.md", "swallowkit-add-model"],
+          ["modify-model.md", "swallowkit-modify-model"],
+          ["verify-and-repair.md", "swallowkit-verify-repair"],
+        ]) {
+          const runbook = fs.readFileSync(path.join(tempDir, ".swallowkit", "workflows", fileName), "utf-8");
+          const skillDoc = fs.readFileSync(path.join(tempDir, ".github", "skills", skill, "SKILL.md"), "utf-8");
+          for (const document of [runbook, skillDoc]) {
+            expect(document).toContain("root `AGENTS.md`");
+            expect(document).toContain("runtime");
+            expect(document).not.toContain("learning-profile.json");
+          }
+        }
+        expect(lookup).toHaveBeenCalledTimes(1);
       } finally {
+        lookup.mockRestore();
+        log.mockRestore();
         fs.rmSync(tempDir, { recursive: true, force: true });
       }
     }
   );
+
+  it("uses a parseable array example and distinguishes seed filenames from containers", () => {
+    const agents = buildAgentsMd(representativeContext);
+    const example = agents.match(/```json\n([\s\S]*?)\n```/);
+    expect(example).not.toBeNull();
+    const documents = parseSeedDocuments(example![1], "dev-seeds/test/learning-profile.json");
+    expect(Array.isArray(JSON.parse(example![1]))).toBe(true);
+    expect(documents).toEqual([{ id: "profile-1", learnerId: "learner-1", displayName: "Example" }]);
+    expect(getContainerNameForModel({ name: "LearningProfile" })).toBe("LearningProfiles");
+  });
 
   it.each(["npx", "pnpm exec"])("aligns the add-model runbook and skill content for %s", (runCmd) => {
     const workflow = buildWorkflowDocs(runCmd).find((doc) => doc.skillName === "swallowkit-add-model");
@@ -286,8 +388,35 @@ describe("coding-agent documentation synchronization", () => {
     expect(translation).toContain("不要な CRUD を scaffold してはなりません");
     expect(translation).toContain("理由と未完了");
     expect(translation).toContain("デプロイ可能と案内したりしてはなりません");
+    for (const rule of [
+      "dev-seeds/<environment>/learning-profile.json",
+      "再 seed せずにアプリを再起動",
+      "`AzureWebJobsStorage`",
+      "TLS 検証を無効化",
+      "worktree 分離後の DB 名",
+      "ドキュメントだけの変更には実 DB の検証は不要",
+      "File / JSON / SQLite / InMemory",
+    ]) {
+      expect(translation).toContain(rule);
+    }
     for (const record of ["infra/migrations/manifest.json", ".swallowkit/artifacts.json", "sourceModel"]) {
       expect(translation).toContain(record);
+    }
+  });
+
+  it("documents reviewed manual updates and avoids stale CLI-reference copies", () => {
+    const englishGuide = fs.readFileSync(englishGuidePath, "utf-8").replace(/\s+/g, " ");
+    const japaneseGuide = fs.readFileSync(japaneseGuidePath, "utf-8");
+    expect(englishGuide).toContain("There is no instruction-update command");
+    expect(englishGuide).toContain("manually merge the diff");
+    expect(englishGuide).toContain("do not overwrite existing consumer documents");
+    expect(japaneseGuide).toContain("指示ファイル専用の更新コマンドはありません");
+    expect(japaneseGuide).toContain("手動でマージ");
+    for (const language of ["en", "ja"]) {
+      const reference = fs.readFileSync(path.join(repositoryRoot, "docs", language, "cli-reference.md"), "utf-8");
+      expect(reference).toContain("./coding-agent-guide.md");
+      expect(reference).not.toContain("# AGENTS.md\n");
+      expect(reference).not.toContain("# CLAUDE.md\n");
     }
   });
 

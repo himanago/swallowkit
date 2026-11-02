@@ -32,6 +32,8 @@ Always-on rules:
   approval. Preserve checkpoints; never re-submit Bicep/reconcile/cancel/delete
   to repair waiting or tag/ledger failures. Do not print deployment output secrets.
 - Run SwallowKit verification before considering implementation complete.
+- Follow root `AGENTS.md` for persistence, development seeds, runtime evidence,
+  and local service/data safety; mechanical verification alone is not E2E proof.
 - Default verification includes `backend-build` for standalone Functions.
   Skipped toolchains are not validation; Python compilation checks syntax only.
 - Configure auth via plan/apply auth before adding `authPolicy`; otherwise

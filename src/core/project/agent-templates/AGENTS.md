@@ -259,9 +259,35 @@ Additional model-change facts:
   rebuilds it automatically before typecheck; when typechecking manually,
   build the shared package first (stale `dist/` shows up as
   "no exported member" errors).
-- Seed JSON under `dev-seeds/` is only applied by
-  `{{runCmd}} swallowkit dev --seed-env <environment>`; editing the files
-  alone does nothing.
+- Keep development seed data aligned with model changes using the workflow below.
+
+### Development seed data
+
+Use `dev-seeds/<environment>/` and apply it explicitly with
+`{{runCmd}} swallowkit dev --seed-env <environment>`. Editing JSON alone does
+nothing. This command replaces the targeted containers' data; follow the
+target inspection and approval rules under Everyday Commands before running it.
+
+Seed filenames follow the model's singular kebab-case name, not the plural
+Cosmos container name: `LearningProfile` uses
+`dev-seeds/<environment>/learning-profile.json`, not `LearningProfiles.json`.
+For example, a top-level array of documents (with fields matching the model):
+
+```json
+[
+  { "id": "profile-1", "learnerId": "learner-1", "displayName": "Example" }
+]
+```
+
+Match the intended models to the effective database and the logged seed
+basenames, containers, and inserted counts. All-skipped files, no matching
+schemas, or no target files do not prove seed application succeeded.
+
+Do not inject demo data on HTTP requests, backend startup, or an empty database.
+Do not replace this workflow with bespoke reset APIs/UI, importers, or demo
+flags. Offline fixture generation is allowed when it produces standard seed
+files and is not invoked by the backend. Legitimate business initialization is
+distinct from demo seeding; do not remove required domain behavior.
 
 ## New Models / CRUD Features
 
@@ -434,7 +460,31 @@ A semantic code review answers different questions:
 > Does it satisfy the specification and user intent?
 
 Therefore, perform SwallowKit verification before treating semantic code review
-as the final quality gate.
+as the final quality gate, and include runtime evidence when required below.
+
+### Runtime evidence for changed behavior
+
+Verification, builds, typechecks, unit tests, fixtures, and readiness probes are
+mechanical evidence, not proof of a real database connection or end-to-end behavior.
+For startup, persistence, API, or UI changes, run the normal
+`{{runCmd}} swallowkit dev` workflow and exercise the changed behavior from the
+actual application through the configured frontend's same-origin BFF, standalone
+Functions, and database. Use the frontend-specific routing under Everyday Commands;
+calling Functions directly does not verify the BFF or UI.
+
+For persistence changes, write through the application, reload and read back,
+then restart the application without re-seeding and confirm the data remains.
+Cover relevant validation failures, nonexistent IDs, and configured
+authentication/authorization paths, not only the happy path.
+
+Report evidence separately: Emulator versus Azure Cosmos DB, mock AI versus
+real AI service calls, fixed development identity versus real authentication,
+and checks that passed, skipped, or warned. API success is not host health:
+HTTP success does not clear `AzureWebJobsStorage` warnings. Missing services,
+credentials, containers, or tools are blockers or explicitly unverified behavior;
+unrelated passing tests do not justify a completion claim.
+
+A documentation-only change does not require live database verification.
 
 ## Human Approval Gates
 
@@ -546,6 +596,23 @@ Azure Cosmos DB
 The backend owns `id`, `createdAt`, and `updatedAt`; never trust client-sent
 values for these fields.
 
+### Persistence contract
+
+For Cosmos-backed models, use Azure Cosmos DB in production and Cosmos DB
+Emulator locally. Missing services, credentials, or containers must be reported,
+not bypassed with File/JSON/SQLite/InMemory application storage or a fallback
+that hides connection failures. Explicit unit-test doubles are allowed, but
+they are not database evidence.
+
+Custom APIs and business logic must use the project's standard connection
+settings and effective database name, including the worktree-isolated name
+resolved by `swallowkit dev`. Do not hard-code the base database name or add
+unnecessary custom database/path/storage options or production startup flags.
+Use inspected configuration and capabilities, not a parallel persistence setup.
+Explicit alternate-persistence requirements and external `connectorConfig`
+models remain valid within inspected capabilities and ownership boundaries;
+they are not permission to silently replace Cosmos when it fails.
+
 ## Project Structure
 
 ```text
@@ -611,16 +678,24 @@ project. Do not arbitrarily mix package-manager invocation styles.
 
 {{devGuidance}}
 
-Check for an already-running Cosmos DB Emulator before database tests. If it is
-unavailable, report that prerequisite; do not start/restart it or change global
-tools, TLS trust, or machine settings without explicit permission. Test against
-an isolated database and ports, never reset user data, and stop only processes
-you started. `dev --seed-env` replaces data, so inspect its target first.
+Inspect existing Emulator/server processes and occupied ports before starting
+local services. Check Emulator availability before database tests; if unavailable,
+report the prerequisite; do not start/restart/reset it without explicit
+permission. Do not restart user services to free a port.
 
-Build and run `verify project`, then exercise UI, CRUD, error/validation paths,
-and configured authentication through the same-origin BFF. A passing typecheck
-or server readiness probe alone is not an end-to-end verification. Report
-unverified cloud deployment or unavailable local prerequisites explicitly.
+Before destructive seed replacement, container recreation, or other data changes,
+inspect the actual endpoint, effective database name, and target containers.
+Use an isolated test database and ports; verify isolation from resolved settings
+and logs, not merely from being in a worktree. Existing production, shared, or
+user data requires the applicable human approval; never assume it is disposable.
+Do not disable TLS validation, change certificate trust/global tools/machine
+settings, or guess a different protocol to make a check pass. Use the actual
+configured HTTP/HTTPS endpoint and report connection failures.
+
+Stop only processes you started, by specific process identity, never bulk-kill
+by process name. Disclose local untracked configuration and test database
+leftovers. Follow the runtime-evidence gate above and explicitly report
+unverified cloud deployment or unavailable local prerequisites.
 
 ## Final Rules
 

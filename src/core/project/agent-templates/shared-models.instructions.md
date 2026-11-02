@@ -92,7 +92,8 @@ After changing a model, do not manually patch generated artifacts.
 - The shared package is consumed via its built `dist/`. `verify project`
   rebuilds it automatically, but if you typecheck manually, build the shared
   package first — "no exported member" errors usually mean a stale `dist/`.
-- If `dev-seeds/` exists, update the seed JSON. Seeds are only applied by
+- If `dev-seeds/` exists, update the seed JSON. Follow the root `AGENTS.md`
+  development seed workflow and its data-safety rules. Seeds are only applied by
   running `{{runCmd}} swallowkit dev --seed-env <environment>`; editing the
   JSON alone does nothing.
 

@@ -97,7 +97,8 @@ Goal: add a persistent model and generate its required infrastructure, even with
      Local generation does not provision Azure; follow the separate provision workflow and human approval gates.
 6. If \`dev-seeds/\` exists, update seed JSON for the new model. Seeds are only
    applied by \`${runCmd} swallowkit dev --seed-env <environment>\` — editing the
-   JSON alone does nothing.
+   JSON alone does nothing. Follow root \`AGENTS.md\` for seed naming, target
+   inspection/data safety, and runtime evidence before claiming completion.
 
 ## Terminal states
 
@@ -132,6 +133,8 @@ Goal: change a schema and re-align every generated artifact.
    - Conflicts mean generated files were hand-edited after generation. Decide: keep the hand-edit (move the logic to an ai-authored file first) or overwrite with \`--approve\`.
 4. Apply: \`${runCmd} swallowkit machine apply scaffold --plan <planId>\`
 5. Verify: \`${runCmd} swallowkit machine verify project\`
+   Follow root \`AGENTS.md\` for persistence, seed/data safety, and runtime evidence
+   when the changed behavior requires it.
 
 ## Guardrail
 
@@ -206,7 +209,9 @@ Goal: converge the project to a verified state after any change.
      - \`drift\` failures → follow each finding's \`repairAction\` (usually re-run plan/apply scaffold).
      - \`structure\` failures → follow \`suggestedFix\` per violation.
      - \`typecheck\`/\`backend-build\`/\`build\`/\`lint\`/\`test\` failures → fix the source code, not generated artifacts.
-3. Repeat until \`summary.done: true\`.
+3. Repeat until \`summary.done: true\`. This is mechanical verification only.
+   Before claiming completion, follow root \`AGENTS.md\` for scope-dependent runtime
+   evidence and local service/data safety; passing checks do not replace those gates.
 
 ## Exit criteria
 

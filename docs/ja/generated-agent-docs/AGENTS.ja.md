@@ -243,9 +243,34 @@ model 変更に関する追加事項:
 - shared package はビルド済み `dist/` 経由で参照されます。`verify project` は typecheck の前に
   自動で rebuild しますが、手動で typecheck する場合は先に shared package をビルドしてください
   (古い `dist/` は "no exported member" エラーとして現れます)。
-- `dev-seeds/` の seed JSON は
-  `{{runCmd}} swallowkit dev --seed-env <environment>` の実行時のみ適用されます。
-  ファイルを編集するだけでは何も起きません。
+- 開発用 seed は、次の手順でモデルの変更に追従させてください。
+
+### 開発用 seed データ
+
+`dev-seeds/<environment>/` を使い、
+`{{runCmd}} swallowkit dev --seed-env <environment>` で明示的に適用します。
+JSON の編集だけでは適用されません。このコマンドは対象コンテナーのデータを置換するため、
+実行前に「日常的な command」の対象確認と承認規則に従ってください。
+
+seed ファイル名は、複数形の Cosmos コンテナー名ではなく、モデル名の単数形 kebab-case です。
+`LearningProfile` なら `LearningProfiles.json` ではなく
+`dev-seeds/<environment>/learning-profile.json` を使います。
+モデルに合うフィールドを持つ、トップレベルのドキュメント配列の例:
+
+```json
+[
+  { "id": "profile-1", "learnerId": "learner-1", "displayName": "Example" }
+]
+```
+
+意図したモデルを、実効 DB 名とログに出る seed ファイル名、コンテナー、挿入件数に
+照合してください。全ファイルの skip、対応スキーマなし、対象ファイルなしは、
+seed の適用成功を示しません。
+
+HTTP リクエスト、バックエンド起動、DB が空であることを契機にデモデータを自動投入しては
+なりません。独自の reset API / UI、importer、demo flag でこの手順を置き換えてはなりません。
+標準の seed ファイルを出力し、バックエンドから呼ばれないオフライン fixture 生成は可能です。
+正当な業務上の初期化はデモ用 seed とは別です。必要なドメイン動作は削除しないでください。
 
 <!-- source-section: New Models / CRUD Features -->
 ## 新しい model / CRUD feature
@@ -398,7 +423,28 @@ semantic code review が答える別の問い:
 > specification と user intent を満たすか？
 
 したがって、semantic code review を最後の quality gate として扱う前に SwallowKit verification を
-実施してください。
+実施し、以下で必要とされる実動作の証拠も確認してください。
+
+### 変更した動作の実行時の証拠
+
+verification、build、型検査、単体テスト、fixture、起動確認は機械的な証拠であり、
+実 DB への接続や E2E 動作の証明ではありません。起動・永続化・API・UI の変更では、通常の
+`{{runCmd}} swallowkit dev` を実行し、実アプリから、設定された frontend の同一オリジン BFF、
+独立 Functions、DB を通して変更した動作を確認してください。
+「日常的な command」の frontend 別ルーティングに従います。
+Functions の直接呼び出しでは BFF や UI は検証できません。
+
+永続化の変更ではアプリから書き込み、再読み込みして読み戻し、
+再 seed せずにアプリを再起動してデータが残ることを確認します。
+正常系だけでなく、関連する入力検証エラー、存在しない ID、設定された認証・認可も確認してください。
+
+Emulator / Azure Cosmos DB、mock AI / 実 AI サービス呼び出し、
+固定の開発用 identity / 実認証、および pass / skip / warning を分けて報告します。
+API 成功はホストの健全性を意味しません。HTTP 成功で `AzureWebJobsStorage` の警告が
+解消したことにはなりません。サービス、資格情報、コンテナー、ツールの不足は blocker または
+未検証事項です。無関係なテストの成功を根拠に完了を宣言してはなりません。
+
+ドキュメントだけの変更には実 DB の検証は不要です。
 
 <!-- source-section: Human Approval Gates -->
 ## Human approval gate
@@ -511,6 +557,21 @@ Azure Cosmos DB
 backend が `id`、`createdAt`、`updatedAt` を所有します。client-sent value を決して信頼しては
 なりません。
 
+### 永続化の規約
+
+Cosmos を使うモデルでは、本番は Azure Cosmos DB、ローカルは Cosmos DB Emulator を使います。
+サービス、資格情報、コンテナーの不足は報告し、File / JSON / SQLite / InMemory による
+アプリの保存先や、接続障害を隠す fallback で回避してはなりません。
+明示的な単体テスト用 double は利用できますが、DB 検証の証拠にはなりません。
+
+カスタム API と業務ロジックも、標準の接続設定と実効 DB 名を使います。
+`swallowkit dev` が解決する worktree 分離後の DB 名もこれに含まれます。
+分離前の DB 名のハードコードや、不要な独自 DB / path / storage option、
+本番用の起動 flag を追加してはなりません。別の永続化設定を作らず、検査した設定と
+capability に従ってください。明示的な別の永続化要件や外部 `connectorConfig` モデルは、
+確認済みの capability と ownership boundary の範囲で利用できます。
+これは Cosmos の障害時に無断で保存先を置き換える許可ではありません。
+
 <!-- source-section: Project Structure -->
 ## Project structure
 
@@ -568,15 +629,22 @@ package-manager invocation style を勝手に混在させてはなりません�
 
 {{devGuidance}}
 
-DB の検証前に、既存の Cosmos DB Emulator が利用できるか確認してください。
-利用できなければ報告し、明示的な許可なく起動・再起動、グローバルツール、
-TLS 信頼設定、PC の設定変更を行ってはなりません。分離した DB とポートを使い、
-利用者のデータを初期化せず、自分が起動したプロセスだけを停止してください。
-`dev --seed-env` はデータを置換するため、実行先を先に確認します。
+ローカルサービスを起動する前に、既存の Emulator / サーバープロセスと使用中のポートを
+調べてください。DB の検証前に Emulator の稼働を確認し、利用できなければ報告します。
+明示的な許可なく起動・再起動・リセットしてはなりません。
+ポートを空けるために利用者のサービスを再起動してはなりません。
 
-build / verify project に加え、同一オリジンの BFF 経由で UI、CRUD、
-入力検証・エラー、設定済みの認証を確認してください。型検査やサーバー起動確認だけでは
-E2E 検証になりません。クラウド未検証や利用できないローカル前提条件は明示します。
+破壊的な seed 置換、コンテナー再作成、その他のデータ変更の前に、
+実際の endpoint、実効 DB 名、対象コンテナーを確認します。分離したテスト DB とポートを使い、
+worktree 内にいるというだけで分離済みと判断せず、解決済みの設定とログで確認します。
+本番・共有・既存の利用者データには適用される人間の承認が必要です。破棄可能と決めつけてはなりません。
+検証を通すために TLS 検証を無効化したり、証明書の信頼設定・グローバルツール・PC の設定を
+変更したり、別プロトコルを推測して使ってはなりません。
+実際に設定された HTTP / HTTPS endpoint を使い、接続障害は報告してください。
+
+停止するのは自分が起動したプロセスだけにし、個々のプロセスを特定してください。
+プロセス名による一括停止は禁止です。ローカルの未追跡設定やテスト DB の残存を報告します。
+上記の実動作確認の gate に従い、クラウド未検証や利用できないローカル前提条件を明示してください。
 
 <!-- source-section: Final Rules -->
 ## 最終ルール

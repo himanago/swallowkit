@@ -21,6 +21,8 @@ specification、planning、ticket decomposition、implementation、verification�
 - deterministic generation には plan/apply を使用する。
 - `requires-human` state とその他の human approval gate を尊重する。
 - 完了前に SwallowKit verification を実行する。
+- 永続化、開発用 seed、実動作の証拠、ローカルサービス・データ保護は root `AGENTS.md` に従う。
+  機械的な verification だけでは E2E 動作の証明にはならない。
 
 task-specific SwallowKit Agent Skills は `.github/skills/` にあります。
 Agent-agnostic equivalent は `.swallowkit/workflows/` にあります。

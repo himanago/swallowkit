@@ -62,6 +62,22 @@ adapter 自身にも、`AGENTS.md` を読む前から SwallowKit を認識でき
 always-on rule が含まれます。task-specific な詳細は Skills/runbooks に置き、
 canonical contract を百科事典ではなく operational contract に保ちます。
 
+これらのファイルは Next.js / React、各バックエンド言語、npm / pnpm 向けに `init` が生成します。
+`init` は既存ディレクトリを拒否し、SwallowKit の更新だけでは指示ファイルは更新されません。
+指示ファイル専用の更新コマンドはありません。既存プロジェクトに新しい指示を取り込む場合は、
+選択済みの frontend / backend / package manager に合わせて新旧テンプレートの差分を確認し、
+canonical な `AGENTS.md` と必要な adapter / runbook に手動でマージしてください。
+プロジェクト独自の指示を保ち、既存ドキュメントの上書きや既存プロジェクトへの `init` は避けます。
+
+canonical contract は、Cosmos（本番）/ Emulator（ローカル）の永続化と障害を隠す代替ストレージの禁止、
+`dev-seeds/<environment>/` の明示的な適用、ローカル操作時のデータ保護を定めます。
+seed ファイル名は複数形のコンテナー名ではなく、モデル名の単数形 kebab-case
+（例: `learning-profile.json`）です。置換成功と判断する前に、実効 DB 名と seed ログを確認します。
+build、fixture、`verify project` は機械的な証拠にとどまります。起動・永続化・API・UI の変更では、
+実アプリの BFF / Functions / DB を通した動作確認も必要です。永続化は再 seed せずに
+再読み込み・再起動して確認します。前提条件の不足、skip、warning、模擬サービスと実サービスの違いを
+明示してください。ドキュメントだけの変更には実 DB の検証は不要です。
+
 ## 開発ライフサイクル全体での SwallowKit
 
 ### Discovery と requirements clarification

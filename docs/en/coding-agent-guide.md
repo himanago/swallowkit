@@ -64,6 +64,26 @@ The adapters contain enough always-on rules to make SwallowKit visible before
 an agent has loaded `AGENTS.md`. Task-specific detail remains in Skills and
 runbooks so the canonical contract stays operational rather than encyclopedic.
 
+These files are written during `init` for both Next.js and React, all backend
+languages, and npm/pnpm. `init` refuses an existing project directory; upgrading
+SwallowKit does not refresh these instructions. There is no instruction-update
+command. To adopt newer guidance in an existing project, review the new templates
+against the project's selected frontend/backend/package manager and manually merge
+the diff into its canonical `AGENTS.md` and adapters/runbooks as needed. Preserve
+project-specific instructions; do not overwrite existing consumer documents or
+run `init` over the project.
+
+The canonical contract covers Cosmos production/Emulator persistence without
+failure-hiding storage fallbacks, explicit `dev-seeds/<environment>/` application,
+and data-safe local operations. Seed filenames use singular model kebab-case
+(for example `learning-profile.json`), not plural container names. Inspect the
+effective database and seed logs before treating replacement as successful.
+Builds, fixtures, and `verify project` provide mechanical evidence only: startup,
+persistence, API, and UI changes also need actual application/BFF/Functions/database
+behavior, including reload and restart without re-seeding for persistence.
+Report missing prerequisites, skips, warnings, and simulated versus real services
+honestly. Documentation-only changes do not require a live database.
+
 ## SwallowKit across the development lifecycle
 
 ### Discovery and requirements clarification

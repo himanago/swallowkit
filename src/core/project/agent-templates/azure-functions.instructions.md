@@ -18,5 +18,7 @@ deterministic. Inspect boundaries before choosing an edit location.
 - Container names use PascalCase plural form and default to `/id` as the
   partition key unless the source-of-truth model says otherwise.
 - Respect `requires-human` and run SwallowKit verification after changes.
+- Follow root `AGENTS.md` for the persistence contract, development seed workflow,
+  runtime evidence, and local service/data safety.
 
 Backend language: {{backendLanguageLabel}}.

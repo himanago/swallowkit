@@ -20,6 +20,8 @@ always-on rule:
 - deterministic generation には plan/apply を使用する。
 - すべての `requires-human` state と provisioning approval gate を尊重する。
 - implementation を完了とみなす前に SwallowKit verification を実行する。
+- 永続化、開発用 seed、実動作の証拠、ローカルサービス・データ保護は root `AGENTS.md` に従う。
+  機械的な verification だけでは E2E 動作の証明にはならない。
 
 task-specific SwallowKit Agent Skills は `.github/skills/` にあります。
 同等の agent-agnostic runbook は `.swallowkit/workflows/` にあります。
