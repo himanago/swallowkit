@@ -3,7 +3,7 @@
  * CRUD 画面（一覧、詳細、新規作成、編集）を生成する
  */
 
-import { ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
+import { getManagedFieldMask, ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
 import { ModelAuthPolicy } from "../../types";
 
 /** auth が有効かつ authPolicy が存在する場合に渡されるオプション */
@@ -572,7 +572,7 @@ ${schemaImportLine}
 
 // Input schema: SwallowKit-managed fields (id, createdAt, updatedAt) are optional
 // These fields are ignored by the backend and auto-managed
-const ${modelName}InputSchema = ${localSchemaName}.partial({ id: true, createdAt: true, updatedAt: true });
+const ${modelName}InputSchema = ${localSchemaName}.partial(${getManagedFieldMask(model)});
 
 type ${modelName} = z.infer<typeof ${localSchemaName}>;
 

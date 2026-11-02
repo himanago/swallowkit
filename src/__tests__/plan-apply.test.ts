@@ -272,6 +272,7 @@ describe("plan / apply / drift / verify machine commands", () => {
     writeFile(path.join(tempDir, "shared", "models", "answer-record.ts"), createModelSource("AnswerRecord"));
     createInfrastructureFixture(tempDir);
     addLegacyContainerToInfrastructure(tempDir, "answer-record");
+    addLegacyContainerToInfrastructure(tempDir, "todo");
     const original = initializeLegacyMigrations(tempDir);
     const restoreCodegenMocks = mockSuccessfulNativeCodegen();
 
@@ -336,7 +337,7 @@ describe("plan / apply / drift / verify machine commands", () => {
     createProjectFixture(tempDir);
     writeFile(
       path.join(tempDir, "shared", "models", "todo.ts"),
-      `${createModelSource("Todo")}\nexport const partitionKey = '/tenantId';\n`
+      `${createModelSource("Todo", "\n  tenantId: z.string(),")}\nexport const partitionKey = '/tenantId';\n`
     );
     createInfrastructureFixture(tempDir);
     addLegacyContainerToInfrastructure(tempDir, "todo");
@@ -884,6 +885,8 @@ export type Todo = z.infer<typeof Todo>;
 
   it("verifies the project and explains failures", async () => {
     createProjectFixture(tempDir);
+    createInfrastructureFixture(tempDir);
+    initializeLegacyMigrations(tempDir);
     await runMachine(machineArgs("apply", "scaffold", "todo", "--api-only"));
 
     const verify = await runMachine(machineArgs("verify", "project", "--checks", "structure,drift"));

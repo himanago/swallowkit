@@ -6,6 +6,7 @@ interface CreateModelOptions {
   names: string[]; // モデル名のリスト（例: ["todo", "user", "post"]）
   modelsDir?: string; // モデルディレクトリ（デフォルト: "shared/models"）
   connector?: string; // コネクタ名（例: "mysql", "backlog"）
+  dryRun?: boolean;
 }
 
 /**
@@ -35,9 +36,14 @@ export async function createModelCommand(options: CreateModelOptions) {
     names: options.names,
     modelsDir: options.modelsDir,
     connector: options.connector,
-    overwriteMode: "prompt",
+    dryRun: options.dryRun,
+    overwriteMode: options.dryRun ? "never" : "prompt",
     confirmOverwrite: async (filePath) => askConfirmation(`⚠️  File ${filePath} already exists. Overwrite? (y/N): `),
   });
+  if (options.dryRun) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
 
   // サマリー表示
   console.log("\n📋 Summary:");
@@ -53,10 +59,13 @@ export async function createModelCommand(options: CreateModelOptions) {
   if (result.updatedIndex) {
     console.log("  📦 Updated shared/index.ts");
   }
+  if (result.infrastructureFiles.length) console.log(`  Registered Cosmos migrations: ${result.infrastructureFiles.join(", ")}`);
 
   if (result.createdFiles.length > 0) {
     console.log("\n📝 Next steps:");
     console.log("  1. Customize the generated model fields in shared/models/");
-    console.log(`  2. Run '${getCommands(detectFromProject()).exec} swallowkit scaffold <model>' to generate CRUD code`);
+    console.log("  2. For Cosmos models, if the partition key changes, use migrations add-model <model> --refresh-pending --resource-group <rg> to prove it was never attempted or applied.");
+    console.log(`  3. Optionally run '${getCommands(detectFromProject()).exec} swallowkit scaffold <model>' for CRUD; custom APIs do not need scaffolding.`);
+    console.log("  4. Review the provision plan; provisioning still requires human approval. Local verification is not deployment evidence.");
   }
 }

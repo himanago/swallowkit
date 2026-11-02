@@ -16,6 +16,8 @@ import { getSwallowKitVersion } from "../../version";
 import { inspectInfra, InfraInspection } from "../project/infra";
 import { deletePlanState, loadPlanState, savePlanState } from "../project/state";
 import { hashFileIfExists } from "./file-session";
+import { checkModelInfrastructure } from "./model-infrastructure";
+import { getAllModels, getModelDependencyPaths } from "../scaffold/model-parser";
 import {
   MIGRATION_MANIFEST_PATH,
   MigrationManifest,
@@ -234,6 +236,7 @@ function assertAdoptionWhatIfIsSafe(whatIfResult: string): void {
 export async function planProvisionOperation(options: PlanProvisionOptions): Promise<ProvisionPlanData> {
   const projectRoot = process.cwd();
   validateProvisionInputs(options);
+  await checkModelInfrastructure(projectRoot);
 
   const infra = inspectInfra(projectRoot);
   const warnings = [...infra.warnings];
@@ -304,6 +307,27 @@ export async function planProvisionOperation(options: PlanProvisionOptions): Pro
       };
       const baselineState: MigrationState = { schemaVersion: 1, version: 0, checksum: manifestAfterApply.baseline.checksum };
       commandSpecs = [...buildBootstrapCommands(options, mainBicepPath, parametersPath), bootstrapTagCommand(options, migrationTagKey, baselineState)];
+      pendingMigrations = resolveMigrations(manifestAfterApply, projectRoot);
+      const projectName = pendingMigrations.length ? readProjectName(parametersPath) : "";
+      let expectedState = baselineState;
+      for (const migration of pendingMigrations) {
+        commandSpecs.push({
+          file: "az",
+          args: [
+            "deployment", "group", "create", "--name", `swallowkit-migration-${String(migration.version).padStart(4, "0")}`,
+            "--resource-group", options.resourceGroup,
+            "--template-file", path.join(projectRoot, migration.template),
+            ...(migration.parameters ? ["--parameters", path.join(projectRoot, migration.parameters)] : []),
+            "--parameters", `projectName=${projectName}`, `location=${options.location}`,
+            ...subscriptionArgs(options.subscription),
+          ],
+          kind: "migration", expectedState,
+        });
+        const nextState: MigrationState = { schemaVersion: 1, version: migration.version, checksum: migration.cumulativeChecksum };
+        commandSpecs.push(bootstrapTagCommand(options, migrationTagKey, nextState));
+        commandSpecs[commandSpecs.length - 1].expectedState = expectedState;
+        expectedState = nextState;
+      }
       if (options.whatIf) warnings.push("what-if-skipped: Resource-group-scope what-if requires the target resource group to exist.");
     } else {
       if (baselineDrift.length > 0 && !options.reconcile) {
@@ -379,7 +403,7 @@ export async function planProvisionOperation(options: PlanProvisionOptions): Pro
             file: "az",
             args: [
               "deployment", "group", "create",
-              "--name", "swallowkit-migration",
+              "--name", `swallowkit-migration-${String(migration.version).padStart(4, "0")}`,
               "--resource-group", options.resourceGroup,
               "--template-file", path.join(projectRoot, migration.template),
               ...(migration.parameters ? ["--parameters", path.join(projectRoot, migration.parameters)] : []),
@@ -403,6 +427,11 @@ export async function planProvisionOperation(options: PlanProvisionOptions): Pro
     "infra/main.bicep": hashFileIfExists(mainBicepPath),
     "infra/main.parameters.json": hashFileIfExists(parametersPath),
   };
+  for (const model of await getAllModels()) {
+    for (const dependency of getModelDependencyPaths(model.filePath)) {
+      fingerprints[path.relative(projectRoot, dependency).replace(/\\/g, "/")] = hashFileIfExists(dependency);
+    }
+  }
   const baselineSnapshotChecksum = manifest
     ? computeBaselineChecksum(collectLegacyBaselineFiles(projectRoot))
     : undefined;
@@ -494,7 +523,11 @@ function assertPlanRemoteState(plan: ProvisionPlanData, expected: MigrationState
   if (plan.mode === "offline") return;
   const current = readRemoteMigrationState(plan);
   if (plan.mode === "bootstrap") {
-    if (current.group.exists) {
+    if (expected !== undefined && expected !== null) {
+      if (!current.group.exists || !statesEqual(current.state, expected)) {
+        throw new MachineCommandError("stale-azure-state", "Azure migration state changed during bootstrap. Re-run plan provision.", { expected, actual: current.state }, "blocked");
+      }
+    } else if (current.group.exists) {
       throw new MachineCommandError("stale-azure-state", "The resource group was created after this plan. Re-run plan provision.", undefined, "blocked");
     }
     return;
@@ -533,7 +566,6 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
       "blocked"
     );
   }
-
   // Bicep が plan 後に変更されていないか確認
   const changedFiles: string[] = [];
   for (const [relativePath, expectedHash] of Object.entries(plan.fingerprints)) {
@@ -548,6 +580,7 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
       "blocked"
     );
   }
+  await checkModelInfrastructure(projectRoot);
   if (plan.baselineSnapshotChecksum) {
     const currentBaselineChecksum = computeBaselineChecksum(collectLegacyBaselineFiles(projectRoot));
     if (currentBaselineChecksum !== plan.baselineSnapshotChecksum) {
@@ -620,7 +653,9 @@ export async function applyProvisionOperation(options: ApplyProvisionOptions): P
     if (command.kind === "deployment" || command.kind === "migration") {
       try {
         const deployment = JSON.parse(result.stdout || "{}");
-        deploymentOutputs = deployment.properties?.outputs;
+        if (deployment.properties?.outputs) {
+          deploymentOutputs = { ...deploymentOutputs, ...deployment.properties.outputs };
+        }
       } catch {
         warnings.push("Could not parse deployment output JSON.");
       }

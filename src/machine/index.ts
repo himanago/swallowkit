@@ -1,6 +1,8 @@
 import { Command, CommanderError } from "commander";
 import { isSwallowKitProject } from "../core/config";
 import { createModelOperation } from "../core/operations/create-model";
+import { addModelMigrationOperation, AddModelMigrationOptions } from "../core/operations/model-infrastructure";
+import { planModelOperation, applyModelOperation } from "../core/operations/model-plan";
 import { applyScaffoldOperation } from "../core/operations/scaffold-apply";
 import { applyAuthOperation, planAuthOperation } from "../core/operations/auth-operations";
 import { applyProvisionOperation, planProvisionOperation } from "../core/operations/provision-operations";
@@ -145,7 +147,7 @@ function createMachineProgram(): Command {
     .description("Inspect SwallowKit project metadata")
     .action(async () => {
       await handleMachineAction("inspect-project", async () => {
-        const loaded = await loadProjectManifest();
+        const loaded = await loadProjectManifest(process.cwd(), true);
         return {
           manifestSource: loaded.source,
           diagnostics: loaded.diagnostics,
@@ -159,7 +161,7 @@ function createMachineProgram(): Command {
     .description("Inspect SwallowKit entities")
     .action(async () => {
       await handleMachineAction("inspect-entities", async () => {
-        const loaded = await loadProjectManifest();
+        const loaded = await loadProjectManifest(process.cwd(), true);
         return {
           manifestSource: loaded.source,
           diagnostics: loaded.diagnostics,
@@ -173,7 +175,7 @@ function createMachineProgram(): Command {
     .description("Inspect SwallowKit routes")
     .action(async () => {
       await handleMachineAction("inspect-routes", async () => {
-        const loaded = await loadProjectManifest();
+        const loaded = await loadProjectManifest(process.cwd(), true);
         return {
           manifestSource: loaded.source,
           diagnostics: loaded.diagnostics,
@@ -237,18 +239,21 @@ function createMachineProgram(): Command {
     .command("project")
     .description("Validate SwallowKit project metadata and conventions")
     .action(async () => {
-      await handleMachineAction("validate-project", async () => validateProject());
+      await handleMachineAction("validate-project", async () => validateProject(), result => ({
+        status: result.violations.some(violation => violation.severity === "error") ? "failed" : "complete",
+      }));
     });
 
   const generate = new Command("generate");
   generate
     .command("model")
-    .description("Generate model templates with deterministic JSON output")
+    .description("Generate model templates and register Cosmos container migrations independently of CRUD (connectors excluded)")
     .argument("<names...>", "Model names to generate")
     .option("--models-dir <dir>", "Models directory", "shared/models")
     .option("--connector <name>", "Associate the models with a configured connector")
     .option("--overwrite <mode>", "Overwrite policy: always | never", "never")
-    .action(async (names: string[], options: { modelsDir?: string; connector?: string; overwrite?: string }) => {
+    .option("--dry-run", "Preview all model, infrastructure and metadata writes without changing files", false)
+    .action(async (names: string[], options: { modelsDir?: string; connector?: string; overwrite?: string; dryRun?: boolean }) => {
       await handleMachineAction("generate-model", async () => {
         ensureProjectForMachine();
         if (options.overwrite !== "always" && options.overwrite !== "never") {
@@ -263,6 +268,7 @@ function createMachineProgram(): Command {
           modelsDir: options.modelsDir,
           connector: options.connector,
           overwriteMode: options.overwrite,
+          dryRun: options.dryRun,
         });
       });
     });
@@ -287,6 +293,28 @@ function createMachineProgram(): Command {
     });
 
   const plan = new Command("plan");
+  plan.command("model <names...>")
+    .description("Plan model templates, Cosmos migrations and metadata writes")
+    .option("--models-dir <dir>", "Models directory", "shared/models")
+    .option("--connector <name>", "External connector (no Cosmos container)")
+    .option("--overwrite <mode>", "Overwrite policy: always | never", "never")
+    .action(async (names: string[], options: { modelsDir?: string; connector?: string; overwrite?: string }) => {
+      await handleMachineAction("plan-model", async () => {
+        ensureProjectForMachine();
+        if (options.overwrite !== "always" && options.overwrite !== "never") {
+          throw new MachineCommandError("invalid-overwrite-mode", "Use --overwrite always or never.");
+        }
+        return planModelOperation({ kind: "model", options: { names, modelsDir: options.modelsDir, connector: options.connector, overwriteMode: options.overwrite } });
+      });
+    });
+  plan.command("model-infrastructure <model>")
+    .description("Plan schema-preserving Cosmos migration registration")
+    .option("--refresh-pending", "Require read-only Azure proof before refreshing a pending migration", false)
+    .option("-g, --resource-group <name>", "Resource group for pending-state proof")
+    .option("--subscription <id>", "Subscription for pending-state proof")
+    .action(async (model: string, options: AddModelMigrationOptions) => {
+      await handleMachineAction("plan-model-infrastructure", () => planModelOperation({ kind: "model-infrastructure", model, options }));
+    });
   plan
     .command("scaffold")
     .description("Compute the scaffold change plan without writing any files (accepts multiple models)")
@@ -399,6 +427,12 @@ function createMachineProgram(): Command {
     });
 
   const apply = new Command("apply");
+  apply.command("model")
+    .description("Apply a fresh model or model-infrastructure plan")
+    .requiredOption("--plan <id>", "Reviewed model plan id")
+    .action(async (options: { plan: string }) => {
+      await handleMachineAction("apply-model", () => applyModelOperation(options.plan));
+    });
   apply
     .command("scaffold")
     .description("Apply scaffold changes, verifying plan freshness and overwrite approval (accepts multiple models)")
@@ -617,6 +651,17 @@ function createMachineProgram(): Command {
       });
     });
 
+  const migrations = new Command("migrations");
+  migrations.command("add-model <model>")
+    .description("Register Cosmos infrastructure without changing an existing model or generating CRUD")
+    .option("--dry-run", "Preview every write without changing files", false)
+    .option("--refresh-pending", "Require read-only Azure tag/checksum proof before refreshing", false)
+    .option("-g, --resource-group <name>", "Resource group for pending-state proof")
+    .option("--subscription <id>", "Subscription for pending-state proof")
+    .action(async (model: string, options: AddModelMigrationOptions) => {
+      await handleMachineAction("add-model-migration", () => addModelMigrationOperation(model, options));
+    });
+  program.addCommand(migrations);
   program.addCommand(inspect);
   program.addCommand(validate);
   program.addCommand(generate);

@@ -162,7 +162,11 @@ export function loadMigrationManifest(projectRoot: string = process.cwd()): Migr
   return manifest;
 }
 
-export function validateMigrationManifest(manifest: MigrationManifest, projectRoot: string = process.cwd()): void {
+export function validateMigrationManifest(
+  manifest: MigrationManifest,
+  projectRoot: string = process.cwd(),
+  readFile: (relativePath: string) => string = relativePath => readRequiredFile(projectRoot, relativePath)
+): void {
   if (
     !manifest || typeof manifest !== "object" ||
     manifest.schemaVersion !== MIGRATION_MANIFEST_VERSION ||
@@ -207,13 +211,13 @@ export function validateMigrationManifest(manifest: MigrationManifest, projectRo
     if (!template.startsWith("infra/migrations/") || !template.endsWith(".bicep")) {
       fail("invalid-migration-manifest", `Migration template must be a .bicep file under infra/migrations: ${template}`);
     }
-    readRequiredFile(projectRoot, template);
+    readFile(template);
     if (migration.parameters) {
       const parameters = normalizeRelativePath(migration.parameters);
       if (!parameters.startsWith("infra/migrations/") || !parameters.endsWith(".json")) {
         fail("invalid-migration-manifest", `Migration parameters must be JSON under infra/migrations: ${parameters}`);
       }
-      readRequiredFile(projectRoot, parameters);
+      readFile(parameters);
     }
   }
 }

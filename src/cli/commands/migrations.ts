@@ -1,9 +1,21 @@
 import { Command } from "commander";
 import { ensureSwallowKitProject } from "../../core/config";
 import { initializeLegacyMigrations } from "../../core/operations/migration-generator";
+import { addModelMigrationOperation, AddModelMigrationOptions } from "../../core/operations/model-infrastructure";
 
 export const migrationsCommand = new Command("migrations")
   .description("Manage versioned Azure infrastructure migrations");
+
+migrationsCommand
+  .command("add-model <model>")
+  .description("Register Cosmos infrastructure for an existing model without rewriting its schema or generating CRUD")
+  .option("--dry-run", "Preview all migration and metadata writes without changing files", false)
+  .option("--refresh-pending", "Refresh an unmodified generated migration only after Azure tag/checksum and deployment-history proof", false)
+  .option("-g, --resource-group <name>", "Azure resource group for the read-only pending-state check")
+  .option("--subscription <id>", "Azure subscription for the read-only pending-state check")
+  .action(async (model: string, options: AddModelMigrationOptions) => {
+    console.log(JSON.stringify(await addModelMigrationOperation(model, options), null, 2));
+  });
 
 migrationsCommand
   .command("init")

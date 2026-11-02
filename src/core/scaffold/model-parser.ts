@@ -3,18 +3,20 @@
  */
 
 import * as fs from "fs";
-import { execFileSync } from "child_process";
+import { execFileSync, ExecFileSyncOptionsWithStringEncoding } from "child_process";
 import * as path from "path";
 import * as ts from "typescript";
 
 import { ModelConnectorConfig, ModelAuthPolicy } from "../../types";
 import { MachineCommandError } from "../../machine/errors";
 import { hashContent } from "../operations/file-session";
+import { loadArtifactLedger } from "../project/artifacts";
 
 export type SchemaParserMode = "static-ast" | "dynamic";
 
 export interface ModelParserOptions {
-  executeNode?: typeof execFileSync;
+  executeNode?: (file: string, args: readonly string[], options: ExecFileSyncOptionsWithStringEncoding) => string;
+  sourceContent?: string;
 }
 
 export interface ModelInfo {
@@ -50,6 +52,36 @@ export interface FieldInfo {
   nestedDisplayField?: string; // 参照先の表示フィールド（例: "name"）
 }
 
+export function getManagedFieldMask(model: Pick<ModelInfo, "fields">): string {
+  const keys = ["id", "createdAt", "updatedAt"].filter(name => model.fields.some(field => field.name === name));
+  return `{ ${keys.map(key => `${key}: true`).join(", ")} }`;
+}
+
+export function getModelDependencyPaths(modelPath: string): string[] {
+  const visited = new Set<string>();
+  const visit = (file: string): void => {
+    const absolute = path.resolve(file);
+    if (visited.has(absolute)) return;
+    visited.add(absolute);
+    const source = ts.createSourceFile(absolute, fs.readFileSync(absolute, "utf8"), ts.ScriptTarget.Latest, true);
+    for (const statement of source.statements) {
+      if ((!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) ||
+          !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier) ||
+          !statement.moduleSpecifier.text.startsWith(".")) continue;
+      const base = path.resolve(path.dirname(absolute), statement.moduleSpecifier.text);
+      const dependency = [base.replace(/\.js$/, ".ts"), `${base}.ts`, path.join(base, "index.ts"), base]
+        .find(candidate => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+      if (!dependency) {
+        throw new MachineCommandError("schema-dependency-not-found", `Cannot resolve ${statement.moduleSpecifier.text} from ${absolute}.`,
+          { filePath: absolute, specifier: statement.moduleSpecifier.text }, "blocked");
+      }
+      visit(dependency);
+    }
+  };
+  visit(modelPath);
+  return [...visited].sort();
+}
+
 /**
  * ネストしたスキーマ参照の情報
  */
@@ -67,32 +99,17 @@ export interface NestedSchemaRef {
  * モデルファイルを解析して ModelInfo を返す
  */
 export async function parseModelFile(modelPath: string, options: ModelParserOptions = {}): Promise<ModelInfo> {
-  if (!fs.existsSync(modelPath)) {
+  if (options.sourceContent === undefined && !fs.existsSync(modelPath)) {
     throw new Error(`Model file not found: ${modelPath}`);
   }
 
-  const content = fs.readFileSync(modelPath, "utf-8");
+  const content = options.sourceContent ?? fs.readFileSync(modelPath, "utf-8");
   const fileName = path.basename(modelPath, ".ts");
   
   // モデル名を推定（ファイル名を PascalCase に変換）
   const modelName = toPascalCase(fileName);
   
-  // スキーマ変数名を抽出
-  // コメント内のコードパターンを誤認識しないよう、先にコメントを除去してから正規表現を適用する
-  // パターン1: export const todoSchema = z.object({ ... })  (camelCase + Schema接尾辞)
-  // パターン2: export const Todo = z.object({ ... })         (Zod公式パターン)
-  const contentWithoutComments = content
-    .replace(/\/\*[\s\S]*?\*\//g, '')  // ブロックコメントを除去
-    .replace(/\/\/.*/g, '');           // 行コメントを除去
-  let schemaMatch = contentWithoutComments.match(/export\s+const\s+(\w+Schema)\s*=/);
-  if (!schemaMatch) {
-    schemaMatch = contentWithoutComments.match(/export\s+const\s+(\w+)\s*=\s*z\.object\s*\(/);
-  }
-  if (!schemaMatch) {
-    throw new Error(`Could not find exported schema in ${modelPath}. Expected patterns:\n  - export const xxxSchema = z.object({ ... })\n  - export const Xxx = z.object({ ... })`);
-  }
-  
-  const schemaName = schemaMatch[1];
+  const schemaName = resolveModelSchemaExport(modelPath, content);
   
   // displayName を抽出（例: export const displayName = 'Task'）
   const displayNameMatch = content.match(/export\s+const\s+displayName\s*=\s*['"]([^'"]+)['"]/);  
@@ -111,7 +128,7 @@ export async function parseModelFile(modelPath: string, options: ModelParserOpti
   const nestedSchemaRefs = detectNestedSchemaRefs(modelPath, content, schemaName);
   
   // フィールド情報を抽出（動的インポートを使用）
-  const parsedSchema = await extractFieldsFromSchema(modelPath, schemaName, options.executeNode ?? execFileSync);
+  const parsedSchema = await extractFieldsFromSchema(modelPath, schemaName, options.executeNode ?? execFileSync, content);
   const fields = parsedSchema.fields;
   
   // ネストスキーマ情報をフィールドにマージ
@@ -132,7 +149,48 @@ export async function parseModelFile(modelPath: string, options: ModelParserOpti
       console.warn(`⚠️  [${modelName}] partitionKey field '${pkField}' not found in schema fields`);
     }
   }
-  
+
+  function resolveModelSchemaExport(modelPath: string, content: string): string {
+    const source = ts.createSourceFile(modelPath, content, ts.ScriptTarget.Latest, true);
+    const declarations = new Map<string, ts.Expression>();
+    const exports: string[] = [];
+    for (const statement of source.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+        declarations.set(declaration.name.text, declaration.initializer);
+        if (statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
+          exports.push(declaration.name.text);
+        }
+      }
+    }
+    const isObjectSchema = (expression: ts.Expression, seen = new Set<string>()): boolean => {
+      if (ts.isIdentifier(expression)) {
+        if (seen.has(expression.text)) return false;
+        seen.add(expression.text);
+        const value = declarations.get(expression.text);
+        return value ? isObjectSchema(value, seen) : false;
+      }
+      if (ts.isAsExpression(expression) || ts.isParenthesizedExpression(expression)) return isObjectSchema(expression.expression, seen);
+      if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression)) return false;
+      const receiver = expression.expression.expression;
+      return ts.isIdentifier(receiver) && receiver.text === "z"
+        ? expression.expression.name.text === "object"
+        : isObjectSchema(receiver, seen);
+    };
+    const modelName = toPascalCase(path.basename(modelPath, ".ts"));
+    const candidates = exports.filter(name => isObjectSchema(declarations.get(name)!));
+    const preferred = [modelName, `${toCamelCase(modelName)}Schema`].find(name => candidates.includes(name));
+    if (preferred) return preferred;
+    if (candidates.length === 1) return candidates[0];
+    throw new MachineCommandError(
+      candidates.length ? "schema-selection-ambiguous" : "schema-export-not-found",
+      `Cannot select a unique exported object schema in ${modelPath}. Use ${modelName} or ${toCamelCase(modelName)}Schema.`,
+      { modelPath, filePath: modelPath, candidates, expectedExports: [modelName, `${toCamelCase(modelName)}Schema`] },
+      "blocked"
+    );
+  }
+
   const modelInfo: ModelInfo = {
     name: modelName,
     displayName,
@@ -396,8 +454,8 @@ interface ParsedSchemaFields {
   warnings: string[];
 }
 
-function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] | null {
-  const source = ts.createSourceFile(modelPath, fs.readFileSync(modelPath, "utf-8"), ts.ScriptTarget.Latest, true);
+function staticParseFields(modelPath: string, schemaName: string, content: string): FieldInfo[] | null {
+  const source = ts.createSourceFile(modelPath, content, ts.ScriptTarget.Latest, true);
   const constants = new Map<string, ts.Expression>();
   const importedObjectSchemas = new Set<string>();
   for (const statement of source.statements) {
@@ -508,10 +566,11 @@ function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] |
 async function extractFieldsFromSchema(
   modelPath: string,
   schemaName: string,
-  executeNode: typeof execFileSync
+  executeNode: NonNullable<ModelParserOptions["executeNode"]>,
+  content: string
 ): Promise<ParsedSchemaFields> {
-  const staticFields = staticParseFields(modelPath, schemaName);
-  if (staticFields) return { fields: staticFields, mode: "static-ast", warnings: [] };
+  const staticFields = staticParseFields(modelPath, schemaName, content);
+  if (staticFields && staticFields.length > 0) return { fields: staticFields, mode: "static-ast", warnings: [] };
   const fields: FieldInfo[] = [];
   let tempDirectory: string | undefined;
   
@@ -536,6 +595,7 @@ async function extractFieldsFromSchema(
 const isObject = (schema && schema._def && 
   (schema._def.typeName === 'ZodObject' || schema.constructor?.name === 'ZodObject' || typeof schema._def.shape === 'function'));
 
+try {
 if (isObject) {
   const shape = typeof schema._def.shape === 'function' ? schema._def.shape() : schema._def.shape;
   const fields = Object.keys(shape).map(key => {
@@ -620,7 +680,7 @@ if (isObject) {
     }
 
     if (!type || ((typeName === 'ZodEnum' || typeName === 'ZodNativeEnum') && (!enumValues || enumValues.length === 0))) {
-      throw new Error('Unsupported or ambiguous Zod field "' + key + '" (' + (typeName || 'unknown') + ')');
+      throw Object.assign(new Error('Unsupported or ambiguous Zod field "' + key + '" (' + (typeName || 'unknown') + ')'), { field: key, reason: typeName || 'unknown' });
     }
     
     // 外部キー検出: フィールド名が <ModelName>Id のパターンの場合
@@ -636,9 +696,13 @@ if (isObject) {
     return { name: key, type, isOptional, isNullable, isArray, enumValues, isForeignKey, referencedModel };
   });
   
+  if (!fields.length) throw new Error('Empty object schemas cannot define an entity');
   console.log(JSON.stringify(fields));
 } else {
   throw new Error('Exported schema is not a Zod object');
+}
+} catch (error) {
+  console.log(JSON.stringify({ error: { field: error.field, reason: error.reason || error.message } }));
 }
 `;
     
@@ -648,13 +712,25 @@ if (isObject) {
       const result = executeNode(process.execPath, [tempScript], {
         encoding: 'utf8',
         cwd: projectRoot,
+        stdio: ["ignore", "pipe", "pipe"],
       });
       
       const stdout = result;
       
       if (stdout) {
         const parsedFields = JSON.parse(stdout.trim());
+        if (parsedFields.error) {
+          throw new MachineCommandError(
+            "schema-analysis-unsupported",
+            `Cannot analyze ${modelPath} (${schemaName})${parsedFields.error.field ? ` field ${parsedFields.error.field}` : ""}: ${parsedFields.error.reason}`,
+            { modelPath, filePath: modelPath, schemaName, ...parsedFields.error, diagnostics: ["Lossy regex parsing was not used."] },
+            "blocked"
+          );
+        }
+        if (!Array.isArray(parsedFields) || parsedFields.length === 0) throw new Error("Schema analysis returned no fields.");
         fields.push(...parsedFields);
+      } else {
+        throw new Error("Schema analysis returned no output.");
       }
     } finally {
       // 一時ファイルを削除
@@ -665,6 +741,7 @@ if (isObject) {
       }
     }
   } catch (error) {
+    if (error instanceof MachineCommandError) throw error;
     const nodeError = error as NodeJS.ErrnoException;
     if (nodeError.code === "EPERM" || nodeError.code === "EACCES" || nodeError.code === "ENOENT") {
       throw new MachineCommandError(
@@ -674,6 +751,8 @@ if (isObject) {
           command: process.execPath,
           reason: nodeError.code,
           modelPath,
+          filePath: modelPath,
+          schemaName,
           diagnostics: ["Dynamic schema evaluation requires permission to start a Node.js child process."],
           nextAction: "Re-run in an environment that permits normal Node.js child process execution.",
         },
@@ -686,6 +765,9 @@ if (isObject) {
       {
         command: process.execPath,
         modelPath,
+        filePath: modelPath,
+        schemaName,
+        reason: error instanceof Error ? error.message : String(error),
         diagnostics: ["Lossy regex parsing was not used."],
         nextAction: "Use supported static Zod expressions or re-run where dynamic schema evaluation succeeds.",
       },
@@ -895,18 +977,18 @@ export async function getAllModels(modelsDir: string = "shared/models"): Promise
   }
   
   const files = fs.readdirSync(fullModelsDir);
-  const modelFiles = files.filter(file => file.endsWith('.ts'));
+  const modelFiles = files.filter(file => file.endsWith('.ts') && !file.endsWith('.d.ts') && file !== 'index.ts');
   
   const models: ModelInfo[] = [];
+  const ledger = loadArtifactLedger(cwd);
   
   for (const file of modelFiles) {
-    try {
-      const modelPath = path.join(fullModelsDir, file);
-      const modelInfo = await parseModelFile(modelPath);
-      models.push(modelInfo);
-    } catch (error: any) {
-      console.warn(`⚠️  Failed to parse model file ${file}: ${error.message}`);
-    }
+    const modelPath = path.join(fullModelsDir, file);
+    const relativePath = path.relative(cwd, modelPath).replace(/\\/g, "/");
+    // Framework-owned authentication DTOs are not persistence entities.
+    if (relativePath === "shared/models/auth.ts" && ledger?.artifacts.some(artifact =>
+      artifact.path === relativePath && artifact.generator === "add-auth")) continue;
+    models.push(await parseModelFile(modelPath));
   }
   
   return models;

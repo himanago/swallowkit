@@ -121,6 +121,16 @@ export class FileOperationSession {
     this.inputFingerprintsByPath.set(relativePath, hashFileIfExists(absolutePath));
   }
 
+  replayInto(target: FileOperationSession): void {
+    for (const relativePath of Object.keys(this.inputFingerprints)) {
+      target.registerInput(path.join(this.rootDirectory, relativePath));
+    }
+    for (const operation of this.operations) {
+      if (operation.action === "delete") target.deleteFile(operation.absolutePath, operation);
+      else target.writeFile(operation.absolutePath, this.readFile(operation.absolutePath), operation);
+    }
+  }
+
   private overlayKey(absolutePath: string): string {
     return path.resolve(absolutePath);
   }

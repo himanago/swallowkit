@@ -509,7 +509,7 @@ Prompts for the primary region and the Static Web App region during execution.
 - **Do not** manually duplicate model definitions across layers. Use the shared package.
 - **Do not** manually create CRUD boilerplate. Use `swallowkit scaffold`.
 - **Do not** hardcode Cosmos DB connection strings. Use Managed Identity (`CosmosDBConnection__accountEndpoint`) in production and emulator settings locally.
-- **Do not** change the partition key after a container is already created (it requires data migration). Configure it via `export const partitionKey` in model files before the first `swallowkit scaffold`.
+- **Do not** change the partition key after a container is already created (it requires data migration). A `create-model` template initially uses `/id`; after authoring a different key, use the explicit `migrations add-model --refresh-pending` flow below. Scaffold cannot silently rewrite the registered key.
 
 ## Technology Stack
 
@@ -609,7 +609,11 @@ cd my-awesome-app
 
 ## swallowkit create-model
 
-Create one or more Zod model template files under `shared/models/`.
+Create Zod model templates under `shared/models/` and register their Cosmos
+container migrations for the next provision plan. CRUD scaffold is not required,
+including when all APIs are custom. Connector-backed models do not create Cosmos
+containers. Migration tracking must already be initialized; missing prerequisites
+or an unsupported existing model block the whole batch before output is written.
 
 ### Usage
 
@@ -629,6 +633,7 @@ pnpm dlx swallowkit create-model <names...> [options]
 |--------|-------------|---------|
 | `--models-dir <dir>` | Output directory for generated model files | `shared/models` |
 | `--connector <name>` | Create a connector-aware model linked to the named connector | *(none)* |
+| `--dry-run` | Preview every schema/export/migration/manifest/ledger write without changing files | `false` |
 
 ### What it does
 
@@ -638,6 +643,9 @@ For each model name, the command:
 - normalizes the file name to kebab-case and the schema/type name to PascalCase
 - adds a re-export to `shared/index.ts` when that file exists
 - includes `id`, `name`, `createdAt`, and `updatedAt` in the starter schema
+- creates `infra/migrations/NNNN-create-<name>-container/main.bicep`, registers it
+  in `infra/migrations/manifest.json`, and records `.swallowkit/artifacts.json`
+  and `.swallowkit/project.json`, without generating CRUD
 
 Example:
 
@@ -689,7 +697,62 @@ npx swallowkit create-model todo
 npx swallowkit scaffold shared/models/todo.ts
 ```
 
-Use `create-model` to create the initial schema stub, then customize the generated Zod model before running `scaffold`.
+Scaffold is optional for custom APIs. Use `machine plan model <names...>` then
+`machine apply model --plan <id>` for fingerprint-checked creation. The machine
+and MCP generators use the same operation as this command. Refusing overwrite
+or `--overwrite never` leaves the existing model and its infrastructure alone;
+use the schema-preserving backfill below instead.
+
+The parser prefers the filename-matching PascalCase export, then the matching
+legacy camelCase `Schema` export. A single unmatched object export is supported;
+multiple unmatched exports block with structured candidates. Embedded helpers
+never become separate container targets. `z.record` (including string values)
+is not currently supported across generation targets: analysis blocks with
+file/schema/field/reason instead of dropping the field or silently omitting an
+entity. Creation and verification cannot succeed with that incomplete analysis.
+
+## swallowkit migrations add-model
+
+Register infrastructure for an existing handwritten model without changing its
+schema bytes or generating CRUD:
+
+```bash
+npx swallowkit migrations add-model profile --dry-run
+npx swallowkit migrations add-model profile
+# JSON / MCP equivalents:
+npx swallowkit machine migrations add-model profile --dry-run
+# swallowkit_add_model_migration { model: "profile", dryRun: true }
+```
+
+An unchanged registration is a no-op. Baseline-owned containers stay in their
+original wiring; baseline files/checksums are never rewritten. To change the
+initial `/id` template to a domain partition key such as `/userId`, first edit
+the schema, then explicitly refresh a draft migration:
+
+```bash
+npx swallowkit migrations add-model profile --refresh-pending \
+  --resource-group rg-example --subscription <id> --dry-run
+# Review, then repeat without --dry-run.
+```
+
+This opt-in makes **read-only** Azure queries, not deployments. It requires
+unmodified generated-file provenance and proof that the selected target group
+does not exist, or a matching project migration tag/checksum plus complete
+deployment history showing the migration was never attempted. Running, Accepted,
+Succeeded-with-stale-tag, Failed/partial, legacy unidentifiable deployments,
+unknown history, and applied migrations block before any local writes. Future
+migration deployments use versioned names (`swallowkit-migration-0001`).
+Proof is only for the selected target: do not refresh history already applied
+in another environment. Applied Cosmos partition keys require explicit data and
+resource migration, not regeneration.
+
+For persisted backfill/refresh plans use `machine plan model-infrastructure <model> [--refresh-pending --resource-group <rg> --subscription <id>]`, followed
+by `machine apply model --plan <id>`. MCP equivalents are
+`swallowkit_plan_model_infrastructure` and `swallowkit_apply_model`.
+Apply checks fingerprints and re-queries
+pending state/history. Re-plan provision after any model change. Missing/stale
+Cosmos definitions block verification/provision; local verification never proves
+deployment. Provision approval and human wait/replay behavior are unchanged.
 
 ## swallowkit add-connector
 

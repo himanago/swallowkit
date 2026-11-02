@@ -43,6 +43,7 @@ describe("SwallowKit MCP tool definitions", () => {
     const result = await tool!.handler({});
     expect(JSON.parse(result.content[0].text)).toEqual({
       valid: true,
+      status: "complete",
       metadata: { swallowkitVersion: expect.stringMatching(/^\d+\.\d+\.\d+/) },
     });
   });

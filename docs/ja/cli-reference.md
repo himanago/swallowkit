@@ -586,7 +586,7 @@ Deploys Bicep infrastructure: Static Web Apps, Functions, Cosmos DB, Storage, Ma
 - **Do not** manually duplicate model definitions across layers. Use the shared package.
 - **Do not** manually create CRUD boilerplate. Use `swallowkit scaffold`.
 - **Do not** hardcode Cosmos DB connection strings. Use Managed Identity (`CosmosDBConnection__accountEndpoint`) in production and emulator settings locally.
-- **Do not** change the partition key after a container is already created (it requires data migration). Configure it via `export const partitionKey` in model files before the first `swallowkit scaffold`.
+- **Do not** change an applied container partition key. For a draft created with `/id`, use the explicit `migrations add-model --refresh-pending` flow after editing the schema; scaffold never silently changes registered keys.
 
 <!--
 - `app/api/` ルートにビジネスロジックやデータベース呼び出しを置かないでください。BFF 専用です。
@@ -594,7 +594,7 @@ Deploys Bicep infrastructure: Static Web Apps, Functions, Cosmos DB, Storage, Ma
 - モデル定義をレイヤー間で手動複製しないでください。共有パッケージを使用します。
 - CRUD ボイラープレートを手動で作成しないでください。`swallowkit scaffold` を使用します。
 - Cosmos DB 接続文字列をハードコードしないでください。本番では Managed Identity、ローカルではエミュレーター設定を使用します。
-- コンテナ作成後にパーティションキーを変更しないでください（データ移行が必要です）。最初の `swallowkit scaffold` 実行前にモデルファイルの `export const partitionKey` で設定してください。
+- 適用済みコンテナーのパーティションキーを変更しないでください（データ移行が必要です）。`/id` の雛形を別のキーへ変更する場合は、後述の `migrations add-model --refresh-pending` で未適用を明示的に確認してください。scaffold は登録済みキーを黙って変更しません。
 -->
 
 ## Technology Stack
@@ -718,7 +718,11 @@ cd my-awesome-app
 
 ## swallowkit create-model
 
-`shared/models/` 配下に 1 つ以上の Zod モデル雛形ファイルを生成します。
+`shared/models/` に Zod モデル雛形を作り、Cosmos コンテナーの migration を
+次の provision 計画の対象として登録します。カスタム API だけを使う場合も
+CRUD scaffold は不要です。Connector-backed モデルの Cosmos コンテナーは作りません。
+migration の初期化が必要です。前提条件の不足や既存モデルの解析失敗がある場合、
+一括処理を停止し、モデルや台帳を書き込みません。
 
 ### 使用法
 
@@ -738,6 +742,7 @@ pnpm dlx swallowkit create-model <names...> [options]
 |----------|------|----------|
 | `--models-dir <dir>` | 生成先のモデルディレクトリ | `shared/models` |
 | `--connector <name>` | 指定した connector に紐づく connector 対応モデルを生成 | *（なし）* |
+| `--dry-run` | スキーマ・export・migration・manifest・台帳の全書き込みを変更なしで確認 | `false` |
 
 ### このコマンドが行うこと
 
@@ -747,6 +752,9 @@ pnpm dlx swallowkit create-model <names...> [options]
 - ファイル名は kebab-case、スキーマ名と型名は PascalCase に正規化
 - `shared/index.ts` が存在する場合は再エクスポートを追加
 - 初期スキーマに `id`、`name`、`createdAt`、`updatedAt` を含める
+- `infra/migrations/NNNN-create-<name>-container/main.bicep` を作り、
+  `infra/migrations/manifest.json`、`.swallowkit/artifacts.json`、
+  `.swallowkit/project.json` に登録する（CRUD は生成しない）
 
 例:
 
@@ -798,7 +806,57 @@ npx swallowkit create-model todo
 npx swallowkit scaffold shared/models/todo.ts
 ```
 
-まず `create-model` でスキーマのひな形を作り、その後で業務要件に合わせて Zod モデルを編集してから `scaffold` を実行します。
+カスタム API に scaffold は必須ではありません。`machine plan model <names...>` と
+`machine apply model --plan <id>` では fingerprint を検証して作成します。
+CLI・machine・MCP は同じ生成処理を使います。上書きを拒否した場合や
+`--overwrite never` の場合、既存モデルとそのインフラは変更しません。
+既存の手書きモデルには次の backfill 操作を使ってください。
+
+解析対象はファイル名に対応する PascalCase export、次に従来の camelCase `Schema`
+export を優先します。一致しない object export が 1 つだけなら利用でき、
+複数なら候補付きのエラーで停止します。ファイル内のヘルパーは別のコンテナー対象にしません。
+`z.record` は文字列値も含め現在の生成契約では未対応です。フィールドやモデルを黙って
+省略せず、file/schema/field/reason 付きで停止します。不完全な解析を成功扱いして
+作成や検証を完了することはできません。
+
+## swallowkit migrations add-model
+
+既存の手書きモデルを、スキーマの内容を変更せず、CRUD を生成せずにインフラへ登録します。
+
+```bash
+npx swallowkit migrations add-model profile --dry-run
+npx swallowkit migrations add-model profile
+# JSON / MCP の同等操作:
+npx swallowkit machine migrations add-model profile --dry-run
+# swallowkit_add_model_migration { model: "profile", dryRun: true }
+```
+
+同じ登録の再実行は変更なしになります。baseline が所有する既存コンテナーの組み込みと
+チェックサムは変更しません。作成直後の `/id` を `/userId` などのドメインの partition key
+へ変える場合は、スキーマを編集した後で、未適用の draft を明示的に更新します。
+
+```bash
+npx swallowkit migrations add-model profile --refresh-pending \
+  --resource-group rg-example --subscription <id> --dry-run
+# 内容を確認し、--dry-run なしで再実行
+```
+
+この明示オプションは Azure を**読み取り専用**で確認し、デプロイは行いません。
+未編集の生成ファイルであることに加え、指定グループが存在しないこと、または
+プロジェクト固有の migration tag・チェックサムと完全なデプロイ履歴から
+対象 migration が一度も実行されていないことを確認します。Running、Accepted、
+Succeeded なのに tag が古い場合、Failed・部分適用、識別不能な旧デプロイ、
+履歴不明、適用済みの場合は、ローカルファイルを変更せず停止します。
+今後の migration のデプロイ名は `swallowkit-migration-0001` の形式です。
+確認は指定環境だけが対象です。別の環境で適用済みの履歴を更新してはいけません。
+適用済み Cosmos の partition key の変更には、明示的なデータ・リソース移行が必要です。
+
+保存した計画から backfill・更新する場合は `machine plan model-infrastructure <model>`
+（必要なら上記の refresh オプション）と `machine apply model --plan <id>` を使います。
+MCP では `swallowkit_plan_model_infrastructure` と `swallowkit_apply_model` が同等の操作です。
+apply は fingerprint と未適用状態・履歴を再確認します。モデル変更後は provision を
+再計画してください。Cosmos 定義の不足や不整合は検証・provision を停止します。
+ローカル検証はデプロイの証明ではありません。provision の承認、待機、再表示の契約は変更しません。
 
 ## swallowkit add-connector
 

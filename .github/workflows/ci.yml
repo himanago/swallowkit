@@ -40,6 +40,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Compile model reliability consumer
+        run: npm run test:model-reliability
+
   consumer-compatibility:
     runs-on: ubuntu-latest
     timeout-minutes: 30
