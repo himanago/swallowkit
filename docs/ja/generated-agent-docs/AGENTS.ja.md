@@ -241,9 +241,19 @@ model 変更に関する追加事項:
 - shared package はビルド済み `dist/` 経由で参照されます。`verify project` は typecheck の前に
   自動で rebuild しますが、手動で typecheck する場合は先に shared package をビルドしてください
   (古い `dist/` は "no exported member" エラーとして現れます)。
-- `dev-seeds/` の seed JSON は
+- `dev-seeds/<environment>/<model-kebab-case>.json` の seed JSON は
   `{{runCmd}} swallowkit dev --seed-env <environment>` の実行時のみ適用されます。
   ファイルを編集するだけでは何も起きません。
+- seed file は複数形の Cosmos container name ではなく、単数形 kebab-case の model filename を使います。
+  例: `learning-profile.json` は `shared/models/learning-profile.ts` に対応し、
+  有効な空でない `id` を持つ document の top-level JSON array を格納します。
+  `--seed-env` は起動前に一致した local Emulator container のデータを置き換えます。
+  省略時は既存データを保持します。HTTP handler、startup hook、空 database の fallback で demo data を
+  注入したり、custom flag、reset API/UI、backend importer で標準 workflow を置き換えたりしてはなりません。
+  offline fixture tool は標準 seed file の出力だけに使い、backend から呼び出してはなりません。
+  正当な business initialization は demo data と分離します。
+- 起動出力で対象 seed file/container と適用件数を確認します。environment がない、file が対応しない、
+  適用対象が 0 件の場合は seed 適用成功ではありません。
 
 <!-- source-section: New Models / CRUD Features -->
 ## 新しい model / CRUD feature
@@ -373,6 +383,17 @@ semantic code review が答える別の問い:
 > この implementation は適切に設計されているか？
 > specification と user intent を満たすか？
 
+build、typecheck、unit test、fixture check、readiness check、`machine verify project` は
+mechanical evidence であり、application persistence や user flow が動作する証明ではありません。
+`summary.done: true` だけでは runtime evidence になりません。startup、persistence、API、UI の変更では
+通常の `{{runCmd}} swallowkit dev` を使い、same-origin Next.js BFF、standalone Azure Functions runtime、
+設定済み database を通る実 application を検証します。関連する UI/API 結果を reload して write を確認し、
+seed を再適用せず restart した後もデータが残ることを確認します。必要に応じて invalid input、missing ID、
+authentication も確認します。evidence と限界（local Emulator/Azure Cosmos DB、mock/real AI、
+fixed development identity/real authentication）を分けて報告します。HTTP response や host readiness の成功は
+`AzureWebJobsStorage` 等の warning を解消しません。必須要件が利用できない場合は blocked/unverified とし、
+無関係な test の成功で補ったことにしてはなりません。documentation-only の変更では database startup は不要です。
+
 したがって、semantic code review を最後の quality gate として扱う前に SwallowKit verification を
 実施してください。
 
@@ -392,6 +413,14 @@ machine operation は次のような terminal state を返す場合がありま�
 status が `requires-human` の場合は停止し、必要な human decision を要求してください。
 
 `requires-human` を回避すべき error と解釈してはなりません。
+
+local data に接続・変更する前に、既存 Emulator service、endpoint、port を確認し、使用中の service を
+restart してはなりません。seed replacement や container recreation の前に、実際の endpoint、
+実効 database/container、分離された dev/test database と port、worktree isolation を設定と起動出力で
+確認してください。既存、共有、production data は保護対象として扱い、破壊的操作の前に明示的 approval rule に
+従います。接続問題の回避目的で TLS を無効にしたり、certificate validation を迂回したり、
+machine の global setting を変更したりしてはなりません。この task で起動した process だけを停止し、
+process name で無関係な service を停止してはなりません。local に残る未追跡 config や database は報告します。
 
 Azure provisioning は human-approved operation です。
 
@@ -457,6 +486,18 @@ Azure Cosmos DB
    boundary を尊重してください。
 7. production の Azure resource access は generated security architecture に従わなければ
    なりません。hard-coded credential または connection string を導入してはなりません。
+8. production の永続化データは設定済み Azure Cosmos DB infrastructure を使用します。
+   local development は標準の `{{runCmd}} swallowkit dev` workflow を通じて Cosmos DB Emulator を使用します。
+9. custom API と business logic は project 標準の Cosmos connection と実効 database name を使用します。
+   linked worktree isolation がある場合は、設定と起動出力に表示される名前に従います。
+   明示的な要件なしに別 database、storage path、production 専用 startup flag を追加してはなりません。
+10. Cosmos DB、credential、必須 container を利用できない場合は blocked または unverified と報告し、
+    標準 infrastructure workflow に従います。問題を隠すために file、JSON、SQLite、in-memory の
+    application storage や fallback を追加してはなりません。unit test の double は使用できますが、
+    database や runtime の evidence ではありません。
+11. 代替 persistence が未対応と決めつけたり、既定で導入したりしてはなりません。
+    明示的に要求された代替方式または設定済み external connector は、current capabilities と
+    responsibility boundary を先に確認してください。
 
 ### Backend-specific rules
 

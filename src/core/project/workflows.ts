@@ -213,6 +213,10 @@ Local verification is not proof of Azure deployment.
 
 ## Exit criteria
 
+For startup, persistence, API, or UI changes, follow the generated root
+\`AGENTS.md\` runtime and persistence checks; a green summary alone is not
+runtime evidence. Documentation-only changes do not require database startup.
+
 Stop and ask a human when:
 - the same check fails 3 times in a row with the same evidence, or
 - a repair would require overwriting hand-edited files (\`requires-human\`).

@@ -1,13 +1,11 @@
-import * as path from "path";
 import { resolveModelPath } from "../../cli/commands/scaffold";
 import { ensureSwallowKitProject } from "../config";
 import { getAllModels, getModelDependencyPaths, parseModelFile } from "../scaffold/model-parser";
-import { buildProjectManifest, SWALLOWKIT_MANIFEST_PATH } from "../project/manifest";
-import { recordSessionOperations } from "../project/artifacts";
 import { FileOperationSession, getActiveFileSession } from "./file-session";
 import { generateModelContainerMigration } from "./migration-generator";
 import { MachineCommandError } from "../../machine/errors";
 import { PendingMigrationTarget, resolvePendingMigrationTarget } from "./migration-refresh";
+import { stageModelMetadata } from "./model-metadata";
 
 export interface AddModelMigrationOptions extends PendingMigrationTarget {
   refreshPending?: boolean;
@@ -29,15 +27,7 @@ export async function addModelMigrationOperation(modelInput: string, options: Ad
   }
   const refreshTarget = options.refreshPending ? resolvePendingMigrationTarget(options) : undefined;
   const migration = generateModelContainerMigration(model, session, refreshTarget);
-  if (session.operations.some(operation => operation.action !== "skip")) {
-    const { manifest } = await buildProjectManifest(session.rootDirectory, models);
-    session.writeFile(path.join(session.rootDirectory, SWALLOWKIT_MANIFEST_PATH), JSON.stringify({
-      ...manifest, generatedAt: session.generatedAt,
-    }, null, 2) + "\n", {
-      ownership: "metadata", generator: "model-infrastructure",
-    });
-    recordSessionOperations(session.operations, {}, session.rootDirectory, session);
-  }
+  await stageModelMetadata(session, models, "model-infrastructure");
   session.replayInto(target);
   return {
     model: model.name, template: migration?.template ?? null, dryRun: options.dryRun ?? false,

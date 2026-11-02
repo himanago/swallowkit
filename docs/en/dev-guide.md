@@ -88,7 +88,10 @@ dev-seeds/
     category.json
 ```
 
-Each file corresponds to a schema in `shared/models/`. Edit the files to add your test data:
+Each file corresponds to a schema in `shared/models/`. Edit the files to add your test data.
+The filename uses the singular kebab-case model name, not the plural Cosmos
+container name. For example, `learning-profile.json` corresponds to
+`shared/models/learning-profile.ts` (container `LearningProfiles`).
 
 ```json
 [

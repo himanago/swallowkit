@@ -248,9 +248,22 @@ Additional model-change facts:
   rebuilds it automatically before typecheck; when typechecking manually,
   build the shared package first (stale `dist/` shows up as
   "no exported member" errors).
-- Seed JSON under `dev-seeds/` is only applied by
+- Seed JSON under `dev-seeds/<environment>/<model-kebab-case>.json` is only applied by
   `{{runCmd}} swallowkit dev --seed-env <environment>`; editing the files
   alone does nothing.
+- Seed files use the singular kebab-case model filename, not the plural Cosmos
+  container name; for example, `learning-profile.json` maps to
+  `shared/models/learning-profile.ts` and contains a top-level JSON array of
+  documents with valid non-empty `id` values. `--seed-env` replaces data in
+  each matching local Emulator container before startup; without it, existing
+  data is preserved. Do not inject demo data through HTTP handlers, startup
+  hooks, or empty-database fallbacks, or replace this workflow with custom
+  flags, reset APIs/UIs, or backend importers. Offline fixture tools may write
+  only standard seed files and must not run from the backend. Keep legitimate
+  business initialization separate from demo data.
+- Confirm startup output identifies the expected seed file/container and
+  applied document count. Missing environments, unmatched files, or zero
+  applied targets are not successful seed application.
 
 ## New Models / CRUD Features
 
@@ -384,6 +397,20 @@ A semantic code review answers different questions:
 > Is this implementation well designed?
 > Does it satisfy the specification and user intent?
 
+Build, typecheck, unit tests, fixture checks, readiness checks, and
+`machine verify project` are mechanical evidence, not proof of working
+application persistence or a user flow. For startup, persistence, API, or UI
+changes, use normal `{{runCmd}} swallowkit dev` and exercise the real app
+through the same-origin Next.js BFF, standalone Azure Functions runtime, and
+configured database. Verify writes by reloading the relevant UI/API result and
+restarting without re-seeding; check invalid input, missing IDs, and
+authentication when relevant. Report evidence and limits separately (local
+Emulator or Azure Cosmos DB, mock or real AI, fixed development identity or
+real authentication). HTTP success or host readiness does not clear
+`AzureWebJobsStorage` or other startup warnings. Missing prerequisites remain
+blocked/unverified; unrelated green tests do not fill the gap. Documentation-only
+changes do not require database startup.
+
 Therefore, perform SwallowKit verification before treating semantic code review
 as the final quality gate.
 
@@ -403,6 +430,18 @@ When the status is `requires-human`, stop and request the required human
 decision.
 
 Do not reinterpret `requires-human` as an error to work around.
+
+Before connecting to or changing local data, inspect existing Emulator
+services, endpoint, and ports; do not restart a service already in use. Before
+seed replacement or container recreation, confirm the actual endpoint,
+effective database and container targets, isolated dev/test database and
+ports, and worktree isolation from configuration and startup output. Treat
+existing, shared, or production data as protected and follow explicit approval
+rules before destructive operations. Do not disable TLS, bypass certificate
+validation, or change global machine settings to work around connection
+problems. Stop only processes started for this task, never unrelated services
+by process name, and disclose local untracked configuration or database
+leftovers.
 
 Azure provisioning is a human-approved operation.
 
@@ -466,6 +505,21 @@ Azure Cosmos DB
    markers and boundaries.
 7. Production access to Azure resources must follow the generated security
    architecture; do not introduce hard-coded credentials or connection strings.
+8. Production persistent application data uses the configured Azure Cosmos DB
+   infrastructure. Local development uses the Cosmos DB Emulator through the
+   standard `{{runCmd}} swallowkit dev` workflow.
+9. Custom APIs and business logic use the project's standard Cosmos connection
+   and effective database name, including linked-worktree isolation shown in
+   configuration and startup output. Do not add a separate database, storage
+   path, or production-only startup flag without an explicit requirement.
+10. If Cosmos DB, credentials, or a required container are unavailable, report
+    the operation as blocked or unverified and follow the standard
+    infrastructure workflow. Never mask the problem with file, JSON, SQLite,
+    or in-memory application storage or a fallback. Unit-test doubles are
+    allowed but are not database or runtime evidence.
+11. Do not assume alternate persistence is unsupported or introduce it by
+    default. For an explicitly requested alternative or configured external
+    connector, inspect current capabilities and responsibility boundaries first.
 
 ### Backend-specific rules
 

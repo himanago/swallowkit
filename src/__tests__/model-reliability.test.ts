@@ -138,7 +138,7 @@ export const todoSchema=z.object({id:z.string(),title:z.string()});`);
         names: ["probe"], overwriteMode: "prompt", confirmOverwrite: async () => false,
       });
       expect(result.skippedFiles).toEqual(["shared/models/probe.ts"]);
-      expect(result.operations).toEqual([]);
+      expect(result.operations.every(operation => operation.ownership === "metadata")).toBe(true);
       expect(loadMigrationManifest(root).migrations).toHaveLength(0);
       expect(fs.readFileSync(original, "utf8")).toBe(bytes);
       const generated = await createModelOperation({ names: ["one", "two"], overwriteMode: "never" });
@@ -248,12 +248,83 @@ export const todoSchema=z.object({id:z.string(),title:z.string()});`);
     expect(fs.existsSync(path.join(root, "shared", "models", "probe.ts"))).toBe(false);
     await applyModelOperation(plan.planId);
     const skipped = await createModelOperation({ names: ["probe"], overwriteMode: "never" });
-    expect(skipped.operations).toEqual([]);
+    expect(skipped.operations.every(operation => operation.action === "skip")).toBe(true);
     expect(loadMigrationManifest(root).migrations).toHaveLength(1);
+    expect(JSON.parse(fs.readFileSync(path.join(root, ".swallowkit", "project.json"), "utf8")).entities)
+      .toEqual([expect.objectContaining({ name: "Probe" })]);
     const next = await planModelOperation({ kind: "model", options: { names: ["other"], overwriteMode: "never" } });
     fs.appendFileSync(path.join(root, "shared", "models", "probe.ts"), "\n// changed\n");
     await expect(applyModelOperation(next.planId)).rejects.toMatchObject({ code: "stale-plan" });
     expect(fs.existsSync(path.join(root, "shared", "models", "other.ts"))).toBe(false);
+  });
+
+  it("repairs registered model metadata and keeps repeated infrastructure runs byte-identical", async () => {
+    await createModelOperation({ names: ["probe"], overwriteMode: "never" });
+    const projectManifestPath = path.join(root, ".swallowkit", "project.json");
+    const staleManifest = JSON.parse(fs.readFileSync(projectManifestPath, "utf8"));
+    staleManifest.entities = [];
+    fs.writeFileSync(projectManifestPath, `${JSON.stringify(staleManifest, null, 2)}\n`);
+
+    const repaired = await addModelMigrationOperation("probe");
+    expect(repaired.operations).toContainEqual(expect.objectContaining({
+      path: ".swallowkit/project.json",
+      action: "modify",
+    }));
+    expect(JSON.parse(fs.readFileSync(projectManifestPath, "utf8")).entities)
+      .toEqual([expect.objectContaining({ name: "Probe" })]);
+
+    const migrationBytes = fs.readFileSync(path.join(root, "infra", "migrations", "manifest.json"), "utf8");
+    const projectBytes = fs.readFileSync(projectManifestPath, "utf8");
+    const artifactBytes = fs.readFileSync(path.join(root, ".swallowkit", "artifacts.json"), "utf8");
+    const repeated = await addModelMigrationOperation("probe");
+
+    expect(repeated.operations.every(operation => operation.action === "skip")).toBe(true);
+    expect(fs.readFileSync(path.join(root, "infra", "migrations", "manifest.json"), "utf8")).toBe(migrationBytes);
+    expect(fs.readFileSync(projectManifestPath, "utf8")).toBe(projectBytes);
+    expect(fs.readFileSync(path.join(root, ".swallowkit", "artifacts.json"), "utf8")).toBe(artifactBytes);
+    expect(loadMigrationManifest(root).migrations).toHaveLength(1);
+  });
+
+  it("repairs stale metadata for all-skipped multi-model generation and rejects stale repair plans without writes", async () => {
+    await createModelOperation({ names: ["one", "two"], overwriteMode: "never" });
+    const projectManifestPath = path.join(root, ".swallowkit", "project.json");
+    const staleManifest = JSON.parse(fs.readFileSync(projectManifestPath, "utf8"));
+    staleManifest.entities = [];
+    fs.writeFileSync(projectManifestPath, `${JSON.stringify(staleManifest, null, 2)}\n`);
+
+    const repaired = await createModelOperation({ names: ["one", "two"], overwriteMode: "never" });
+    expect(repaired.skippedFiles).toEqual(["shared/models/one.ts", "shared/models/two.ts"]);
+    expect(repaired.operations).toContainEqual(expect.objectContaining({
+      path: ".swallowkit/project.json",
+      action: "modify",
+    }));
+    expect(JSON.parse(fs.readFileSync(projectManifestPath, "utf8")).entities.map((entity: { name: string }) => entity.name))
+      .toEqual(["One", "Two"]);
+    expect(loadMigrationManifest(root).migrations.map(migration => migration.sourceModel)).toEqual(["One", "Two"]);
+
+    const stableProjectBytes = fs.readFileSync(projectManifestPath, "utf8");
+    const stableMigrationBytes = fs.readFileSync(path.join(root, "infra", "migrations", "manifest.json"), "utf8");
+    const rerun = await createModelOperation({ names: ["one", "two"], overwriteMode: "never" });
+    expect(rerun.operations.every(operation => operation.action === "skip")).toBe(true);
+    expect(fs.readFileSync(projectManifestPath, "utf8")).toBe(stableProjectBytes);
+    expect(fs.readFileSync(path.join(root, "infra", "migrations", "manifest.json"), "utf8")).toBe(stableMigrationBytes);
+
+    const staleAgain = JSON.parse(stableProjectBytes);
+    staleAgain.entities = [];
+    fs.writeFileSync(projectManifestPath, `${JSON.stringify(staleAgain, null, 2)}\n`);
+    const plan = await planModelOperation({
+      kind: "model",
+      options: { names: ["one", "two"], overwriteMode: "never" },
+    });
+    expect(plan.operations).toContainEqual(expect.objectContaining({
+      path: ".swallowkit/project.json",
+      action: "modify",
+    }));
+    expect(plan.fingerprints[".swallowkit/project.json"]).not.toBeNull();
+    fs.appendFileSync(projectManifestPath, "\n");
+    const beforeApply = snapshot();
+    await expect(applyModelOperation(plan.planId)).rejects.toMatchObject({ code: "stale-plan" });
+    expect(snapshot()).toEqual(beforeApply);
   });
 
   it("rejects newly discovered entity/helper inputs after planning without changing application files", async () => {

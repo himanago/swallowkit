@@ -186,6 +186,9 @@ use their connector workflow. If generation is omitted, state the reason and
 unfinished work; never claim deployability with required infrastructure missing.
 The generated AGENTS contract, shared-model instructions, and add-model Skill/runbook
 carry this rule. Existing projects must update their generated instructions too.
+There is no command to refresh generated instructions. Compare the canonical
+templates with the existing files, manually merge the applicable changes, and
+preserve project-specific edits; review the diff instead of overwriting files.
 
 The standard agent workflow is:
 

@@ -1,11 +1,10 @@
 import * as path from "path";
 import { ensureSwallowKitProject, loadConfig } from "../config";
 import { getAllModels, getModelDependencyPaths, parseModelFile, toPascalCase } from "../scaffold/model-parser";
-import { buildProjectManifest, SWALLOWKIT_MANIFEST_PATH } from "../project/manifest";
-import { recordSessionOperations } from "../project/artifacts";
 import { FileOperationSession, getActiveFileSession } from "./file-session";
 import { generateModelContainerMigration } from "./migration-generator";
 import { MachineCommandError } from "../../machine/errors";
+import { stageModelMetadata } from "./model-metadata";
 
 const CREATE_MODEL_GENERATOR = "create-model";
 
@@ -203,15 +202,7 @@ export async function createModelOperation(options: CreateModelOperationOptions)
     }
   }
 
-  if (createdFiles.length > 0) {
-    const { manifest } = await buildProjectManifest(projectRoot, models);
-    session.writeFile(path.join(projectRoot, SWALLOWKIT_MANIFEST_PATH), JSON.stringify({
-      ...manifest, generatedAt: session.generatedAt,
-    }, null, 2) + "\n", {
-      ownership: "metadata", generator: CREATE_MODEL_GENERATOR,
-    });
-    recordSessionOperations(session.operations, {}, projectRoot, session);
-  }
+  await stageModelMetadata(session, models, CREATE_MODEL_GENERATOR);
   session.replayInto(targetSession);
 
   return {

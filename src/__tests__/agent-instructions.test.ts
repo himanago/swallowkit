@@ -204,6 +204,8 @@ describe("coding-agent documentation synchronization", () => {
     expect(englishGuide).toContain("complete English templates");
     expect(englishGuide).toMatch(/not\s+abridged excerpts/);
     expect(japaneseGuide).toContain("抜粋ではありません");
+    expect(englishGuide).toContain("There is no command to refresh generated instructions");
+    expect(japaneseGuide).toContain("生成済み指示を更新する command はありません");
   });
 
   it("keeps the Japanese AGENTS.md translation aligned by canonical section", () => {

@@ -177,6 +177,9 @@ connector-backed モデルは connector の手順に従います。生成を省�
 明示し、必要なインフラがない状態でデプロイ可能と案内しないでください。
 生成する AGENTS、shared-model instructions、add-model Skill/runbook にもこのルールを記載します。
 既存プロジェクトでも生成済みの指示を更新してください。
+生成済み指示を更新する command はありません。canonical template と既存ファイルを比較し、
+該当する変更だけを手動で merge して project 固有の編集を維持してください。ファイル全体を
+上書きせず、diff を確認します。
 
 Agent の標準 workflow は次のとおりです。
 

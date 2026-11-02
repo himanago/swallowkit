@@ -89,6 +89,9 @@ dev-seeds/
 ```
 
 各ファイルは `shared/models/` のスキーマに対応します。テストデータを記述します：
+filename は複数形の Cosmos container name ではなく、単数形の kebab-case model name を使います。
+たとえば `learning-profile.json` は `shared/models/learning-profile.ts` に対応します
+（container name は `LearningProfiles`）。
 
 ```json
 [

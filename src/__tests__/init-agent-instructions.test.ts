@@ -47,9 +47,16 @@ describe("init persistence instructions", () => {
     jest.clearAllMocks();
   });
 
-  it.each(["npm", "pnpm"] as const)("writes the persistence rule through actual init using %s, with subprocesses mocked", async (packageManager) => {
+  it.each([
+    { backendLanguage: "typescript", packageManager: "npm" },
+    { backendLanguage: "typescript", packageManager: "pnpm" },
+    { backendLanguage: "csharp", packageManager: "npm" },
+    { backendLanguage: "csharp", packageManager: "pnpm" },
+    { backendLanguage: "python", packageManager: "npm" },
+    { backendLanguage: "python", packageManager: "pnpm" },
+  ] as const)("writes runtime guidance through actual init using $backendLanguage and $packageManager, with subprocesses mocked", async ({ backendLanguage, packageManager }) => {
     await initCommand({
-      name: "fictional-app", template: "default", cicd: "skip", backendLanguage: "typescript",
+      name: "fictional-app", template: "default", cicd: "skip", backendLanguage,
       cosmosDbMode: "serverless", vnet: "none", swaPlan: "free", packageManager,
     });
     const project = path.join(root, "fictional-app");
@@ -79,10 +86,22 @@ describe("init persistence instructions", () => {
     }
     expect(fs.readFileSync(path.join(project, "next.config.ts"), "utf-8")).toContain("cacheComponents: true");
     const agents = fs.readFileSync(path.join(project, "AGENTS.md"), "utf-8");
-    expect(agents).toBe(buildAgentsMd({ projectName: "fictional-app", backendLanguage: "typescript", packageManager }));
+    expect(agents).toBe(buildAgentsMd({ projectName: "fictional-app", backendLanguage, packageManager }));
     expect(agents).toContain("**whether or not it uses custom APIs**");
     expect(agents).toContain(".swallowkit/artifacts.json");
     expect(agents).toContain("Never describe a project as deployable");
+    expect(agents).toContain(backendLanguage === "typescript" ? "TypeScript" : backendLanguage === "csharp" ? "C#" : "Python");
+    expect(agents).toContain("Production persistent application data uses the configured Azure Cosmos DB");
+    expect(agents).toContain("Local development uses the Cosmos DB Emulator");
+    expect(agents).toContain("Never mask the problem with file, JSON, SQLite,");
+    expect(agents).toContain("in-memory application storage or a fallback");
+    expect(agents).toContain("dev-seeds/<environment>/<model-kebab-case>.json");
+    expect(agents).toContain("learning-profile.json");
+    expect(agents).toContain("top-level JSON array");
+    expect(agents).toContain("same-origin Next.js BFF");
+    expect(agents).toContain("restarting without re-seeding");
+    expect(agents).toContain("configured external");
+    expect(agents).toContain(packageManager === "npm" ? "npx swallowkit machine ..." : "pnpm exec swallowkit machine ...");
     for (const file of [
       path.join(".swallowkit", "workflows", "add-model.md"),
       path.join(".github", "skills", "swallowkit-add-model", "SKILL.md"),

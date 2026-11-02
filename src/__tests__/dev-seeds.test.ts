@@ -80,6 +80,25 @@ describe("dev seed helpers", () => {
     });
   });
 
+  it("matches the singular kebab-case model filename, not its plural Cosmos container name", async () => {
+    const seedsDir = path.join(tempDir, "dev-seeds", "local");
+    fs.mkdirSync(seedsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(seedsDir, "learning-profile.json"),
+      JSON.stringify([{ id: "profile-001", userId: "learner-001" }]),
+      "utf-8"
+    );
+    const learningProfile = { ...createBasicModelInfo(), name: "LearningProfile" };
+
+    const loaded = await loadDevSeedFiles("local", [learningProfile]);
+
+    expect(loaded).toMatchObject([{
+      model: { name: "LearningProfile" },
+      containerName: "LearningProfiles",
+      documents: [{ id: "profile-001", userId: "learner-001" }],
+    }]);
+  });
+
   it("rejects seed documents without ids", async () => {
     const seedsDir = path.join(tempDir, "dev-seeds", "local");
     fs.mkdirSync(seedsDir, { recursive: true });
