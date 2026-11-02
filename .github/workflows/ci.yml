@@ -59,8 +59,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - name: Test Azure-free provision subprocesses and Windows argument handling
-        run: node .\node_modules\jest\bin\jest.js --runInBand --testMatch '**/*.test.ts' --testPathPattern '(azure-cli|provision-runtime|mcp\.test)'
+      - name: Test Azure-free provision subprocesses, dev Git exclusions and Windows argument handling
+        run: node .\node_modules\jest\bin\jest.js --runInBand --testMatch '**/*.test.ts' --testPathPattern '(azure-cli|provision-runtime|mcp\.test|react-dev|model-manifest-repair)' --testTimeout=30000
 
   consumer-compatibility:
     runs-on: ubuntu-latest

@@ -256,7 +256,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_plan_model_infrastructure",
-      description: "Preview migration, manifest, and artifact-ledger writes for an existing hand-written persistent model without changing its schema or writing project files. Optional refreshPending performs read-only Azure migration-state and deployment-history checks.",
+      description: "Preview migration, project manifest, migration manifest, and artifact-ledger writes for an existing hand-written persistent model without changing its schema or writing project files. The project manifest is synchronized even when the container is already registered. Optional refreshPending performs read-only Azure migration-state and deployment-history checks.",
       inputSchema: z.object({
         model: z.string(),
         refreshPending: z.boolean().optional(),

@@ -173,7 +173,7 @@ async function detectManifestDrift(projectRoot: string, findings: DriftFinding[]
       severity: "warning",
       message: `${SWALLOWKIT_MANIFEST_PATH} does not match the current project structure.`,
       path: SWALLOWKIT_MANIFEST_PATH.replace(/\\/g, "/"),
-      repairAction: "Run any SwallowKit generator command (or scaffold) to refresh the project manifest.",
+      repairAction: 'Run "swallowkit machine plan model <existing-model> --overwrite never", review the metadata update, then "swallowkit machine apply model --plan <planId>". This preserves the schema and does not generate CRUD or infrastructure for skipped models.',
     });
   }
 }

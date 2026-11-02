@@ -538,6 +538,7 @@ describe("plan / apply / drift / verify machine commands", () => {
     const dryRun = await addModelContainerMigration("todo", { dryRun: true });
     expect(dryRun.operations.map((operation) => operation.path)).toEqual([
       ".swallowkit/artifacts.json",
+      ".swallowkit/project.json",
       "infra/migrations/0001-create-todo-container/main.bicep",
       MIGRATION_MANIFEST_PATH.replace(/\\/g, "/"),
     ]);

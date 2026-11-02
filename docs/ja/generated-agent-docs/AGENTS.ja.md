@@ -274,6 +274,10 @@ SwallowKit のモデル作成・インフラ生成手順を実行してくださ
    `{{runCmd}} swallowkit machine plan model-infrastructure <model>` で確認後、
    返された plan を `{{runCmd}} swallowkit machine apply model --plan <planId>`
    で適用してください。スキーマを変更せず backfill できます。
+   登録済みコンテナーの場合も、現在の全モデルに合わせて `.swallowkit/project.json` を同期します。
+   メタデータだけを修復する場合は、`model <existing-model> --overwrite never` を plan し、
+   確認後に apply してください。skip されたスキーマは保持されます。
+   CRUD 生成、インフラの書き換え、Azure 接続は不要です。
 2. 生成 CRUD が必要なら `machine plan scaffold <model>` →
    `machine apply scaffold --plan <planId>` で Functions、BFF、UI、必要な OpenAPI／native schema
    asset を生成します。`--api-only` は UI だけを省略し、

@@ -830,6 +830,15 @@ npx swallowkit dev --mock-connectors
 
 Start development servers: Next.js + standalone Functions, or React/Vite + managed BFF + standalone Functions + SWA.
 
+For React, `dev` writes a temporary Vite wrapper under
+`.swallowkit/vite-dev-*/config.mjs`. Before creating it, SwallowKit ensures
+`.swallowkit/.gitignore` contains `/vite-dev-*/`, including for existing projects.
+This also excludes wrappers left by older versions or interrupted processes.
+Other user ignore rules are retained, and `artifacts.json`, `project.json`, and
+`workflows/` remain shareable. Startup fails with the ignore-file path if the
+rule cannot be prepared. Normal exit removes only that run's temporary
+directory; older or concurrently used directories are not deleted.
+
 ### Usage
 
 ```bash
@@ -1254,8 +1263,24 @@ before applying.
 
 It writes `infra/migrations/<version>-create-<model>-container/main.bicep`,
 updates `infra/migrations/manifest.json`, and records generated-file ownership.
-Running it again for the same model changes nothing unless explicitly refreshing
-a proven-unapplied definition. Connector models have no container.
+It also synchronizes `.swallowkit/project.json` with all current models, even
+when the container migration is already registered. Plans include this metadata
+update and its fingerprints; dry runs do not write it. Once metadata is current,
+re-running is a no-op unless explicitly refreshing a proven-unapplied definition.
+Connector models have no container.
+
+To repair only a stale project manifest (`manifest-out-of-date` or
+`manifest-drift`), without generating CRUD or touching infrastructure, use an
+existing model:
+
+```bash
+npx swallowkit machine plan model probe-item --overwrite never
+npx swallowkit machine apply model --plan <planId>
+```
+
+The existing schema is skipped, but the project manifest is synchronized. Review
+the plan before applying; schema files, existing migrations, and their checksums
+are preserved. This repair does not require Azure access or `--refresh-pending`.
 
 After editing a partition key while its migration is still pending, refresh it
 only with an explicit target and read-only state check:

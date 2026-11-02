@@ -293,6 +293,11 @@ APIs. A hand-written model alone is not complete.
    the returned plan with
    `{{runCmd}} swallowkit machine apply model --plan <planId>`; this adds
    infrastructure records without overwriting the schema or generating CRUD.
+   This also synchronizes `.swallowkit/project.json` for all current models,
+   even when the container is already registered. For a metadata-only repair,
+   plan `model <existing-model> --overwrite never`, then apply the reviewed
+   plan. Skipped schemas are preserved; no CRUD, infrastructure rewrite, or
+   Azure access is required.
 2. If generated CRUD is needed, use `machine plan scaffold <model>` →
    `machine apply scaffold --plan <planId>` to derive Functions, BFF, UI,
    OpenAPI/native schema assets as applicable.

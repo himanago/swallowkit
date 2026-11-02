@@ -429,7 +429,16 @@ export async function syncProjectManifest(
   const manifestPath = path.join(projectRoot, SWALLOWKIT_MANIFEST_PATH);
   const activeSession = fileSession ?? getActiveFileSession();
   if (activeSession) manifest.generatedAt = activeSession.generatedAt;
-  const content = JSON.stringify(manifest, null, 2) + "\n";
+  let content = JSON.stringify(manifest, null, 2) + "\n";
+  const exists = activeSession ? activeSession.fileExists(manifestPath) : fs.existsSync(manifestPath);
+  if (exists) {
+    const previousContent = activeSession ? activeSession.readFile(manifestPath) : fs.readFileSync(manifestPath, "utf-8");
+    const previousManifest = JSON.parse(previousContent) as ProjectManifest;
+    if (JSON.stringify({ ...previousManifest, generatedAt: manifest.generatedAt }) === JSON.stringify(manifest)) {
+      manifest.generatedAt = previousManifest.generatedAt;
+      content = previousContent;
+    }
+  }
   if (activeSession) {
     activeSession.writeFile(manifestPath, content, { ownership: "metadata", generator: "project-manifest" });
   } else {

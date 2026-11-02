@@ -27,7 +27,7 @@ import {
   getPythonProjectRoot,
 } from '../../utils/python-uv';
 import { ConnectorMockServer } from '../../core/mock/connector-mock-server';
-import { buildReactDevConfigSource } from '../../utils/react-dev';
+import { createReactDevConfig } from '../../utils/react-dev';
 
 export interface DevOptions {
   port?: string;
@@ -707,12 +707,10 @@ async function startDevEnvironment(options: DevOptions) {
   const functionsBaseUrl = buildFunctionsBaseUrl(options.host, functionsPort);
   let functionsReadinessPromise: Promise<boolean> | null = null;
   let functionsReady = !!options.noFunctions;
-  let reactDevConfigDir: string | undefined;
+  let reactDevConfigCleanup: (() => void) | undefined;
   const cleanupReactDevConfig = () => {
-    if (reactDevConfigDir) {
-      fs.rmSync(reactDevConfigDir, { recursive: true, force: true });
-      reactDevConfigDir = undefined;
-    }
+    reactDevConfigCleanup?.();
+    reactDevConfigCleanup = undefined;
   };
   process.once('exit', cleanupReactDevConfig);
 
@@ -1083,11 +1081,9 @@ async function startDevEnvironment(options: DevOptions) {
     // 5. Start Next.js development server
     let reactDevConfigPath: string | undefined;
     if (react) {
-      const stateDir = path.join(process.cwd(), '.swallowkit');
-      fs.mkdirSync(stateDir, { recursive: true });
-      reactDevConfigDir = fs.mkdtempSync(path.join(stateDir, 'vite-dev-'));
-      reactDevConfigPath = path.join(reactDevConfigDir, 'config.mjs');
-      fs.writeFileSync(reactDevConfigPath, buildReactDevConfigSource());
+      const temporaryConfig = createReactDevConfig(process.cwd());
+      reactDevConfigPath = temporaryConfig.configPath;
+      reactDevConfigCleanup = temporaryConfig.cleanup;
     }
     const nextArgs = react
       ? buildReactDevArgs(pm, port, options.host, reactDevConfigPath && path.relative(process.cwd(), reactDevConfigPath))

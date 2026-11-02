@@ -33,6 +33,11 @@ source-of-truth models, subject to the current result of
   apply the returned plan with
   `{{runCmd}} swallowkit machine apply model --plan <planId>` to add
   infrastructure records without overwriting the schema or generating CRUD.
+  Model-infrastructure plan/apply also synchronizes `.swallowkit/project.json`
+  when the container is already registered. To repair only stale metadata,
+  plan `model <existing-model> --overwrite never` and apply the reviewed plan;
+  skipped schemas are preserved, with no CRUD or infrastructure generation
+  and no Azure access.
   Use plan/apply scaffold only when CRUD is needed.
   Check the model, container Bicep, migration manifest, and artifact ledger
   correspondence, then inspect drift and verify project. For connector models,

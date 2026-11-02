@@ -213,6 +213,12 @@ preview し、返された plan を `machine apply model --plan <planId>` で適
 生成 CRUD が必要な場合のみ plan/apply scaffold を使います。`--api-only` は UI を省略するだけで、CRUD は生成します。
 pnpm を使う場合は `npx` を `pnpm exec` に置き換えます。
 
+model-infrastructure の plan/apply は、登録済みコンテナーの場合も、
+現在の全モデルに合わせて `.swallowkit/project.json` を同期します。
+メタデータだけを修復する場合は、`model <existing-model> --overwrite never` を plan し、
+確認後に apply してください。スキーマがすべて skip されても manifest は更新されます。
+CRUD 生成、インフラの書き換え、Azure 接続は不要です。
+
 migration 生成後に partition key を変更した場合は、
 `npx swallowkit machine plan model-infrastructure <model> --refresh-pending --resource-group <name>`
 で明示的に pending 定義の更新を preview します。読み取り専用のリモート確認を行い、

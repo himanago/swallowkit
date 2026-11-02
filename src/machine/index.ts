@@ -383,7 +383,7 @@ function createMachineProgram(): Command {
 
   plan
     .command("model-infrastructure")
-    .description("Preview container migration registration for an existing model without changing its schema")
+    .description("Preview container migration registration and project manifest synchronization for an existing model without changing its schema")
     .argument("<model>", "Model file or model name")
     .option("--refresh-pending", "Refresh only when Azure tags and complete deployment history prove the migration is pending and unattempted")
     .option("--resource-group <name>", "Azure resource group for read-only migration-state and deployment-history checks")

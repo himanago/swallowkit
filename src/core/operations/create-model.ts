@@ -258,14 +258,12 @@ export async function createModelOperation(options: CreateModelOperationOptions)
       targetSession
     );
   }
-  if (generatedModels.length > 0) {
-    const replacedModelPaths = new Set(generatedModels.map((modelInfo) => path.resolve(modelInfo.filePath)));
-    const manifestModels = [
-      ...existingModels.filter((modelInfo) => !replacedModelPaths.has(path.resolve(modelInfo.filePath))),
-      ...generatedModels,
-    ];
-    await syncProjectManifest(projectRoot, manifestModels, targetSession);
-  }
+  const replacedModelPaths = new Set(generatedModels.map((modelInfo) => path.resolve(modelInfo.filePath)));
+  const manifestModels = [
+    ...existingModels.filter((modelInfo) => !replacedModelPaths.has(path.resolve(modelInfo.filePath))),
+    ...generatedModels,
+  ];
+  await syncProjectManifest(projectRoot, manifestModels, targetSession);
   if (activeSession) {
     targetSession.applyTo(activeSession);
   } else {

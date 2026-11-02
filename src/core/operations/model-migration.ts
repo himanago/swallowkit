@@ -1,6 +1,6 @@
 /**
- * Generate only the Cosmos DB container migration for a model. Used after
- * `scaffold --skip-infra`, when infrastructure changes become allowed.
+ * Register the Cosmos DB container migration and synchronize project metadata
+ * without generating CRUD or modifying the model schema.
  */
 
 import { resolveModelPath } from "../../cli/commands/scaffold";
@@ -14,6 +14,7 @@ import { FileOperationSession, getActiveFileSession } from "./file-session";
 import { generateModelContainerMigration } from "./migration-generator";
 import { loadMigrationManifest } from "../project/migrations";
 import { readRemoteMigrationState } from "./provision-operations";
+import { syncProjectManifest } from "../project/manifest";
 
 export interface ModelMigrationResult {
   model: string;
@@ -40,7 +41,7 @@ export async function addModelContainerMigration(
   }
 
   const activeSession = getActiveFileSession();
-  const session = new FileOperationSession(options.dryRun ? "collect" : "commit", projectRoot, activeSession?.generatedAt);
+  const session = new FileOperationSession("collect", projectRoot, activeSession?.generatedAt);
   let allowPendingRefresh = false;
   let resolvedSubscription: string | undefined;
   if (options.refreshPending) {
@@ -78,16 +79,16 @@ export async function addModelContainerMigration(
     allowPendingRefresh = true;
   }
   const migration = generateModelContainerMigration(modelInfo, session, { allowPendingRefresh });
-  if (activeSession) {
-    session.applyTo(activeSession);
-  }
-  const targetSession = activeSession ?? session;
   recordSessionOperations(session.operations, {
     schemaHash: modelInfo.semanticFingerprint,
     sourceModel: modelInfo.name,
-  }, projectRoot, targetSession);
+  }, projectRoot, session);
+  await syncProjectManifest(projectRoot, undefined, session);
+  if (!options.dryRun || activeSession?.mode === "collect") {
+    session.applyTo(activeSession ?? new FileOperationSession("commit", projectRoot, session.generatedAt));
+  }
 
-  const operations: Array<{ path: string; action: string }> = targetSession.operations.map((operation) => ({
+  const operations: Array<{ path: string; action: string }> = session.operations.map((operation) => ({
     path: operation.path,
     action: operation.action,
   }));

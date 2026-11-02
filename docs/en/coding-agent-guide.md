@@ -222,6 +222,12 @@ container migration without changing schema bytes. Use plan/apply scaffold only
 when generated CRUD is needed; `--api-only` skips UI, not CRUD. With pnpm,
 replace `npx` with `pnpm exec`.
 
+Model-infrastructure plan/apply also refreshes `.swallowkit/project.json` for
+all current models, including when a container is already registered. For a
+metadata-only repair, plan `model <existing-model> --overwrite never` and apply
+the reviewed plan: all schemas may be skipped while the manifest is updated.
+No CRUD generation, infrastructure rewrite, or Azure access is required.
+
 If the partition key changes after migration generation, preview an explicit
 pending-definition refresh with
 `npx swallowkit machine plan model-infrastructure <model> --refresh-pending --resource-group <name>`.

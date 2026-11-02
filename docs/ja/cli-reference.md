@@ -940,6 +940,13 @@ npx swallowkit dev --mock-connectors
 
 開発サーバーを起動します。Next.js + 独立 Functions、または React/Vite + マネージド BFF + 独立 Functions + SWA の構成です。
 
+React の `dev` は、一時的な Vite ラッパーを `.swallowkit/vite-dev-*/config.mjs` に作成します。
+作成前に `.swallowkit/.gitignore` へ `/vite-dev-*/` を設定するため、既存プロジェクトにも適用されます。
+旧バージョンや強制終了で残ったラッパーも Git 除外対象になります。
+ユーザーの他の除外ルールは保持し、`artifacts.json`、`project.json`、`workflows/` は共有・追跡対象のままです。
+除外設定に失敗した場合は、そのファイルパスを含むエラーを出して起動を中止します。
+正常終了時に削除するのは、その実行が作成した一時ディレクトリだけです。古いディレクトリや別の実行のディレクトリは削除しません。
+
 ### 使用法
 
 ```bash
@@ -1372,7 +1379,23 @@ Machine/MCP では `machine plan model-infrastructure <model>` で preview し�
 返された plan を `machine apply model --plan <planId>` で適用してください。
 migration、manifest、生成台帳の書き込みを fingerprint 付きで確認できます。
 
-`infra/migrations/<version>-create-<model>-container/main.bicep` を作成し、`infra/migrations/manifest.json` を更新して、生成ファイル所有権を記録します。同じモデルで再実行しても、明示的に安全な pending 定義を更新する場合を除いて変更はありません。コネクターモデルにはコンテナーがありません。
+`infra/migrations/<version>-create-<model>-container/main.bicep` を作成し、`infra/migrations/manifest.json` を更新して、生成ファイル所有権を記録します。コネクターモデルにはコンテナーがありません。
+
+登録済みの場合も、現在の全モデルに合わせて `.swallowkit/project.json` を同期します。
+このメタデータ更新と fingerprint は plan に含まれ、dry-run では書き込みません。
+メタデータが最新なら、安全な pending 定義の更新を明示した場合を除いて、再実行しても変更はありません。
+
+`manifest-out-of-date` または `manifest-drift` の修復だけが必要なら、既存モデルを指定して次を実行します。
+CRUD やインフラは生成しません。
+
+```bash
+npx swallowkit machine plan model probe-item --overwrite never
+npx swallowkit machine apply model --plan <planId>
+```
+
+既存スキーマの生成は skip されますが、project manifest は同期されます。
+plan を確認してから適用してください。スキーマ、既存 migration、その checksum は保持されます。
+この修復に Azure 接続や `--refresh-pending` は不要です。
 
 migration が pending の間に partition key を変更した場合のみ、明示的な target と読み取り専用の状態確認を指定して更新します：
 

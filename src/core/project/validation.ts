@@ -192,7 +192,7 @@ function validateManifestDrift(
       severity: "warning",
       message: `${SWALLOWKIT_MANIFEST_PATH} is out of date with the current project structure.`,
       location: { path: SWALLOWKIT_MANIFEST_PATH },
-      suggestedFix: "Run a SwallowKit generator command or refresh the manifest so inspection and validation use current metadata.",
+      suggestedFix: 'Run "swallowkit machine plan model <existing-model> --overwrite never", review the metadata update, then "swallowkit machine apply model --plan <planId>". This preserves the schema and does not generate CRUD or infrastructure for skipped models.',
     });
   }
 }
