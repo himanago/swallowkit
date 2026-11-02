@@ -3,6 +3,11 @@ import * as os from "os";
 import * as path from "path";
 import { execFileSync, spawnSync } from "child_process";
 
+const loadYaml = (source: string): unknown => {
+  const yaml = jest.requireActual<{ load: (value: string) => unknown }>("js-yaml");
+  return yaml.load(source);
+};
+
 import {
   buildGeneratedProjectDependencies,
   buildGeneratedProjectDevDependencies,
@@ -14,6 +19,7 @@ import {
   buildCSharpFunctionsProjectSource,
   buildSwallowKitConfigSource,
   getAzureFunctionsPipeline,
+  getGitHubBootstrapWorkflow,
   getGitHubFunctionsWorkflow,
   injectSwallowKitNextConfig,
   ensureNextTailwindPostcssConfig,
@@ -26,6 +32,7 @@ import {
   getStaticWebAppSku,
   withNpmLockfileSafeManifests,
 } from "../cli/commands/init";
+import { buildBootstrapSeedPreparationScript } from "../core/project/bootstrap";
 import { generateModelContainerMigration, initializeLegacyMigrations } from "../core/operations/migration-generator";
 import { FileOperationSession } from "../core/operations/file-session";
 
@@ -436,6 +443,140 @@ describe("Infrastructure generation", () => {
 });
 
 describe("GitHub Actions workflow generation", () => {
+  it.each(["typescript", "csharp", "python"] as const)("generates an opt-in bootstrap workflow for %s", (backend) => {
+    const workflow = getGitHubBootstrapWorkflow("npm", backend);
+    const normalWorkflow = getGitHubFunctionsWorkflow("npm", backend);
+
+    expect(() => loadYaml(workflow)).not.toThrow();
+    expect(workflow).toContain("seed_name:");
+    expect(workflow).toContain("function_app_name:");
+    expect(workflow).toContain('$GITHUB_REF" != "refs/heads/main"');
+    expect(workflow).toContain("CONFIRMED_FUNCTION_APP_NAME");
+    expect(workflow).toContain("CONFIGURED_FUNCTION_APP_NAME");
+    expect(workflow).toContain("steps.temporary-attempt.outputs.attempted == 'true'");
+    expect(workflow).toContain("if: always()");
+    expect(workflow).toContain("AZURE_FUNCTIONAPP_PUBLISH_PROFILE");
+    expect(workflow.match(/uses: Azure\/functions-action@v1/g)).toHaveLength(2);
+    expect(workflow).toContain("cancel-in-progress: false");
+    expect(workflow).toContain('package: "${{ runner.temp }}/functions-normal"');
+    expect(workflow).toContain(backend === "csharp"
+      ? 'package: "${{ runner.temp }}/functions-bootstrap"'
+      : "package: './functions'");
+    if (backend === "typescript") {
+      expect(workflow).toContain("Prepare and preserve ordinary Functions package");
+      expect(workflow).toContain("npm run --workspace=functions build");
+      expect(workflow).toContain("cp -a ./functions/. \"$RUNNER_TEMP/functions-normal/\"");
+    }
+    expect(workflow).toContain('--header "Authorization: Bearer $BOOTSTRAP_TOKEN"');
+    expect(workflow).toContain("trap cleanup_bootstrap_token EXIT");
+    expect(workflow).toContain('process.env.GITHUB_ENV,"BOOTSTRAP_TOKEN="+token');
+    expect(workflow).not.toContain("outputs.token");
+    expect(workflow).not.toContain('Authorization: ******');
+    expect(workflow).toContain("swallowkit-functions-${{ github.repository }}");
+    expect(workflow).not.toContain("azure/login");
+    expect(workflow).not.toContain("resource-group");
+    expect(normalWorkflow).toContain("swallowkit-functions-${{ github.repository }}");
+    expect(normalWorkflow).toContain("cancel-in-progress: false");
+  });
+
+  it.each(["typescript", "csharp", "python"] as const)("generates a safe, authenticated %s bootstrap preparation script", (backend) => {
+    const script = buildBootstrapSeedPreparationScript(backend);
+    const scriptPath = path.join(os.tmpdir(), `swallowkit-bootstrap-${backend}-${process.pid}.mjs`);
+    try {
+      fs.writeFileSync(scriptPath, script, "utf8");
+      const result = spawnSync(process.execPath, ["--check", scriptPath], { encoding: "utf8" });
+      expect(result.status).toBe(0);
+      expect(script).toContain("SEED_NAME_PATTERN");
+      expect(script).toContain("safeParse");
+      expect(script).toContain("MAX_DOCUMENTS = 500");
+      expect(script).toContain("MAX_BYTES = 4194304");
+      expect(script).toContain(backend === "csharp"
+        ? "AuthorizationLevel.Anonymous"
+        : backend === "python"
+          ? "func.AuthLevel.ANONYMOUS"
+          : "authLevel");
+      if (backend === "python") {
+        expect(script).toContain("connection_timeout=5");
+        expect(script).toContain("retry_throttle_total=1");
+        expect(script).toContain("credential.close()");
+      } else if (backend === "typescript") {
+        expect(script).toContain("timingSafeEqual");
+        expect(script).toContain("connectionPolicy");
+        expect(script).toContain("dispose()");
+      }
+    } finally {
+      fs.rmSync(scriptPath, { force: true });
+    }
+  });
+
+  it.each(["typescript", "csharp", "python"] as const)("runs the %s bootstrap preparation script against compiled Zod models", (backend) => {
+    const projectDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-bootstrap-"));
+    try {
+      fs.writeFileSync(path.join(projectDir, "package.json"), JSON.stringify({
+        name: "sample-app",
+        type: "commonjs",
+      }), "utf8");
+      fs.mkdirSync(path.join(projectDir, "shared", "models"), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, "shared", "tsconfig.json"), JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "Node16",
+          moduleResolution: "Node16",
+          strict: true,
+          skipLibCheck: true,
+          rootDir: ".",
+          outDir: "dist",
+        },
+        include: ["models/**/*.ts"],
+      }), "utf8");
+      fs.writeFileSync(path.join(projectDir, "shared", "models", "Todo.ts"), [
+        'import { z } from "zod/v4";',
+        'export const Todo = z.object({ id: z.string(), title: z.string().min(1), tenantId: z.string() });',
+        'export const partitionKey = "/tenantId";',
+      ].join("\n"), "utf8");
+      fs.mkdirSync(path.join(projectDir, "functions"), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, "functions", "function_app.py"), "# SwallowKit scaffold registrations\n", "utf8");
+      fs.mkdirSync(path.join(projectDir, ".github", "scripts"), { recursive: true });
+      const scriptPath = path.join(projectDir, ".github", "scripts", "prepare-cosmos-bootstrap.mjs");
+      fs.writeFileSync(scriptPath, buildBootstrapSeedPreparationScript(backend), "utf8");
+      execFileSync(process.execPath, [
+        path.join(process.cwd(), "node_modules", "typescript", "bin", "tsc"),
+        "-p",
+        path.join(projectDir, "shared", "tsconfig.json"),
+      ], { cwd: projectDir, stdio: "pipe" });
+
+      const seedDirectory = path.join(projectDir, "dev-seeds", "local");
+      fs.mkdirSync(seedDirectory, { recursive: true });
+      const seedPath = path.join(seedDirectory, "Todo.json");
+      fs.writeFileSync(seedPath, JSON.stringify([{ id: "one", title: "First", tenantId: "user-1" }]), "utf8");
+      const env = {
+        ...process.env,
+        BOOTSTRAP_TOKEN_HASH: "a".repeat(64),
+        BOOTSTRAP_EXPIRES_AT: String(Math.floor(Date.now() / 1000) + 900),
+      };
+      const prepared = spawnSync(process.execPath, [scriptPath, "local"], { cwd: projectDir, env, encoding: "utf8" });
+      expect(prepared.status).toBe(0);
+      expect(prepared.stdout).toContain("Prepared 1 validated seed document(s)");
+      if (backend === "csharp") {
+        expect(fs.readFileSync(path.join(projectDir, "functions", "Crud", "BootstrapSeedFunction.cs"), "utf8")).toContain("CreateItemAsync");
+      } else if (backend === "python") {
+        expect(fs.readFileSync(path.join(projectDir, "functions", "blueprints", "bootstrap_seed.py"), "utf8")).toContain("create_item(body=document)");
+        expect(fs.readFileSync(path.join(projectDir, "functions", "function_app.py"), "utf8")).toContain("app.register_blueprint(bootstrap_seed_bp)");
+      } else {
+        const generated = fs.readFileSync(path.join(projectDir, "functions", "src", "bootstrap-seed.ts"), "utf8");
+        expect(generated).toContain('app.http("seedBootstrap"');
+        expect(generated).toContain("container.items.create(document)");
+      }
+
+      fs.writeFileSync(seedPath, JSON.stringify([{ id: "invalid", title: "", tenantId: "user-1" }]), "utf8");
+      const rejected = spawnSync(process.execPath, [scriptPath, "local"], { cwd: projectDir, env, encoding: "utf8" });
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stderr).toContain("failed Zod validation at title");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps Python deployment and both CI providers on the same GA runtime", async () => {
     expect(getGitHubFunctionsWorkflow("npm", "python")).toContain("python-version: '3.14'");
     expect(getAzureFunctionsPipeline("npm", "python")).toContain("versionSpec: '3.14'");

@@ -28,6 +28,7 @@ import {
 import { DEFAULT_AZURE_PYTHON_VERSION } from "../../utils/python-uv";
 import { buildHomePage } from "../../core/project/home-page";
 import { MCP_LATEST, McpPinDecision, lookupPublishedLatestVersion, resolveMcpPinVersion } from "../../core/project/mcp-config";
+import { buildBootstrapSeedPreparationScript } from "../../core/project/bootstrap";
 
 interface InitOptions {
   name: string;
@@ -2780,6 +2781,10 @@ on:
       - 'shared/**'
   workflow_dispatch:
 
+concurrency:
+  group: swallowkit-functions-\${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -2832,6 +2837,10 @@ on:
       - 'shared/**'
   workflow_dispatch:
 
+concurrency:
+  group: swallowkit-functions-\${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -2875,6 +2884,10 @@ on:
       - 'shared/**'
   workflow_dispatch:
 
+concurrency:
+  group: swallowkit-functions-\${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -2884,7 +2897,7 @@ jobs:
 ${commonSetup}      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '${DEFAULT_AZURE_PYTHON_VERSION}'
+            python-version: '${DEFAULT_AZURE_PYTHON_VERSION}'
 
       - name: Install Functions dependencies
         run: |
@@ -2899,6 +2912,198 @@ ${commonSetup}      - name: Setup Python
           package: './functions'
           publish-profile: \${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
           sku: flexconsumption
+`;
+}
+
+export function getGitHubBootstrapWorkflow(
+  pm: PackageManager,
+  backendLanguage: BackendLanguage,
+  projectPm: PackageManager = pm
+): string {
+  if (backendLanguage !== "csharp" && backendLanguage !== "python" && backendLanguage !== "typescript") {
+    throw new Error("Bootstrap seeding supports only TypeScript, C#, and Python Functions backends.");
+  }
+
+  const pmCmd = getCommands(pm);
+  const pnpmSetupStep = getCiSetupStep(pm);
+  const npmWorkspaceNormalizationStep = getGitHubNpmWorkspaceNormalizationStep(pm, projectPm);
+  const commonSetup = `${pnpmSetupStep ? `${pnpmSetupStep}\n` : ""}      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+${npmWorkspaceNormalizationStep ? `\n${npmWorkspaceNormalizationStep}\n` : ""}      - name: Install dependencies
+        run: |
+          ${getCiInstallCommand(pm, projectPm)}
+
+      - name: Build shared package
+        run: |
+          ${pmCmd.runFilter("shared")} build
+`;
+  const backendSetup = backendLanguage === "csharp"
+    ? `      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build ordinary Functions package
+        run: dotnet publish ./functions -c Release -o "$RUNNER_TEMP/functions-normal"
+`
+    : backendLanguage === "python"
+      ? `      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+        python-version: '${DEFAULT_AZURE_PYTHON_VERSION}'
+
+      - name: Install Functions dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r ./functions/requirements.txt --target "./functions/.python_packages/lib/site-packages"
+
+      - name: Preserve ordinary Functions package
+        run: |
+          mkdir -p "$RUNNER_TEMP/functions-normal"
+          cp -a ./functions/. "$RUNNER_TEMP/functions-normal/"
+`
+      : "";
+  const temporaryBuild = backendLanguage === "csharp"
+    ? `      - name: Build temporary Functions package
+        run: dotnet publish ./functions -c Release -o "$RUNNER_TEMP/functions-bootstrap"
+`
+    : backendLanguage === "typescript"
+      ? `      - name: Build temporary Functions package
+        run: |
+          ${pmCmd.runFilter("functions")} build
+
+      - name: Prepare and preserve ordinary Functions package
+        run: |
+          SHARED_PKG_NAME=$(node -p "require('./shared/package.json').name")
+          mkdir -p /tmp/fn-deps
+          node -e "const p=JSON.parse(require('fs').readFileSync('./functions/package.json','utf8'));Object.keys(p.dependencies).filter(k=>k.endsWith('/shared')).forEach(k=>delete p.dependencies[k]);require('fs').writeFileSync('/tmp/fn-deps/package.json',JSON.stringify(p,null,2));"
+          cd /tmp/fn-deps && ${pmCmd.installProd} && cd -
+          rm -rf ./functions/node_modules
+          mv /tmp/fn-deps/node_modules ./functions/node_modules
+          SHARED_DEST="./functions/node_modules/$SHARED_PKG_NAME"
+          mkdir -p "$SHARED_DEST"
+          cp -r ./shared/dist "$SHARED_DEST/dist"
+          cp ./shared/package.json "$SHARED_DEST/package.json"
+          mkdir -p "$RUNNER_TEMP/functions-normal"
+          cp -a ./functions/. "$RUNNER_TEMP/functions-normal/"
+          rm -f "$RUNNER_TEMP/functions-normal/src/bootstrap-seed.ts" "$RUNNER_TEMP/functions-normal/dist/bootstrap-seed.js" "$RUNNER_TEMP/functions-normal/dist/bootstrap-seed.js.map"
+`
+      : "";
+  const normalPackage = '"${{ runner.temp }}/functions-normal"';
+  const temporaryPackage = backendLanguage === "csharp" ? '"${{ runner.temp }}/functions-bootstrap"' : "'./functions'";
+
+  return `name: Initialize Azure Cosmos DB seed data
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed_name:
+        description: Existing directory name under dev-seeds/
+        required: true
+        type: string
+      function_app_name:
+        description: Confirm the Azure Functions app name configured in AZURE_FUNCTIONAPP_NAME
+        required: true
+        type: string
+
+concurrency:
+  group: swallowkit-functions-\${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  initialize:
+    runs-on: ubuntu-latest
+    name: Validate, initialize, and restore Functions
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm trusted branch
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Bootstrap initialization is allowed only from main."
+            exit 1
+          fi
+
+${commonSetup}      - name: Confirm Function App name
+        env:
+          CONFIRMED_FUNCTION_APP_NAME: \${{ inputs.function_app_name }}
+          CONFIGURED_FUNCTION_APP_NAME: \${{ secrets.AZURE_FUNCTIONAPP_NAME }}
+        run: |
+          if [ -z "$CONFIGURED_FUNCTION_APP_NAME" ]; then
+            echo "::error::AZURE_FUNCTIONAPP_NAME is not configured."
+            exit 1
+          fi
+          if ! [[ "$CONFIRMED_FUNCTION_APP_NAME" =~ ^[A-Za-z0-9-]{2,60}$ ]]; then
+            echo "::error::The confirmed Function App name has an invalid format."
+            exit 1
+          fi
+          if [ "$CONFIRMED_FUNCTION_APP_NAME" != "$CONFIGURED_FUNCTION_APP_NAME" ]; then
+            echo "::error::The confirmed Function App name does not match AZURE_FUNCTIONAPP_NAME."
+            exit 1
+          fi
+
+${backendSetup}      - name: Generate temporary initialization token
+        id: bootstrap-token
+        run: |
+          node -e 'const fs=require("node:fs");const crypto=require("node:crypto");const token=crypto.randomUUID();console.log("::add-mask::"+token);const hash=crypto.createHash("sha256").update(token,"utf8").digest("hex");const expires=Math.floor(Date.now()/1000)+900;fs.appendFileSync(process.env.GITHUB_ENV,"BOOTSTRAP_TOKEN="+token+"\\n");fs.appendFileSync(process.env.GITHUB_OUTPUT,"hash="+hash+"\\n");fs.appendFileSync(process.env.GITHUB_OUTPUT,"expires="+expires+"\\n");'
+
+      - name: Validate selected seed and generate temporary Function
+        env:
+          SEED_NAME: \${{ inputs.seed_name }}
+          BOOTSTRAP_TOKEN_HASH: \${{ steps.bootstrap-token.outputs.hash }}
+          BOOTSTRAP_EXPIRES_AT: \${{ steps.bootstrap-token.outputs.expires }}
+        run: node .github/scripts/prepare-cosmos-bootstrap.mjs "$SEED_NAME"
+
+${temporaryBuild}      - name: Mark temporary deployment attempt
+        id: temporary-attempt
+        run: echo "attempted=true" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy temporary Functions package
+        id: deploy-temporary
+        uses: Azure/functions-action@v1
+        with:
+          app-name: \${{ secrets.AZURE_FUNCTIONAPP_NAME }}
+          package: ${temporaryPackage}
+          publish-profile: \${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+          sku: flexconsumption
+
+      - name: Initialize Cosmos DB
+        if: success()
+        env:
+          FUNCTION_APP_NAME: \${{ secrets.AZURE_FUNCTIONAPP_NAME }}
+        run: |
+          cleanup_bootstrap_token() {
+            unset BOOTSTRAP_TOKEN
+            echo "BOOTSTRAP_TOKEN=" >> "$GITHUB_ENV"
+          }
+          trap cleanup_bootstrap_token EXIT
+          if ! curl --fail-with-body --silent --show-error --max-time 210 \\
+            --request POST \\
+            --header "Authorization: Bearer $BOOTSTRAP_TOKEN" \\
+            "https://$FUNCTION_APP_NAME.azurewebsites.net/api/seed-bootstrap"; then
+            echo "::error::Seed initialization failed or its write outcome is indeterminate. The workflow will restore the ordinary Functions package; retry only after reviewing the reported partial result."
+            exit 1
+          fi
+
+      - name: Restore ordinary Functions package
+        id: restore-normal
+        if: always() && steps.temporary-attempt.outputs.attempted == 'true'
+        uses: Azure/functions-action@v1
+        with:
+          app-name: \${{ secrets.AZURE_FUNCTIONAPP_NAME }}
+          package: ${normalPackage}
+          publish-profile: \${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+          sku: flexconsumption
+
+      - name: Report failed restoration
+        if: always() && steps.temporary-attempt.outputs.attempted == 'true' && steps.restore-normal.outcome != 'success'
+        run: |
+          echo "::error::The ordinary Functions package could not be restored. Manually redeploy the ordinary Functions package with the existing AZURE_FUNCTIONAPP_PUBLISH_PROFILE before considering the app recovered."
+          exit 1
 `;
 }
 
@@ -3310,6 +3515,21 @@ async function createGitHubActionsWorkflows(
   // deploy-functions.yml
   const functionsWorkflow = getGitHubFunctionsWorkflow(actionsPm, backendLanguage, pm);
   fs.writeFileSync(path.join(workflowsDir, 'deploy-functions.yml'), functionsWorkflow);
+
+  if (backendLanguage === "csharp" || backendLanguage === "python" || backendLanguage === "typescript") {
+    const scriptsDir = path.join(projectDir, ".github", "scripts");
+    fs.mkdirSync(scriptsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(scriptsDir, "prepare-cosmos-bootstrap.mjs"),
+      buildBootstrapSeedPreparationScript(backendLanguage),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(workflowsDir, "initialize-cosmos-seeds.yml"),
+      getGitHubBootstrapWorkflow(actionsPm, backendLanguage, pm),
+      "utf-8"
+    );
+  }
 
   console.log('✅ GitHub Actions workflows created\n');
 }

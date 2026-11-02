@@ -24,6 +24,7 @@ import { runMachineCli } from "../machine";
 import { addAuthCommand } from "../cli/commands/add-auth";
 import { buildGeneratedProjectDependencies, buildGeneratedProjectDevDependencies, buildSwallowKitConfigSource, createAzureFunctionsProject, createSharedPackage } from "../cli/commands/init";
 import { createReactBffProject, createReactProject } from "../core/project/react-project";
+import { buildBootstrapSeedPreparationScript } from "../core/project/bootstrap";
 import { BackendLanguage, FrontendFramework } from "../types";
 
 jest.mock("child_process", () => {
@@ -301,14 +302,14 @@ function snapshotTree(root: string): Map<string, string> {
 
 const REQUIRE_TOOLCHAINS = process.env.SWALLOWKIT_REQUIRE_TOOLCHAINS === "1";
 
-type TestFn = (title: string, fn: () => void | Promise<void>) => void;
+type TestFn = (title: string, fn: () => void | Promise<void>, timeout?: number) => void;
 
 function toolchainGate(available: boolean, name: string, optOut = false): TestFn {
-  if (available && !optOut) return (title, fn) => it(title, fn);
+  if (available && !optOut) return (title, fn, timeout) => it(title, fn, timeout);
   if (REQUIRE_TOOLCHAINS && !optOut) {
     return (title) => it(title, () => { throw new Error(`${name} is required (SWALLOWKIT_REQUIRE_TOOLCHAINS=1) but was not found`); });
   }
-  return (title, fn) => it.skip(title, fn);
+  return (title, fn, timeout) => it.skip(title, fn, timeout);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -764,6 +765,68 @@ export type LearningProfile = z.infer<typeof LearningProfile>;
       process.chdir(previousCwd);
     }
   }, 60_000);
+
+  const validateBootstrapFunction = async (backend: BackendLanguage) => {
+    const root = path.join(workRoot, `bootstrap-${backend}`, PROJECT);
+    await createSkeleton(root, "react", backend, "js");
+    const sharedModel = path.join(root, "shared", "models", "probe-item.ts");
+    write(sharedModel, MODEL_SOURCE);
+    const compileShared = real.spawnSync(process.execPath, [
+      path.join(repoRoot, "node_modules", "typescript", "bin", "tsc"),
+      "-p",
+      path.join(root, "shared", "tsconfig.json"),
+    ], { cwd: root, encoding: "utf-8" });
+    expect(compileShared.status).toBe(0);
+
+    const seedDirectory = path.join(root, "dev-seeds", "bootstrap-check");
+    write(path.join(seedDirectory, "probe-item.json"), JSON.stringify([{
+      id: "seed-1",
+      userId: "user-1",
+      title: "seed item",
+      tags: ["bootstrap"],
+      score: 0.5,
+      kind: "a",
+    }]));
+    const scriptPath = path.join(root, ".github", "scripts", "prepare-cosmos-bootstrap.mjs");
+    write(scriptPath, buildBootstrapSeedPreparationScript(backend));
+    const prepared = real.spawnSync(process.execPath, [scriptPath, "bootstrap-check"], {
+      cwd: root,
+      env: {
+        ...process.env,
+        BOOTSTRAP_TOKEN_HASH: "a".repeat(64),
+        BOOTSTRAP_EXPIRES_AT: String(Math.floor(Date.now() / 1000) + 900),
+      },
+      encoding: "utf-8",
+    });
+    expect(prepared.status).toBe(0);
+
+    const functionsRoot = path.join(root, "functions");
+    if (backend === "python") {
+      expect(checkPython(functionsRoot)).toEqual([]);
+    } else if (backend === "csharp") {
+      expect(await dotnetBuild(functionsRoot)).toEqual([]);
+    } else {
+      expect(typecheck(
+        path.join(functionsRoot, "tsconfig.json"),
+        path.join(root, "shared", "index.ts"),
+      )).toEqual([]);
+    }
+  };
+
+  it("type-checks the generated TypeScript bootstrap endpoint", async () => {
+    await validateBootstrapFunction("typescript");
+  }, 5 * 60 * 1000);
+
+  toolchainGate(Boolean(PYTHON), "Python >= 3.10")(
+    "validates the generated Python bootstrap endpoint and its imports",
+    () => validateBootstrapFunction("python"),
+    5 * 60 * 1000,
+  );
+  toolchainGate(DOTNET, ".NET SDK", process.env.SWALLOWKIT_TEST_SKIP_DOTNET === "1")(
+    "compiles the generated C# bootstrap endpoint with the Functions app",
+    () => validateBootstrapFunction("csharp"),
+    5 * 60 * 1000,
+  );
 
   describe.each(CASES)("$name", (testCase) => {
     const blocked = expectedBlock(testCase.auth, testCase.policy);

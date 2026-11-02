@@ -3,6 +3,11 @@ import { CosmosClient, Database, PartitionKeyKind } from "@azure/cosmos";
 import * as fs from "fs";
 import * as path from "path";
 import { ensureSwallowKitProject } from "../../core/config";
+import {
+  AZURE_SEED_MAX_BYTES,
+  AZURE_SEED_MAX_DOCUMENTS,
+  AZURE_SEED_NAME_PATTERN,
+} from "../../core/project/bootstrap-constants";
 import { FieldInfo, ModelInfo, getAllModels, toKebabCase } from "../../core/scaffold/model-parser";
 import { resolveCosmosDatabaseNameForWorktree } from "./cosmos-worktree-isolation";
 import type { GitCommandRunner } from "./cosmos-worktree-isolation";
@@ -25,12 +30,14 @@ interface ApplyDevSeedEnvironmentOptions {
   seedsDir?: string;
 }
 
-interface LoadedSeedFile {
+export interface LoadedSeedFile {
   model: ModelInfo;
   containerName: string;
   documents: SeedDocument[];
   filePath: string;
 }
+
+export { AZURE_SEED_MAX_BYTES, AZURE_SEED_MAX_DOCUMENTS, AZURE_SEED_NAME_PATTERN };
 
 export interface LocalCosmosConnectionInfo {
   endpoint: string;
@@ -61,6 +68,12 @@ export function getContainerNameForModel(model: Pick<ModelInfo, "name">): string
 
 export function getSeedEnvironmentDir(environment: string, seedsDir: string = "dev-seeds"): string {
   return path.join(process.cwd(), seedsDir, environment);
+}
+
+export function validateAzureSeedName(seedName: string): void {
+  if (!AZURE_SEED_NAME_PATTERN.test(seedName)) {
+    throw new Error("seed_name must start with an alphanumeric character and contain only letters, numbers, hyphens, or underscores (max 64 characters).");
+  }
 }
 
 export function normalizeSeedIdentifier(value: string): string {
@@ -209,6 +222,75 @@ export async function loadDevSeedFiles(
       documents,
       filePath,
     });
+  }
+
+  return loaded;
+}
+
+export async function loadAzureBootstrapSeedFiles(
+  seedName: string,
+  models: ModelInfo[],
+  seedsDir: string = "dev-seeds"
+): Promise<LoadedSeedFile[]> {
+  validateAzureSeedName(seedName);
+
+  const seedsRoot = path.resolve(process.cwd(), seedsDir);
+  const environmentDir = path.resolve(seedsRoot, seedName);
+  const relativeEnvironmentDir = path.relative(seedsRoot, environmentDir);
+  if (relativeEnvironmentDir.startsWith("..") || path.isAbsolute(relativeEnvironmentDir)) {
+    throw new Error(`Seed name "${seedName}" resolves outside the configured seeds directory.`);
+  }
+  if (!fs.existsSync(environmentDir) || !fs.statSync(environmentDir).isDirectory()) {
+    throw new Error(`Seed directory "${environmentDir}" does not exist.`);
+  }
+
+  const modelAliases = buildModelAliasMap(models);
+  const seedFiles = fs.readdirSync(environmentDir).filter((entry) => entry.toLowerCase().endsWith(".json")).sort();
+  if (seedFiles.length === 0) {
+    throw new Error(`Seed directory "${environmentDir}" contains no JSON files.`);
+  }
+
+  const resolvedEnvironmentDir = fs.realpathSync(environmentDir);
+  const loaded: LoadedSeedFile[] = [];
+  let totalDocuments = 0;
+  let totalBytes = 0;
+
+  for (const fileName of seedFiles) {
+    const filePath = path.join(environmentDir, fileName);
+    const fileStat = fs.lstatSync(filePath);
+    if (!fileStat.isFile() || fileStat.isSymbolicLink() || path.dirname(fs.realpathSync(filePath)) !== resolvedEnvironmentDir) {
+      throw new Error(`Seed file "${filePath}" must be a regular file inside its seed directory.`);
+    }
+
+    const fileStem = path.basename(fileName, path.extname(fileName));
+    const model = modelAliases.get(normalizeSeedIdentifier(fileStem));
+    if (!model) {
+      throw new Error(`Seed file "${filePath}" does not match a model in shared/models.`);
+    }
+
+    const content = fs.readFileSync(filePath, "utf-8");
+    totalBytes += Buffer.byteLength(content, "utf-8");
+    const documents = parseSeedDocuments(content, filePath).map(stripCosmosSystemProperties);
+    validateSeedDocuments(documents, filePath);
+    validateSeedDocumentsForModel(documents, model, filePath);
+    totalDocuments += documents.length;
+
+    loaded.push({
+      model,
+      containerName: getContainerNameForModel(model),
+      documents,
+      filePath,
+    });
+  }
+
+  if (totalDocuments === 0) {
+    throw new Error(`Seed directory "${environmentDir}" contains no documents to initialize.`);
+  }
+  if (totalDocuments > AZURE_SEED_MAX_DOCUMENTS) {
+    throw new Error(`Seed contains ${totalDocuments} documents; the Azure bootstrap limit is ${AZURE_SEED_MAX_DOCUMENTS}.`);
+  }
+  if (totalBytes > AZURE_SEED_MAX_BYTES) {
+    throw new Error(`Seed files total ${totalBytes} bytes; the Azure bootstrap limit is ${AZURE_SEED_MAX_BYTES} bytes.`);
   }
 
   return loaded;
@@ -533,6 +615,116 @@ function validateSeedDocuments(documents: SeedDocument[], filePath: string): voi
 
     ids.add(document.id);
   });
+}
+
+function validateSeedDocumentsForModel(documents: SeedDocument[], model: ModelInfo, filePath: string): void {
+  const partitionKeyField = model.partitionKey.replace(/^\//, "");
+  if (!partitionKeyField || partitionKeyField.includes("/")) {
+    throw new Error(`${filePath} uses unsupported partition key path "${model.partitionKey}".`);
+  }
+
+  documents.forEach((document, index) => {
+    if (!Object.prototype.hasOwnProperty.call(document, partitionKeyField) || document[partitionKeyField] === null) {
+      throw new Error(`${filePath} item at index ${index} must contain partition key "${partitionKeyField}".`);
+    }
+
+    for (const field of model.fields) {
+      if (!Object.prototype.hasOwnProperty.call(document, field.name)) {
+        if (!field.isOptional && !field.isNullable) {
+          throw new Error(`${filePath} item at index ${index} is missing required field "${field.name}" for model ${model.name}.`);
+        }
+        continue;
+      }
+
+      validateSeedFieldValue(document[field.name], field, `${filePath} item at index ${index} field "${field.name}"`);
+    }
+  });
+}
+
+function validateSeedFieldValue(value: unknown, field: FieldInfo, location: string): void {
+  if (value === null) {
+    if (!field.isNullable) {
+      throw new Error(`${location} must not be null.`);
+    }
+    return;
+  }
+
+  if (field.isArray) {
+    if (!Array.isArray(value)) {
+      throw new Error(`${location} must be an array.`);
+    }
+    if (field.constraints?.minItems !== undefined && value.length < field.constraints.minItems) {
+      throw new Error(`${location} must contain at least ${field.constraints.minItems} item(s).`);
+    }
+    if (field.constraints?.maxItems !== undefined && value.length > field.constraints.maxItems) {
+      throw new Error(`${location} must contain at most ${field.constraints.maxItems} item(s).`);
+    }
+    const itemField = { ...field, isArray: false };
+    value.forEach((item, index) => validateSeedFieldValue(item, itemField, `${location}[${index}]`));
+    return;
+  }
+
+  switch (field.type) {
+    case "string":
+    case "date":
+      if (typeof value !== "string") {
+        throw new Error(`${location} must be a string.`);
+      }
+      if (field.type === "date" && Number.isNaN(Date.parse(value))) {
+        throw new Error(`${location} must be a valid date string.`);
+      }
+      if (field.constraints?.minLength !== undefined && value.length < field.constraints.minLength) {
+        throw new Error(`${location} must be at least ${field.constraints.minLength} characters.`);
+      }
+      if (field.constraints?.maxLength !== undefined && value.length > field.constraints.maxLength) {
+        throw new Error(`${location} must be at most ${field.constraints.maxLength} characters.`);
+      }
+      if (field.constraints?.pattern && !new RegExp(field.constraints.pattern, field.constraints.patternFlags).test(value)) {
+        throw new Error(`${location} does not match the model pattern.`);
+      }
+      if (field.enumValues && !field.enumValues.includes(value)) {
+        throw new Error(`${location} must match one of the model's allowed values.`);
+      }
+      return;
+    case "number":
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new Error(`${location} must be a finite number.`);
+      }
+      if (field.isInteger && !Number.isInteger(value)) {
+        throw new Error(`${location} must be an integer.`);
+      }
+      if (field.constraints?.minimum !== undefined && (field.constraints.exclusiveMinimum ? value <= field.constraints.minimum : value < field.constraints.minimum)) {
+        throw new Error(`${location} is below the model's minimum.`);
+      }
+      if (field.constraints?.maximum !== undefined && (field.constraints.exclusiveMaximum ? value >= field.constraints.maximum : value > field.constraints.maximum)) {
+        throw new Error(`${location} is above the model's maximum.`);
+      }
+      return;
+    case "boolean":
+      if (typeof value !== "boolean") {
+        throw new Error(`${location} must be a boolean.`);
+      }
+      return;
+    case "object":
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new Error(`${location} must be an object.`);
+      }
+      if (field.objectFields) {
+        for (const nestedField of field.objectFields) {
+          const nestedValue = (value as Record<string, unknown>)[nestedField.name];
+          if (!Object.prototype.hasOwnProperty.call(value, nestedField.name)) {
+            if (!nestedField.isOptional && !nestedField.isNullable) {
+              throw new Error(`${location} is missing required field "${nestedField.name}".`);
+            }
+            continue;
+          }
+          validateSeedFieldValue(nestedValue, nestedField, `${location}.${nestedField.name}`);
+        }
+      }
+      return;
+    default:
+      return;
+  }
 }
 
 function compareSeedDocumentsForExport(left: SeedDocument, right: SeedDocument): number {

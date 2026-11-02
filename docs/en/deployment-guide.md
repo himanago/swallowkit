@@ -141,6 +141,22 @@ Use the values printed by `swallowkit provision` under "CI/CD settings". If a va
 - **GitHub Actions**: Actions tab → select the failed workflow → Re-run all jobs
 - **Azure Pipelines**: Pipelines → select the failed pipeline → Run pipeline
 
+### Optional Cosmos DB bootstrap seed (GitHub Actions; TypeScript, C#, and Python)
+
+Generated TypeScript, C#, and Python projects include `.github/workflows/initialize-cosmos-seeds.yml`. This is a separate, manual workflow; normal push deployments do not seed data. Keep one source of truth in the existing `dev-seeds/<name>/` directory. For example, generate a template with `npx swallowkit create-dev-seeds local`, or explicitly export the local Emulator with `npx swallowkit create-dev-seeds local --from-emulator`. Review and edit the JSON, then use `npx swallowkit dev --seed-env local` to test it locally. **That local command replaces the selected Emulator containers; Azure bootstrap does not.** Commit only the reviewed seed files you intend to use in Azure.
+
+From the repository's `main` branch, go to **Actions → Initialize Azure Cosmos DB seed data → Run workflow**, enter the exact directory name as `seed_name`, and confirm the Function App name configured in `AZURE_FUNCTIONAPP_NAME`. The workflow rejects non-`main` refs, invalid names, missing directories/files, unknown models, invalid Zod data, and seeds over 500 documents or 4 MiB. It validates with the built shared Zod schemas, fixes the selected data into a temporary TypeScript, C#, or Python Function at build time, then deploys it, calls it, and redeploys the saved ordinary Functions package. The endpoint does not accept a seed name, arbitrary JSON, or a container name.
+
+Azure bootstrap uses create-only semantics: new items are created, identical items are skipped (Cosmos system properties are ignored), and differing items cause a conflict. It never replaces or deletes existing items or containers. A failed run can have committed earlier items; review the reported counts and conflict before retrying. Re-running the same reviewed seed is safe for already-created identical items.
+
+The temporary endpoint explicitly uses `authLevel: anonymous` and separately requires a cryptographically random UUID v4 in the `Authorization: Bearer` header. GitHub Actions masks the raw token; only its SHA-256 hash and expiry are embedded in the temporary package. The token expires after 15 minutes. This is a temporary bearer credential, **not verification of the GitHub user's identity**. The workflow continues to use `Azure/functions-action` and `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`; publish profiles have security limitations compared with OIDC. OIDC migration is not part of this feature and remains a future improvement. No Subscription or Resource Group lookup is performed. The workflow relies on the existing GitHub Actions dispatch permissions, branch protections, and secret access; protect `main` and restrict who can run deployments, especially for production.
+
+The synchronous Function enforces a 180-second processing deadline and a 500-document / 4 MiB input cap, below the Azure Functions HTTP trigger's 230-second platform limit. If a call times out or returns an indeterminate write result, the workflow fails without claiming success and still attempts to restore the ordinary package. Create-only semantics make a reviewed retry safe, but check partial counts and conflicts first. Bootstrap and normal Functions deployments share a non-canceling concurrency group so they do not deploy concurrently.
+
+Use this two-deployment workflow preferably for first initialization before the app is publicly released. Replacing a live Flex Consumption Function package can interrupt requests or affect in-flight work; assess downtime and workload impact before using it on a live app. Cosmos DB networking and firewall settings are never relaxed. If Cosmos is private-only, Functions must already be able to reach it through their existing VNet/Managed Identity configuration. A GitHub-hosted runner also needs to reach the Function App's HTTP endpoint; if the app is private-only, this workflow will fail rather than opening network access automatically.
+
+If restoration fails, the workflow fails and prints a recovery error. Restore the ordinary Functions package by running **Deploy Azure Functions** from `main` after correcting the existing publish-profile issue. A timeout does not prove that no writes occurred; inspect partial results before retrying.
+
 ## Generated Resources
 
 ### Azure Static Web Apps
