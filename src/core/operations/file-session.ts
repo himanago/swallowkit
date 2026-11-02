@@ -79,6 +79,7 @@ export function toProjectRelativePath(rootDirectory: string, absolutePath: strin
 export class FileOperationSession {
   readonly mode: FileSessionMode;
   readonly rootDirectory: string;
+  readonly generatedAt: string;
   readonly warnings: string[] = [];
 
   private readonly operationsByPath = new Map<string, RecordedFileOperation>();
@@ -87,9 +88,10 @@ export class FileOperationSession {
   private readonly overlay = new Map<string, string | null>();
   private schemaAnalysisValue: SchemaAnalysisSnapshot | null = null;
 
-  constructor(mode: FileSessionMode, rootDirectory: string = process.cwd()) {
+  constructor(mode: FileSessionMode, rootDirectory: string = process.cwd(), generatedAt = new Date().toISOString()) {
     this.mode = mode;
     this.rootDirectory = rootDirectory;
+    this.generatedAt = generatedAt;
   }
 
   get operations(): RecordedFileOperation[] {
@@ -215,6 +217,28 @@ export class FileOperationSession {
     }
 
     return operation;
+  }
+
+  applyTo(target: FileOperationSession): void {
+    if (this.rootDirectory !== target.rootDirectory) {
+      throw new Error("Cannot apply file operations across different project roots.");
+    }
+    for (const operation of this.operations) {
+      const content = this.overlay.get(this.overlayKey(operation.absolutePath));
+      if (content === null) {
+        target.deleteFile(operation.absolutePath, {
+          ownership: operation.ownership,
+          generator: operation.generator,
+          sourceModel: operation.sourceModel,
+        });
+      } else if (content !== undefined) {
+        target.writeFile(operation.absolutePath, content, {
+          ownership: operation.ownership,
+          generator: operation.generator,
+          sourceModel: operation.sourceModel,
+        });
+      }
+    }
   }
 }
 

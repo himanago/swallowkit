@@ -201,14 +201,23 @@ Agent Skills 対応 runtime では `swallowkit-add-model`、`swallowkit-modify-m
 
 ### カスタム API の有無にかかわらず、永続化モデルのインフラを生成する
 
-生成される `AGENTS.md` は、カスタム API が CRUD を置き換える場合も、永続化モデルの
-作成・インフラ生成を必須としています。
-`npx swallowkit machine generate model <model> --overwrite never` (`create-model` 相当) から始め、
-スキーマを編集して shared の export を確認してください。モデル作成だけでは Cosmos DB コンテナーは生成されません。
-生成 CRUD が必要なら plan/apply scaffold を使います。`--api-only` は UI を省略するだけで、CRUD は生成します。
-カスタム API では `npx swallowkit migrations add-model <model> --dry-run` で差分を確認し、
-`npx swallowkit migrations add-model <model>` でコンテナーを生成してください。不要な CRUD の生成は必要ありません。
+新しい永続化モデルでは、
+`machine plan model <model> --overwrite never` を preview し、返された plan を
+`machine apply model --plan <planId>` で適用します。スキーマを作成し、
+connector 以外のモデル用 Cosmos コンテナー migration を登録します。
+対話 CLI の `create-model` も同じ generator を使います。
+スキーマを編集し、shared の export を確認してください。モデル生成は Azure へのデプロイや
+CRUD 生成を行いません。手書きモデルでは `machine plan model-infrastructure <model>` で
+preview し、返された plan を `machine apply model --plan <planId>` で適用すると、
+スキーマの内容を変更せずコンテナー migration を追加できます。
+生成 CRUD が必要な場合のみ plan/apply scaffold を使います。`--api-only` は UI を省略するだけで、CRUD は生成します。
 pnpm を使う場合は `npx` を `pnpm exec` に置き換えます。
+
+migration 生成後に partition key を変更した場合は、
+`npx swallowkit machine plan model-infrastructure <model> --refresh-pending --resource-group <name>`
+で明示的に pending 定義の更新を preview します。読み取り専用のリモート確認を行い、
+適用済み・デプロイ試行済み・状態不明・手編集済みの migration は拒否します。
+dry-run とローカルのモデル生成は Azure の provisioning を行いません。
 
 entities、infra、artifacts、drift を inspect し、verify project を実行してください。
 モデルのコンテナー名・partition key と Bicep、マイグレーション manifest、生成台帳の対応を確認します。

@@ -68,11 +68,13 @@ validation は構造化 violation として以下を返します。
 
 ::: code-group
 ```bash [npm]
-npx swallowkit machine generate model todo --overwrite never
+npx swallowkit machine plan model todo --overwrite never
+npx swallowkit machine apply model --plan <planId>
 npx swallowkit machine generate scaffold todo --api-only
 ```
 ```bash [pnpm]
-pnpm exec swallowkit machine generate model todo --overwrite never
+pnpm exec swallowkit machine plan model todo --overwrite never
+pnpm exec swallowkit machine apply model --plan <planId>
 pnpm exec swallowkit machine generate scaffold todo --api-only
 ```
 :::
@@ -173,7 +175,7 @@ pnpm exec swallowkit machine explain failure --check typecheck
 ```
 :::
 
-- `verify project` は既定で `structure` / `drift` / `typecheck` / `backend-build` を実行し、根拠と `suggestedActions` を返します。バックエンド検証は C#/TypeScript のコンパイルと Python の構文検査（import や型は対象外）です。ツールチェーンがなければ理由付きで skip になります。`summary.done: true` は失敗がないことを意味し、skip した検査や実際の動作の検証済みを意味しません。本番ビルドも含める場合は `--checks "structure,drift,typecheck,backend-build,build"` を指定してください。PowerShell ではカンマ区切り値を引用符で囲みます。
+- `verify project` は既定で `structure` / `drift` / `typecheck` / `backend-build` を実行し、根拠と `suggestedActions` を返します。structure は各永続モデルに現在の Cosmos コンテナー migration（または一致する baseline 管理コンテナー）があることも確認し、connector と参照される helper schema は除外します。これはローカル定義の検証であり Azure の状態は照会しません。バックエンド検証は C#/TypeScript のコンパイルと Python の構文検査（import や型は対象外）です。ツールチェーンがなければ理由付きで skip になります。`summary.done: true` は失敗がないことを意味し、skip した検査、実際の動作、Azure へのプロビジョニング済みを意味しません。本番ビルドも含める場合は `--checks "structure,drift,typecheck,backend-build,build"` を指定してください。PowerShell ではカンマ区切り値を引用符で囲みます。
 - `--checks` には `build` / `lint` / `test`（package.json の同名 script がある場合のみ実行、なければ skip）も指定できます。
 - `swallowkit.config.json` の `verify.checks` にカスタムチェック（`{ "id": "smoke-api", "command": "node scripts/smoke.js" }`）を定義すると、既定セットに追加されます。id は `^[a-z][a-z0-9-]*$` に一致し、組み込み id と重複しないものだけが有効です。
 - `explain failure` は直近の verify 結果から失敗チェックの証拠と修復アクションを返します。
@@ -269,6 +271,10 @@ pnpm exec swallowkit-mcp
 - `swallowkit_inspect_infra`
 - `swallowkit_validate_project`
 - `swallowkit_generate_model`
+- `swallowkit_plan_model`
+- `swallowkit_plan_model_infrastructure`
+- `swallowkit_apply_model`
+- `swallowkit_add_model_migration`
 - `swallowkit_scaffold_model`
 - `swallowkit_plan_scaffold`
 - `swallowkit_apply_scaffold`
@@ -281,6 +287,18 @@ pnpm exec swallowkit-mcp
 - `swallowkit_explain_failure`
 
 MCP 層は framework ロジックを持たず、各 Tool 呼び出しを machine CLI に委譲します。
+`swallowkit_generate_model` は新規の非 connector モデルにコンテナー migration を登録します。
+`swallowkit_add_model_migration` は手書きモデルをスキーマ変更せず backfill する操作です。
+`dryRun` は具体的な migration / manifest の書き込み予定を表示しますが、書き込みません。
+`refreshPending` は opt-in であり、pending 定義を更新する前に指定された resource group の
+Azure migration tag と deployment history を読み取り専用で確認します。
+手書きスキーマの backfill を plan/apply で行う場合は
+`swallowkit_plan_model_infrastructure` を使い、返された `planId` を
+`swallowkit_apply_model` に渡します。スキーマを保持し、migration、manifest、
+生成台帳への書き込みを fingerprint 付きで確認できます。
+永続化モデル生成を preview する場合は `swallowkit_plan_model` を使い、
+返された `planId` を `swallowkit_apply_model` に渡します。preview にはスキーマ、shared export、
+migration、manifest、生成台帳が含まれます。
 
 ## 生成プロジェクトでの bootstrap
 

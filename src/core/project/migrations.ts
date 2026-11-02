@@ -72,6 +72,18 @@ function readRequiredFile(projectRoot: string, relativePath: string): string {
   return fs.readFileSync(absolutePath, "utf-8");
 }
 
+function existsOnlyInSession(projectRoot: string, relativePath: string, stagedFiles: ReadonlySet<string>): boolean {
+  const normalized = normalizeRelativePath(relativePath);
+  if (!stagedFiles.has(normalized)) return false;
+  try {
+    fs.lstatSync(path.resolve(projectRoot, normalized));
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+}
+
 function checksumObject(value: unknown): string {
   return hashContent(JSON.stringify(value));
 }
@@ -162,7 +174,11 @@ export function loadMigrationManifest(projectRoot: string = process.cwd()): Migr
   return manifest;
 }
 
-export function validateMigrationManifest(manifest: MigrationManifest, projectRoot: string = process.cwd()): void {
+export function validateMigrationManifest(
+  manifest: MigrationManifest,
+  projectRoot: string = process.cwd(),
+  stagedFiles: ReadonlySet<string> = new Set()
+): void {
   if (
     !manifest || typeof manifest !== "object" ||
     manifest.schemaVersion !== MIGRATION_MANIFEST_VERSION ||
@@ -207,13 +223,13 @@ export function validateMigrationManifest(manifest: MigrationManifest, projectRo
     if (!template.startsWith("infra/migrations/") || !template.endsWith(".bicep")) {
       fail("invalid-migration-manifest", `Migration template must be a .bicep file under infra/migrations: ${template}`);
     }
-    readRequiredFile(projectRoot, template);
+    if (!existsOnlyInSession(projectRoot, template, stagedFiles)) readRequiredFile(projectRoot, template);
     if (migration.parameters) {
       const parameters = normalizeRelativePath(migration.parameters);
       if (!parameters.startsWith("infra/migrations/") || !parameters.endsWith(".json")) {
         fail("invalid-migration-manifest", `Migration parameters must be JSON under infra/migrations: ${parameters}`);
       }
-      readRequiredFile(projectRoot, parameters);
+      if (!existsOnlyInSession(projectRoot, parameters, stagedFiles)) readRequiredFile(projectRoot, parameters);
     }
   }
 }

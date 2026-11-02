@@ -226,7 +226,11 @@ describe("generateCosmosContainer", () => {
 
   it("generates a container migration without changing main.bicep", async () => {
     const mainBefore = fs.readFileSync(path.join(tempDir, "infra", "main.bicep"), "utf-8");
-    await generateCosmosContainer({ name: "SurveyResponse", partitionKey: "/id" });
+    await generateCosmosContainer({
+      name: "SurveyResponse",
+      partitionKey: "/id",
+      fields: [{ name: "id", type: "string", isOptional: false, isArray: false }],
+    });
 
     const containerFilePath = path.join(tempDir, "infra", "migrations", "0001-create-survey-response-container", "main.bicep");
     const containerContent = fs.readFileSync(containerFilePath, "utf-8");

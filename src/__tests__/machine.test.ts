@@ -4,6 +4,7 @@ import * as path from "path";
 import { EventEmitter } from "events";
 import * as childProcess from "child_process";
 import { runMachineCli } from "../machine";
+import { initializeNewProjectMigrations } from "../core/operations/migration-generator";
 
 jest.mock("child_process", () => {
   const actual = jest.requireActual<typeof import("child_process")>("child_process");
@@ -282,6 +283,8 @@ describe("machine CLI", () => {
       "junction"
     );
     writeFile(path.join(tempDir, "shared", "index.ts"), "export {};\n");
+    writeFile(path.join(tempDir, "infra", "main.bicep"), "targetScope = 'resourceGroup'\n");
+    initializeNewProjectMigrations(tempDir);
 
     const { response, exitCode } = await runMachine([
       "node",
@@ -298,6 +301,8 @@ describe("machine CLI", () => {
     expect(response.ok).toBe(true);
     expect(response.command).toBe("generate-model");
     expect(response.data.createdFiles).toContain("shared/models/task.ts");
+    expect(response.data.infrastructureFiles).toContain("infra/migrations/0001-create-task-container/main.bicep");
+    expect(fs.existsSync(path.join(tempDir, "infra", "migrations", "0001-create-task-container", "main.bicep"))).toBe(true);
     expect(fs.existsSync(path.join(tempDir, ".swallowkit", "project.json"))).toBe(true);
   });
 

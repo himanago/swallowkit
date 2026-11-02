@@ -23,17 +23,29 @@ source-of-truth models, subject to the current result of
   allowed; there are no managed markers and existing content is preserved.
 - For relationships, use nested schemas rather than duplicating model shapes.
 - For every new persistent model, follow the root `AGENTS.md` persistent-model
-  workflow even with custom APIs. Use `{{runCmd}} swallowkit machine generate model <model> --overwrite never`
-  (the `create-model` equivalent), preserve existing schemas, and generate the
-  required infrastructure. Model creation alone does not create a container.
-  Use plan/apply scaffold when CRUD is needed; for custom APIs replacing CRUD,
-  review `{{runCmd}} swallowkit migrations add-model <model> --dry-run`, then run
-  `{{runCmd}} swallowkit migrations add-model <model>` without unnecessary CRUD.
+  workflow even with custom APIs. Preview creation with
+  `{{runCmd}} swallowkit machine plan model <model> --overwrite never`, then
+  apply the returned plan with
+  `{{runCmd}} swallowkit machine apply model --plan <planId>`. This creates the
+  schema and registers its Cosmos container migration with an explicit write
+  preview. For a hand-written schema or skipped template, review
+  `{{runCmd}} swallowkit machine plan model-infrastructure <model>`, then
+  apply the returned plan with
+  `{{runCmd}} swallowkit machine apply model --plan <planId>` to add
+  infrastructure records without overwriting the schema or generating CRUD.
+  Use plan/apply scaffold only when CRUD is needed.
   Check the model, container Bicep, migration manifest, and artifact ledger
   correspondence, then inspect drift and verify project. For connector models,
   verify the external connector mapping instead of generating a Cosmos container.
-  If generation is deferred, state why and what remains; do not claim completion
-  or deployment readiness while required infrastructure is missing.
+  If generation is deferred, state why and what remains; verify fails while a
+  required local migration is missing or stale. A passing verify checks local
+  definitions, not whether Azure has been provisioned.
+- After editing a partition key, refresh an unapplied generated container only
+  through `machine plan model-infrastructure <model> --refresh-pending
+  --resource-group <name>` (and `--subscription <id>` when needed), then apply
+  the reviewed plan with `machine apply model --plan <planId>`. Planning performs
+  read-only target-state and deployment-history checks.
+  Applied, attempted, unknown, or user-modified migrations must not be rewritten.
 
 ## Optional model declarations (exact formats)
 

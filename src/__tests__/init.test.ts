@@ -397,7 +397,7 @@ describe("Infrastructure generation", () => {
       expect("func-".length + 40 + 1 + 6).toBeLessThanOrEqual(60);
 
       const migration = generateModelContainerMigration(
-        { name: "Todo", partitionKey: "/id" },
+        { name: "Todo", partitionKey: "/id", fields: [{ name: "id", type: "string", isOptional: false, isArray: false }] },
         new FileOperationSession("commit", projectDir)
       );
       const migrationBicep = fs.readFileSync(path.join(projectDir, migration!.template), "utf-8");
@@ -424,7 +424,7 @@ describe("Infrastructure generation", () => {
       initializeLegacyMigrations(projectDir);
 
       const migration = generateModelContainerMigration(
-        { name: "Todo", partitionKey: "/id" },
+        { name: "Todo", partitionKey: "/id", fields: [{ name: "id", type: "string", isOptional: false, isArray: false }] },
         new FileOperationSession("commit", projectDir)
       );
       const migrationBicep = fs.readFileSync(path.join(projectDir, migration!.template), "utf-8");

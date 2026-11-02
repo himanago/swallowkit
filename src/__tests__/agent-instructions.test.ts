@@ -163,16 +163,16 @@ describe("coding-agent instruction contract", () => {
         );
         const runCmd = getCommands(context.packageManager).exec;
         for (const document of [agents, sharedModels]) {
-          expect(document).toContain(`${runCmd} swallowkit machine generate model <model> --overwrite never`);
-          expect(document).toContain(`${runCmd} swallowkit migrations add-model <model> --dry-run`);
-          expect(document).toContain(`${runCmd} swallowkit migrations add-model <model>`);
+          expect(document).toContain(`${runCmd} swallowkit machine plan model <model> --overwrite never`);
+          expect(document).toContain(`${runCmd} swallowkit machine apply model --plan <planId>`);
+          expect(document).toContain(`${runCmd} swallowkit machine plan model-infrastructure <model>`);
+          expect(document).toContain(`${runCmd} swallowkit machine apply model --plan <planId>`);
           expect(document).toContain("custom APIs");
-          expect(document).toContain("required infrastructure is missing");
+          expect(document).toContain("required local migration is missing or stale");
           expect(document).not.toMatch(/\{\{[A-Za-z]+\}\}/);
         }
-        expect(agents).toContain(`${runCmd} swallowkit create-model <model>`);
         expect(agents).toContain("A hand-written model alone is not complete");
-        expect(agents).toContain("does **not** generate a Cosmos DB container");
+        expect(agents).toContain("registered Cosmos container migration");
         expect(agents).toContain("do **not** scaffold unnecessary CRUD");
         expect(agents).toContain("`--api-only` skips UI only");
         expect(agents).toContain("`machine apply scaffold --plan <planId>`");
@@ -187,7 +187,8 @@ describe("coding-agent instruction contract", () => {
         expect(agents).toContain("baseline-owned container");
         expect(agents).toContain("External `connectorConfig` models");
         expect(agents).toContain("state the reason and the pending");
-        expect(agents).toContain("Even if `verify project` passes");
+        expect(agents).toContain("`verify project` fails while a required local migration is missing or stale");
+        expect(sharedModels).toContain("verify fails while a");
         expect(agents).toContain("Generation is local, not Azure provisioning");
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
@@ -199,14 +200,15 @@ describe("coding-agent instruction contract", () => {
     const workflow = buildWorkflowDocs(runCmd).find((doc) => doc.skillName === "swallowkit-add-model");
     expect(workflow).toBeDefined();
     expect(workflow?.skillDescription).toContain("including models with custom APIs");
-    expect(workflow?.content).toContain(`${runCmd} swallowkit machine generate model <name> --overwrite never`);
-    expect(workflow?.content).toContain(`${runCmd} swallowkit create-model <name>`);
+    expect(workflow?.content).toContain(`${runCmd} swallowkit machine plan model <name> --overwrite never`);
+    expect(workflow?.content).toContain(`${runCmd} swallowkit machine apply model --plan <planId>`);
     expect(workflow?.content).toContain("If custom APIs replace CRUD, skip scaffold");
-    expect(workflow?.content).toContain(`${runCmd} swallowkit migrations add-model <name> --dry-run`);
-    expect(workflow?.content).toContain(`${runCmd} swallowkit migrations add-model <name>`);
+    expect(workflow?.content).toContain(`${runCmd} swallowkit machine plan model-infrastructure <name>`);
+    expect(workflow?.content).toContain("without changing schema bytes or generating CRUD");
+    expect(workflow?.content).toContain("--refresh-pending");
     expect(workflow?.content).toContain("infra/migrations/manifest.json");
     expect(workflow?.content).toContain(".swallowkit/artifacts.json");
-    expect(workflow?.content).toContain("a passing verify does not mean the model is complete or deployment-ready");
+    expect(workflow?.content).toContain("verify fails while required local container migrations are missing or stale");
   });
 
   it("covers the requested model-change, new-feature, BFF, and deployment scenarios", () => {
@@ -278,10 +280,9 @@ describe("coding-agent documentation synchronization", () => {
     expect(translatedSourceSections).toEqual(sourceSections);
     expect(translation).toContain("カスタム API の有無にかかわらず");
     expect(translation).toContain("手書きモデルを追加しただけでは完了ではありません");
-    expect(translation).toContain("{{runCmd}} swallowkit machine generate model <model> --overwrite never");
-    expect(translation).toContain("{{runCmd}} swallowkit create-model <model>");
-    expect(translation).toContain("{{runCmd}} swallowkit migrations add-model <model> --dry-run");
-    expect(translation).toContain("{{runCmd}} swallowkit migrations add-model <model>");
+    expect(translation).toContain("{{runCmd}} swallowkit machine plan model <model> --overwrite never");
+    expect(translation).toContain("{{runCmd}} swallowkit machine plan model-infrastructure <model>");
+    expect(translation).toContain("{{runCmd}} swallowkit machine apply model --plan <planId>");
     expect(translation).toContain("不要な CRUD を scaffold してはなりません");
     expect(translation).toContain("理由と未完了");
     expect(translation).toContain("デプロイ可能と案内したりしてはなりません");

@@ -16,11 +16,14 @@ import { parseModelFile } from "../core/scaffold/model-parser";
 import { inspectInfra } from "../core/project/infra";
 import { loadCustomVerifyChecks, compactVerifyResult, runVerify, VerifyResult } from "../core/verify";
 import { buildAgentSkills, buildWorkflowDocs, writeAgentSkills, writeWorkflowDocs } from "../core/project/workflows";
-import { applyProvisionOperation, planProvisionOperation } from "../core/operations/provision-operations";
+import { applyProvisionOperation, planProvisionOperation, readRemoteMigrationState } from "../core/operations/provision-operations";
 import { resetAzCliInvocationCache, setAzCliInvocationForTesting } from "../utils/azure-cli";
 import * as azureCli from "../utils/azure-cli";
 import { createCustomMigration, initializeLegacyMigrations } from "../core/operations/migration-generator";
-import { createMigrationManifest, encodeMigrationState, getMigrationTagKey, saveMigrationManifest } from "../core/project/migrations";
+import { createModelOperation } from "../core/operations/create-model";
+import { addModelContainerMigration } from "../core/operations/model-migration";
+import { hashContent } from "../core/operations/file-session";
+import { checksumAtVersion, createMigrationManifest, encodeMigrationState, getMigrationTagKey, loadMigrationManifest, resolveMigrations, saveMigrationManifest } from "../core/project/migrations";
 
 jest.mock("child_process", () => {
   const actual = jest.requireActual<typeof import("child_process")>("child_process");
@@ -414,6 +417,612 @@ describe("agent loop phase 3/4", () => {
     expect(plan.pendingMigrations.map((migration) => migration.version)).toEqual([1]);
     expect(plan.commands.filter((command) => command.includes("deployment group create"))).toHaveLength(1);
     expect(plan.commands.some((command) => command.includes("tag update") && command.includes("--operation Merge"))).toBe(true);
+  });
+
+  it("plans a newly created persistent model container through the registered migration ledger", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), JSON.stringify({
+      parameters: { projectName: { value: "sample-app" } },
+    }));
+    const baseline = initializeLegacyMigrations(tempDir);
+
+    const created = await createModelOperation({ names: ["learning profile"], overwriteMode: "never" });
+    expect(created.infrastructureFiles).toEqual(expect.arrayContaining([
+      "infra/migrations/0001-create-learning-profile-container/main.bicep",
+      "infra/migrations/manifest.json",
+    ]));
+    expect(fs.readFileSync(path.join(tempDir, ".swallowkit", "artifacts.json"), "utf-8")).toContain('"sourceModel": "LearningProfile"');
+    const repeated = await createModelOperation({ names: ["learning profile"], overwriteMode: "never" });
+    expect(repeated.createdFiles).toEqual([]);
+    expect(repeated.skippedFiles).toEqual(["shared/models/learning-profile.ts"]);
+    expect(loadMigrationManifest(tempDir).migrations).toHaveLength(1);
+
+    const tagKey = getMigrationTagKey(baseline.projectId);
+    (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
+      if (args[0] === "group" && args[1] === "show") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            id: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample",
+            tags: { [tagKey]: encodeMigrationState({ schemaVersion: 1, version: 0, checksum: baseline.baseline.checksum }) },
+          }),
+          stderr: "",
+        };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected: ${args.join(" ")}` };
+    });
+
+    const plan = await planProvisionOperation({
+      resourceGroup: "rg-sample",
+      location: "japaneast",
+      swaLocation: "eastasia",
+      subscription: "11111111-1111-1111-1111-111111111111",
+    });
+
+    expect(plan.mode).toBe("migrate");
+    expect(plan.pendingMigrations.map((migration) => migration.sourceModel)).toEqual(["LearningProfile"]);
+    expect(plan.commands.filter((command) => command.includes("deployment group create"))).toHaveLength(1);
+    expect(fs.readFileSync(
+      path.join(tempDir, "infra", "migrations", "0001-create-learning-profile-container", "main.bicep"),
+      "utf-8"
+    )).toContain("'LearningProfiles'");
+  });
+
+  it("includes registered model migrations in the first bootstrap provision plan", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), JSON.stringify({
+      parameters: { projectName: { value: "sample-app" } },
+    }));
+    initializeLegacyMigrations(tempDir);
+    await createModelOperation({ names: ["learning profile"], overwriteMode: "never" });
+
+    (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "false\n", stderr: "" };
+      return { status: 1, stdout: "", stderr: `unexpected: ${args.join(" ")}` };
+    });
+
+    const plan = await planProvisionOperation({
+      resourceGroup: "rg-sample",
+      location: "japaneast",
+      swaLocation: "eastasia",
+      subscription: "11111111-1111-1111-1111-111111111111",
+    });
+
+    expect(plan.mode).toBe("bootstrap");
+    expect(plan.pendingMigrations.map((migration) => migration.sourceModel)).toEqual(["LearningProfile"]);
+    expect(plan.commands).toEqual(expect.arrayContaining([
+      expect.stringContaining("--name swallowkit-baseline"),
+      expect.stringContaining("--name swallowkit-migration-1-"),
+      expect.stringContaining("tags.swallowkit-migration-"),
+    ]));
+  });
+
+  it("exposes the schema-preserving model migration preview and apply through machine CLI", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), "{}\n");
+    const baseline = initializeLegacyMigrations(tempDir);
+    const modelSource = `import { z } from 'zod/v4';
+export const Todo = z.object({ id: z.string(), userId: z.string() });
+export const partitionKey = '/userId';
+`;
+    writeFile(path.join(tempDir, "shared", "models", "todo.ts"), modelSource);
+    const ledgerPath = path.join(tempDir, ".swallowkit", "artifacts.json");
+    const beforeLedger = fs.readFileSync(ledgerPath, "utf-8");
+
+    const preview = await runMachine(["node", "swallowkit", "machine", "migrations", "add-model", "todo", "--dry-run"]);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.response.command).toBe("migrations-add-model");
+    expect(preview.response.data.operations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "infra/migrations/0001-create-todo-container/main.bicep", action: "create" }),
+      expect.objectContaining({ path: "infra/migrations/manifest.json", action: "modify" }),
+      expect.objectContaining({ path: ".swallowkit/artifacts.json", action: "modify" }),
+    ]));
+    expect(fs.existsSync(path.join(tempDir, "infra", "migrations", "0001-create-todo-container", "main.bicep"))).toBe(false);
+    expect(fs.readFileSync(ledgerPath, "utf-8")).toBe(beforeLedger);
+
+    const applied = await runMachine(["node", "swallowkit", "machine", "migrations", "add-model", "todo"]);
+    expect(applied.exitCode).toBe(0);
+    expect(loadMigrationManifest(tempDir).migrations).toEqual([
+      expect.objectContaining({ version: 1, source: "model", sourceModel: "Todo" }),
+    ]);
+    expect(fs.readFileSync(path.join(tempDir, "shared", "models", "todo.ts"), "utf-8")).toBe(modelSource);
+    expect(loadMigrationManifest(tempDir).baseline.checksum).toBe(baseline.baseline.checksum);
+  });
+
+  it("plans and applies model infrastructure without rewriting a handwritten schema, then targets it in provision", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), JSON.stringify({
+      parameters: { projectName: { value: "sample-app" } },
+    }));
+    const baseline = initializeLegacyMigrations(tempDir);
+    const modelSource = `import { z } from 'zod/v4';
+export const Todo = z.object({ id: z.string(), userId: z.string() });
+export const partitionKey = '/userId';
+`;
+    writeFile(path.join(tempDir, "shared", "models", "todo.ts"), modelSource);
+    const ledgerPath = path.join(tempDir, ".swallowkit", "artifacts.json");
+    const beforeLedger = fs.readFileSync(ledgerPath, "utf-8");
+
+    const planned = await runMachine(["node", "swallowkit", "machine", "plan", "model-infrastructure", "todo"]);
+    expect(planned.exitCode).toBe(0);
+    expect(planned.response.command).toBe("plan-model-infrastructure");
+    expect(planned.response.data.operations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "infra/migrations/0001-create-todo-container/main.bicep", action: "create" }),
+      expect.objectContaining({ path: "infra/migrations/manifest.json", action: "update" }),
+      expect.objectContaining({ path: ".swallowkit/artifacts.json", action: "update" }),
+    ]));
+    expect(fs.existsSync(path.join(tempDir, "infra", "migrations", "0001-create-todo-container", "main.bicep"))).toBe(false);
+    expect(fs.readFileSync(ledgerPath, "utf-8")).toBe(beforeLedger);
+
+    const applied = await runMachine([
+      "node", "swallowkit", "machine", "apply", "model", "--plan", planned.response.data.planId,
+    ]);
+    expect(applied.exitCode).toBe(0);
+    expect(applied.response.data.planType).toBe("model-infrastructure");
+    expect(fs.readFileSync(path.join(tempDir, "shared", "models", "todo.ts"), "utf-8")).toBe(modelSource);
+    expect(loadMigrationManifest(tempDir).migrations).toEqual([
+      expect.objectContaining({ version: 1, source: "model", sourceModel: "Todo" }),
+    ]);
+    expect(loadMigrationManifest(tempDir).baseline.checksum).toBe(baseline.baseline.checksum);
+
+    const tagKey = getMigrationTagKey(baseline.projectId);
+    (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
+      if (args[0] === "group" && args[1] === "show") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            id: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample",
+            tags: { [tagKey]: encodeMigrationState({ schemaVersion: 1, version: 0, checksum: baseline.baseline.checksum }) },
+          }),
+          stderr: "",
+        };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected: ${args.join(" ")}` };
+    });
+    const provisionPlan = await planProvisionOperation({
+      resourceGroup: "rg-sample",
+      location: "japaneast",
+      swaLocation: "eastasia",
+      subscription: "11111111-1111-1111-1111-111111111111",
+    });
+    expect(provisionPlan.pendingMigrations.map((migration) => migration.sourceModel)).toEqual(["Todo"]);
+  });
+
+  it("invalidates model infrastructure plans when a referenced helper is removed", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    initializeLegacyMigrations(tempDir);
+    const helperPath = path.join(tempDir, "shared", "models", "topic-mastery.ts");
+    const entityPath = path.join(tempDir, "shared", "models", "learning-profile.ts");
+    writeFile(helperPath, `import { z } from 'zod/v4';
+export const TopicMastery = z.object({ topicId: z.string(), score: z.number() });
+`);
+    writeFile(entityPath, `import { z } from 'zod/v4';
+import { TopicMastery } from './topic-mastery';
+export const LearningProfile = z.object({ id: z.string(), mastery: z.array(TopicMastery) });
+`);
+    const beforeLedger = fs.readFileSync(path.join(tempDir, ".swallowkit", "artifacts.json"), "utf-8");
+    const planned = await runMachine([
+      "node", "swallowkit", "machine", "plan", "model-infrastructure", "learning-profile",
+    ]);
+    expect(planned.exitCode).toBe(0);
+    expect(planned.response.data.fingerprints["shared/models/topic-mastery.ts"]).toMatch(/^[a-f0-9]{64}$/);
+
+    fs.unlinkSync(helperPath);
+    const applied = await runMachine([
+      "node", "swallowkit", "machine", "apply", "model", "--plan", planned.response.data.planId,
+    ]);
+    expect(applied.response.status).toBe("blocked");
+    expect(applied.response.error.code).toBe("stale-plan");
+    expect(fs.existsSync(path.join(tempDir, "infra", "migrations", "0001-create-learning-profile-container", "main.bicep"))).toBe(false);
+    expect(fs.readFileSync(path.join(tempDir, ".swallowkit", "artifacts.json"), "utf-8")).toBe(beforeLedger);
+  });
+
+  it("plans model, migration, and metadata writes without applying them, then applies the same plan", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), JSON.stringify({
+      parameters: { projectName: { value: "sample-app" } },
+    }));
+    const modelBarrel = "export { ExistingModel } from './existing-model';\n";
+    const modelTypes = "export interface SharedModelTypes { value: string }\n";
+    writeFile(path.join(tempDir, "shared", "models", "index.ts"), modelBarrel);
+    writeFile(path.join(tempDir, "shared", "models", "shared.d.ts"), modelTypes);
+    initializeLegacyMigrations(tempDir);
+    const migrationManifest = path.join(tempDir, "infra", "migrations", "manifest.json");
+    const migrationManifestBefore = fs.readFileSync(migrationManifest, "utf-8");
+    const artifactLedger = path.join(tempDir, ".swallowkit", "artifacts.json");
+    const artifactLedgerBefore = fs.readFileSync(artifactLedger, "utf-8");
+    const planned = await runMachine(["node", "swallowkit", "machine", "plan", "model", "todo"]);
+    expect(planned.exitCode).toBe(0);
+    expect(planned.response.ok).toBe(true);
+    expect(planned.response.status).toBe("complete");
+    const plannedPaths = planned.response.data.operations.map((operation: { path: string }) => operation.path);
+    expect(plannedPaths).toEqual(expect.arrayContaining([
+      "shared/models/todo.ts",
+      "shared/index.ts",
+      "infra/migrations/manifest.json",
+      ".swallowkit/artifacts.json",
+      ".swallowkit/project.json",
+    ]));
+    expect(planned.response.data.fingerprints["shared/models/index.ts"]).toBe(hashContent(modelBarrel));
+    expect(planned.response.data.fingerprints["shared/models/shared.d.ts"]).toBe(hashContent(modelTypes));
+    expect(fs.existsSync(path.join(tempDir, "shared", "models", "todo.ts"))).toBe(false);
+    expect(fs.readFileSync(migrationManifest, "utf-8")).toBe(migrationManifestBefore);
+    expect(fs.readFileSync(artifactLedger, "utf-8")).toBe(artifactLedgerBefore);
+    expect(fs.existsSync(path.join(tempDir, ".swallowkit", "project.json"))).toBe(false);
+
+    const plannedManifest = planned.response.data.operations.find(
+      (operation: { path: string }) => operation.path === ".swallowkit/project.json"
+    );
+    expect(plannedManifest.contentFingerprint).toBeDefined();
+    const applied = await runMachine([
+      "node", "swallowkit", "machine", "apply", "model", "--plan", planned.response.data.planId,
+    ]);
+    expect(applied.exitCode).toBe(0);
+    expect(applied.response.ok).toBe(true);
+    expect(applied.response.data.result.createdFiles).toContain("shared/models/todo.ts");
+    expect(fs.existsSync(path.join(tempDir, "infra", "migrations", "manifest.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tempDir, ".swallowkit", "artifacts.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tempDir, ".swallowkit", "project.json"))).toBe(true);
+    const manifest = JSON.parse(fs.readFileSync(path.join(tempDir, ".swallowkit", "project.json"), "utf-8"));
+    expect(manifest.entities.find((entity: { name: string }) => entity.name === "Todo").filePath)
+      .toBe("shared/models/todo.ts");
+    for (const operation of planned.response.data.operations) {
+      expect(hashContent(fs.readFileSync(path.join(tempDir, operation.path), "utf-8"))).toBe(operation.contentFingerprint);
+    }
+  });
+
+  it("replaces an overwritten model in the project manifest instead of duplicating it", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    initializeLegacyMigrations(tempDir);
+    await createModelOperation({ names: ["task"], overwriteMode: "always" });
+
+    writeFile(path.join(tempDir, "shared", "models", "task.ts"), `import { z } from 'zod/v4';
+export const Task = z.object({ id: z.string(), legacyField: z.string() });
+`);
+    await createModelOperation({ names: ["task"], overwriteMode: "always" });
+
+    const manifest = JSON.parse(fs.readFileSync(path.join(tempDir, ".swallowkit", "project.json"), "utf-8"));
+    const tasks = manifest.entities.filter((entity: { name: string }) => entity.name === "Task");
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].fields.map((field: { name: string }) => field.name)).toEqual([
+      "id", "name", "createdAt", "updatedAt",
+    ]);
+  });
+
+  it("invalidates a model plan when model-directory membership changes", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), JSON.stringify({
+      parameters: { projectName: { value: "sample-app" } },
+    }));
+    initializeLegacyMigrations(tempDir);
+    const planned = await runMachine(["node", "swallowkit", "machine", "plan", "model", "todo"]);
+    expect(planned.response.ok).toBe(true);
+    writeFile(
+      path.join(tempDir, "shared", "models", "topic-mastery.ts"),
+      "import { z } from 'zod/v4'; export const TopicMastery = z.object({ topicId: z.string() });\n"
+    );
+
+    const applied = await runMachine([
+      "node", "swallowkit", "machine", "apply", "model", "--plan", planned.response.data.planId,
+    ]);
+    expect(applied.exitCode).toBe(1);
+    expect(applied.response.status).toBe("blocked");
+    expect(applied.response.error.code).toBe("stale-plan");
+    expect(applied.response.error.details.changedFiles).toContain("directory-list:shared/models");
+    expect(fs.existsSync(path.join(tempDir, "shared", "models", "todo.ts"))).toBe(false);
+  });
+
+  it("does not create Cosmos infrastructure for connector models", async () => {
+    createProjectFixture(tempDir);
+    const configPath = path.join(tempDir, "swallowkit.config.js");
+    const config = fs.readFileSync(configPath, "utf-8").replace(
+      "api: {",
+      "connectors: { external: { type: 'api', baseUrl: 'https://example.local' } },\n  api: {"
+    );
+    writeFile(configPath, config);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), "{}\n");
+    initializeLegacyMigrations(tempDir);
+
+    const result = await createModelOperation({
+      names: ["external entry"],
+      connector: "external",
+      overwriteMode: "never",
+    });
+
+    expect(result.createdFiles).toEqual(["shared/models/external-entry.ts"]);
+    expect(result.infrastructureFiles).toEqual([]);
+    expect(loadMigrationManifest(tempDir).migrations).toEqual([]);
+  });
+
+  it("does not write model or infra artifacts when an existing model cannot be analyzed", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), "{}\n");
+    initializeLegacyMigrations(tempDir);
+    writeFile(path.join(tempDir, "shared", "models", "learning-profile.ts"), `import { z } from 'zod/v4';
+export const TopicSchema = z.object({ name: z.string() });
+export const LearningProfile = z.object({ id: z.string(), masteryByTopic: z.record(z.string(), TopicSchema) });
+`);
+    const indexBefore = fs.readFileSync(path.join(tempDir, "shared", "index.ts"), "utf-8");
+
+    await expect(createModelOperation({ names: ["new entity"], overwriteMode: "never" })).rejects.toMatchObject({
+      code: "schema-field-unsupported",
+      status: "blocked",
+      details: expect.objectContaining({ filePath: expect.stringContaining("learning-profile.ts"), field: "masteryByTopic" }),
+    });
+
+    expect(fs.existsSync(path.join(tempDir, "shared", "models", "new-entity.ts"))).toBe(false);
+    expect(fs.readFileSync(path.join(tempDir, "shared", "index.ts"), "utf-8")).toBe(indexBefore);
+    expect(loadMigrationManifest(tempDir).migrations).toEqual([]);
+    expect(fs.existsSync(path.join(tempDir, "infra", "migrations", "0001-create-new-entity-container"))).toBe(false);
+  });
+
+  it("previews and safely refreshes an unapplied container definition after an authored partition-key change", async () => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    writeFile(path.join(tempDir, "infra", "main.parameters.json"), "{}\n");
+    const baseline = initializeLegacyMigrations(tempDir);
+    await createModelOperation({ names: ["learning profile"], overwriteMode: "never" });
+    const modelPath = path.join(tempDir, "shared", "models", "learning-profile.ts");
+    writeFile(modelPath, `import { z } from 'zod/v4';
+export const LearningProfile = z.object({ id: z.string(), userId: z.string() });
+export type LearningProfile = z.infer<typeof LearningProfile>;
+export const partitionKey = '/userId';
+`);
+    const migrationPath = path.join(tempDir, "infra", "migrations", "0001-create-learning-profile-container", "main.bicep");
+    const ledgerPath = path.join(tempDir, ".swallowkit", "artifacts.json");
+    const oldTemplate = fs.readFileSync(migrationPath, "utf-8");
+    const oldLedger = fs.readFileSync(ledgerPath, "utf-8");
+    const manifest = loadMigrationManifest(tempDir);
+    const tagKey = getMigrationTagKey(baseline.projectId);
+
+    (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "account" && args[1] === "show") {
+        return { status: 0, stdout: "11111111-1111-1111-1111-111111111111\n", stderr: "" };
+      }
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
+      if (args[0] === "group" && args[1] === "show") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            id: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample",
+            tags: { [tagKey]: encodeMigrationState({ schemaVersion: 1, version: 0, checksum: baseline.baseline.checksum }) },
+          }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "deployment" && args[1] === "group" && args[2] === "list") {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ name: "swallowkit-baseline", state: "Succeeded" }]),
+          stderr: "",
+        };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected: ${args.join(" ")}` };
+    });
+
+    const preview = await runMachine([
+      "node", "swallowkit", "machine", "plan", "model-infrastructure", "learning-profile",
+      "--refresh-pending", "--resource-group", "rg-sample",
+    ]);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.response.data.modelInfrastructure).toMatchObject({
+      resourceGroup: "rg-sample",
+      subscription: "11111111-1111-1111-1111-111111111111",
+    });
+    expect(preview.response.data.operations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "infra/migrations/0001-create-learning-profile-container/main.bicep", action: "update" }),
+      expect.objectContaining({ path: ".swallowkit/artifacts.json", action: "update" }),
+    ]));
+    expect(fs.readFileSync(migrationPath, "utf-8")).toBe(oldTemplate);
+    expect(fs.readFileSync(ledgerPath, "utf-8")).toBe(oldLedger);
+    expect(loadMigrationManifest(tempDir).migrations).toEqual(manifest.migrations);
+
+    const refreshed = await runMachine([
+      "node", "swallowkit", "machine", "apply", "model", "--plan", preview.response.data.planId,
+    ]);
+    expect(refreshed.exitCode).toBe(0);
+    expect(refreshed.response.data.result.migration.version).toBe(1);
+    expect(fs.readFileSync(migrationPath, "utf-8")).toContain("'/userId'");
+    expect(fs.readFileSync(ledgerPath, "utf-8")).not.toBe(oldLedger);
+    expect(loadMigrationManifest(tempDir).migrations).toEqual(manifest.migrations);
+    const azureCalls = (childProcess.spawnSync as unknown as {
+      mock: { calls: unknown[][] };
+    }).mock.calls.map((call) => call[1] as string[]);
+    expect(azureCalls.filter((args) => args[0] === "group" || args[0] === "deployment")
+      .every((args) => args.includes("--subscription") && args.includes("11111111-1111-1111-1111-111111111111")))
+      .toBe(true);
+  });
+
+  it.each(["Running", "Accepted", "Succeeded"] as const)(
+    "refuses to rewrite a pending migration after an Azure %s deployment attempt",
+    async (deploymentState) => {
+      createProjectFixture(tempDir);
+      writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+      writeFile(path.join(tempDir, "infra", "main.parameters.json"), "{}\n");
+      const baseline = initializeLegacyMigrations(tempDir);
+      await createModelOperation({ names: ["learning profile"], overwriteMode: "never" });
+      writeFile(path.join(tempDir, "shared", "models", "learning-profile.ts"), `import { z } from 'zod/v4';
+export const LearningProfile = z.object({ id: z.string(), userId: z.string() });
+export const partitionKey = '/userId';
+`);
+      const migrationPath = path.join(tempDir, "infra", "migrations", "0001-create-learning-profile-container", "main.bicep");
+      const oldTemplate = fs.readFileSync(migrationPath, "utf-8");
+      const tagKey = getMigrationTagKey(baseline.projectId);
+      (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+        if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+        if (args[0] === "account" && args[1] === "show") {
+          return { status: 0, stdout: "11111111-1111-1111-1111-111111111111\n", stderr: "" };
+        }
+        if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
+        if (args[0] === "group" && args[1] === "show") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              id: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample",
+              tags: { [tagKey]: encodeMigrationState({ schemaVersion: 1, version: 0, checksum: baseline.baseline.checksum }) },
+            }),
+            stderr: "",
+          };
+        }
+        if (args[0] === "deployment" && args[1] === "group" && args[2] === "list") {
+          return {
+            status: 0,
+            stdout: JSON.stringify([
+              { name: "swallowkit-baseline", state: "Succeeded" },
+              { name: "swallowkit-migration-1-abc123abc123", state: deploymentState },
+            ]),
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: `unexpected: ${args.join(" ")}` };
+      });
+
+      await expect(addModelContainerMigration("learning-profile", {
+        refreshPending: true,
+        resourceGroup: "rg-sample",
+        subscription: "11111111-1111-1111-1111-111111111111",
+      })).rejects.toMatchObject({
+        code: "migration-refresh-provision-attempted",
+        status: "blocked",
+      });
+      expect(fs.readFileSync(migrationPath, "utf-8")).toBe(oldTemplate);
+    }
+  );
+
+  it.each([
+    { name: "empty history", deployments: [] },
+    { name: "missing baseline history", deployments: [{ name: "swallowkit-migration-1-abc123abc123", state: "Succeeded" }] },
+  ])("blocks pending refresh with $name", ({ deployments }) => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    const baseline = initializeLegacyMigrations(tempDir);
+    const migrationPath = "infra/migrations/manifest.json";
+    const beforeManifest = fs.readFileSync(path.join(tempDir, migrationPath), "utf-8");
+    const tagKey = getMigrationTagKey(baseline.projectId);
+    (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
+      if (args[0] === "group" && args[1] === "show") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            id: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample",
+            tags: { [tagKey]: encodeMigrationState({ schemaVersion: 1, version: 0, checksum: baseline.baseline.checksum }) },
+          }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "deployment" && args[1] === "group" && args[2] === "list") {
+        return { status: 0, stdout: JSON.stringify(deployments), stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected: ${args.join(" ")}` };
+    });
+
+    expect(() => readRemoteMigrationState(
+      tempDir,
+      "rg-sample",
+      "11111111-1111-1111-1111-111111111111",
+      1
+    )).toThrow(expect.objectContaining({
+      code: "migration-deployment-history-incomplete",
+      status: "blocked",
+    }));
+    expect(fs.readFileSync(path.join(tempDir, migrationPath), "utf-8")).toBe(beforeManifest);
+  });
+
+  it.each([
+    { name: "missing applied migration history", includePriorMigration: false, shouldBlock: true },
+    { name: "complete retained history", includePriorMigration: true, shouldBlock: false },
+  ])("requires complete retained proof for a later pending migration: $name", async ({ includePriorMigration, shouldBlock }) => {
+    createProjectFixture(tempDir);
+    writeFile(path.join(tempDir, "infra", "main.bicep"), SAMPLE_MAIN_BICEP);
+    const baseline = initializeLegacyMigrations(tempDir);
+    await createModelOperation({ names: ["first item", "second item"], overwriteMode: "never" });
+    const secondModelPath = path.join(tempDir, "shared", "models", "second-item.ts");
+    writeFile(secondModelPath, `import { z } from 'zod/v4';
+export const SecondItem = z.object({ id: z.string(), userId: z.string() });
+export const partitionKey = '/userId';
+`);
+    const migrationManifest = loadMigrationManifest(tempDir);
+    const migrations = resolveMigrations(migrationManifest, tempDir);
+    const appliedState = {
+      schemaVersion: 1 as const,
+      version: 1,
+      checksum: checksumAtVersion(migrationManifest, 1, tempDir),
+    };
+    const history = [
+      { name: "swallowkit-baseline", state: "Succeeded" },
+      ...(includePriorMigration
+        ? [{
+            name: `swallowkit-migration-${migrations[0].version}-${migrations[0].checksum.slice(0, 12)}`,
+            state: "Succeeded",
+          }]
+        : []),
+    ];
+    const tagKey = getMigrationTagKey(baseline.projectId);
+    (childProcess.spawnSync as unknown as any).mockImplementation((_file: string, args: string[]) => {
+      if (args[0] === "--version") return { status: 0, stdout: "azure-cli", stderr: "" };
+      if (args[0] === "group" && args[1] === "exists") return { status: 0, stdout: "true\n", stderr: "" };
+      if (args[0] === "group" && args[1] === "show") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            id: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-sample",
+            tags: { [tagKey]: encodeMigrationState(appliedState) },
+          }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "deployment" && args[1] === "group" && args[2] === "list") {
+        return { status: 0, stdout: JSON.stringify(history), stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected: ${args.join(" ")}` };
+    });
+    const migrationPath = path.join(tempDir, migrationManifest.migrations[1].template);
+    const ledgerPath = path.join(tempDir, ".swallowkit", "artifacts.json");
+    const beforeTemplate = fs.readFileSync(migrationPath, "utf-8");
+    const beforeLedger = fs.readFileSync(ledgerPath, "utf-8");
+
+    if (shouldBlock) {
+      expect(() => readRemoteMigrationState(
+        tempDir,
+        "rg-sample",
+        "11111111-1111-1111-1111-111111111111",
+        2
+      )).toThrow(expect.objectContaining({
+        code: "migration-deployment-history-incomplete",
+        status: "blocked",
+      }));
+    } else {
+      const preview = await addModelContainerMigration("second-item", {
+        dryRun: true,
+        refreshPending: true,
+        resourceGroup: "rg-sample",
+        subscription: "11111111-1111-1111-1111-111111111111",
+      });
+      expect(preview.migration?.version).toBe(2);
+      expect(preview.operations.map((operation) => operation.path)).toContain(
+        "infra/migrations/0002-create-second-item-container/main.bicep"
+      );
+    }
+    expect(fs.readFileSync(migrationPath, "utf-8")).toBe(beforeTemplate);
+    expect(fs.readFileSync(ledgerPath, "utf-8")).toBe(beforeLedger);
   });
 
   it("applies only the pending migration and advances its tag", async () => {

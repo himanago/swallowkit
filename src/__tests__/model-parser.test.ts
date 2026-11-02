@@ -1,9 +1,151 @@
 import * as fs from "fs";
 import * as path from "path";
-import { parseModelFile } from "../core/scaffold/model-parser";
+import { getAllModels, parseModelFile } from "../core/scaffold/model-parser";
 
 describe("parseModelFile", () => {
   afterEach(() => { jest.restoreAllMocks(); });
+
+  it("does not enumerate model barrels or declaration files as Cosmos entities", async () => {
+    const previousCwd = process.cwd();
+    const tempDir = fs.mkdtempSync(path.join(previousCwd, ".tmp-model-non-entities-"));
+    try {
+      process.chdir(tempDir);
+      const modelsDir = path.join(tempDir, "shared", "models");
+      fs.mkdirSync(modelsDir, { recursive: true });
+      fs.writeFileSync(path.join(modelsDir, "index.ts"), "export { Task } from './task';\n");
+      fs.writeFileSync(path.join(modelsDir, "types.d.ts"), "export interface GeneratedModelTypes { value: string }\n");
+      fs.writeFileSync(path.join(modelsDir, "task.ts"), `import { z } from 'zod/v4';
+export const Task = z.object({ id: z.string(), title: z.string() });
+`);
+
+      const models = await getAllModels();
+      expect(models.map((model) => model.name)).toEqual(["Task"]);
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a referenced helper schema nested instead of enumerating it as a Cosmos entity", async () => {
+    const previousCwd = process.cwd();
+    const tempDir = fs.mkdtempSync(path.join(previousCwd, ".tmp-model-helpers-"));
+    try {
+      process.chdir(tempDir);
+      const modelsDir = path.join(tempDir, "shared", "models");
+      fs.mkdirSync(modelsDir, { recursive: true });
+      fs.writeFileSync(path.join(modelsDir, "topic-mastery.ts"), `import { z } from 'zod/v4';
+export const TopicMastery = z.object({ topicId: z.string(), score: z.number() });
+export type TopicMastery = z.infer<typeof TopicMastery>;
+`);
+      fs.writeFileSync(path.join(modelsDir, "learning-profile.ts"), `import { z } from 'zod/v4';
+import { TopicMastery } from './topic-mastery';
+export const LearningProfile = z.object({
+  id: z.string(),
+  userId: z.string(),
+  mastery: z.array(TopicMastery),
+});
+export type LearningProfile = z.infer<typeof LearningProfile>;
+export const partitionKey = '/userId';
+`);
+
+      const models = await getAllModels();
+      expect(models.map((model) => model.name)).toEqual(["LearningProfile"]);
+      expect(models[0].nestedSchemaRefs).toEqual([
+        expect.objectContaining({
+          schemaName: "TopicMastery",
+          modelName: "TopicMastery",
+          importPath: "./topic-mastery",
+          sourceHash: expect.any(String),
+        }),
+      ]);
+      expect(models[0].fields.find((field) => field.name === "mastery")).toMatchObject({
+        type: "object",
+        isArray: true,
+        isNestedSchema: false,
+      });
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not suppress parser errors from a referenced helper schema", async () => {
+    const previousCwd = process.cwd();
+    const tempDir = fs.mkdtempSync(path.join(previousCwd, ".tmp-model-helper-errors-"));
+    try {
+      process.chdir(tempDir);
+      const modelsDir = path.join(tempDir, "shared", "models");
+      fs.mkdirSync(modelsDir, { recursive: true });
+      fs.writeFileSync(path.join(modelsDir, "topic-mastery.ts"), `import { z } from 'zod/v4';
+export const TopicMastery = z.object({ scores: z.record(z.string(), z.number()) });
+`);
+      fs.writeFileSync(path.join(modelsDir, "learning-profile.ts"), `import { z } from 'zod/v4';
+import { TopicMastery } from './topic-mastery';
+export const LearningProfile = z.object({ id: z.string(), mastery: TopicMastery });
+`);
+
+      await expect(getAllModels()).rejects.toMatchObject({
+        code: "schema-field-unsupported",
+        details: expect.objectContaining({
+          filePath: expect.stringContaining("topic-mastery.ts"),
+          schemaName: "TopicMastery",
+          field: "scores",
+          reason: "ZodRecord",
+        }),
+      });
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks an unreferenced id-less schema instead of assuming it is a helper", async () => {
+    const previousCwd = process.cwd();
+    const tempDir = fs.mkdtempSync(path.join(previousCwd, ".tmp-model-classification-"));
+    try {
+      process.chdir(tempDir);
+      const modelsDir = path.join(tempDir, "shared", "models");
+      fs.mkdirSync(modelsDir, { recursive: true });
+      fs.writeFileSync(path.join(modelsDir, "topic-mastery.ts"), `import { z } from 'zod/v4';
+export const TopicMastery = z.object({ topicId: z.string(), score: z.number() });
+`);
+
+      await expect(getAllModels()).rejects.toMatchObject({
+        code: "model-classification-ambiguous",
+        details: expect.objectContaining({
+          filePath: expect.stringContaining("topic-mastery.ts"),
+          schemaName: "TopicMastery",
+        }),
+      });
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks a persistent entity with an optional or non-string id", async () => {
+    const previousCwd = process.cwd();
+    const tempDir = fs.mkdtempSync(path.join(previousCwd, ".tmp-model-invalid-id-"));
+    try {
+      process.chdir(tempDir);
+      const modelsDir = path.join(tempDir, "shared", "models");
+      fs.mkdirSync(modelsDir, { recursive: true });
+      fs.writeFileSync(path.join(modelsDir, "learning-profile.ts"), `import { z } from 'zod/v4';
+export const LearningProfile = z.object({ id: z.number().optional(), userId: z.string() });
+`);
+
+      await expect(getAllModels()).rejects.toMatchObject({
+        code: "model-entity-id-required",
+        details: expect.objectContaining({
+          filePath: expect.stringContaining("learning-profile.ts"),
+          field: "id",
+        }),
+      });
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 
   it.each(["zod", "zod/v4"])("executes TypeScript modules and nested imports with %s without fallback", async (zodImport) => {
     const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-model-parser-"));
@@ -210,7 +352,7 @@ export const Computed = z.object({ id: field.transform(value => value) });
     }
   });
 
-  it("blocks unsupported dynamic fields instead of returning lossy metadata", async () => {
+  it("blocks unsupported dynamic fields with structured schema diagnostics", async () => {
     const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-model-parser-"));
     const modelPath = path.join(tempDir, "lossy.ts");
     fs.writeFileSync(path.join(tempDir, "package.json"), JSON.stringify({ name: "fixture" }));
@@ -221,9 +363,106 @@ export const Lossy = z.object({ ...baseFields, ambiguous: z.union([z.string(), z
 
     try {
       await expect(parseModelFile(modelPath)).rejects.toMatchObject({
-        code: "schema-analysis-unsupported",
+        code: "schema-field-unsupported",
         status: "blocked",
-        details: expect.objectContaining({ diagnostics: ["Lossy regex parsing was not used."] }),
+        details: expect.objectContaining({
+          filePath: modelPath,
+          schemaName: "Lossy",
+          field: "ambiguous",
+          reason: "ZodUnion",
+          explanation: expect.stringContaining("Zod union"),
+        }),
+      });
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("selects the filename-matching model schema when helper schemas are exported first", async () => {
+    const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-model-parser-"));
+    const modelPath = path.join(tempDir, "learning-profile.ts");
+    fs.writeFileSync(modelPath, `import { z } from 'zod/v4';
+export const TopicMastery = z.object({ topicId: z.string(), score: z.number() });
+export const LearningProfile = z.object({ id: z.string(), userId: z.string(), topic: TopicMastery });
+export type LearningProfile = z.infer<typeof LearningProfile>;
+export const partitionKey = '/userId';
+`);
+
+    try {
+      const model = await parseModelFile(modelPath);
+      expect(model.name).toBe("LearningProfile");
+      expect(model.schemaName).toBe("LearningProfile");
+      expect(model.fields.map((field) => field.name)).toEqual(["id", "userId", "topic"]);
+      expect(model.partitionKey).toBe("/userId");
+      expect(model.hasId).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("supports the legacy filename-matching Schema export with unrelated schemas before it", async () => {
+    const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-model-parser-"));
+    const modelPath = path.join(tempDir, "learning-profile.ts");
+    fs.writeFileSync(modelPath, `import { z } from 'zod/v4';
+export const TopicSchema = z.object({ topicId: z.string() });
+export const learningProfileSchema = z.object({ id: z.string(), userId: z.string() });
+`);
+
+    try {
+      const model = await parseModelFile(modelPath);
+      expect(model.schemaName).toBe("learningProfileSchema");
+      expect(model.fields.map((field) => field.name)).toEqual(["id", "userId"]);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks schema files with multiple non-matching exported object candidates", async () => {
+    const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-model-parser-"));
+    const modelPath = path.join(tempDir, "learning-profile.ts");
+    fs.writeFileSync(modelPath, `import { z } from 'zod/v4';
+export const TopicSchema = z.object({ topicId: z.string() });
+export const SummarySchema = z.object({ total: z.number() });
+`);
+
+    try {
+      await expect(parseModelFile(modelPath)).rejects.toMatchObject({
+        code: "model-schema-ambiguous",
+        status: "blocked",
+        details: expect.objectContaining({
+          filePath: modelPath,
+          model: "LearningProfile",
+          candidates: ["TopicSchema", "SummarySchema"],
+        }),
+      });
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports unsupported record fields with schema and field diagnostics", async () => {
+    const tempDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-model-parser-"));
+    const modelPath = path.join(tempDir, "learning-profile.ts");
+    fs.writeFileSync(modelPath, `import { z } from 'zod/v4';
+export const TopicMastery = z.object({ topicId: z.string(), score: z.number() });
+export const LearningProfile = z.object({
+  id: z.string(),
+  userId: z.string(),
+  masteryByTopic: z.record(z.string(), TopicMastery),
+});
+`);
+
+    try {
+      await expect(parseModelFile(modelPath)).rejects.toMatchObject({
+        code: "schema-field-unsupported",
+        status: "blocked",
+        details: expect.objectContaining({
+          filePath: modelPath,
+          schemaName: "LearningProfile",
+          field: "masteryByTopic",
+          reason: "ZodRecord",
+          explanation: expect.stringContaining("Zod record"),
+        }),
       });
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
