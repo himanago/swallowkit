@@ -168,7 +168,7 @@ describe("coding-agent instruction contract", () => {
           expect(document).toContain(`${runCmd} swallowkit machine plan model-infrastructure <model>`);
           expect(document).toContain(`${runCmd} swallowkit machine apply model --plan <planId>`);
           expect(document).toContain("custom APIs");
-          expect(document).toContain("required infrastructure is missing");
+          expect(document).toContain("required local migration is missing or stale");
           expect(document).not.toMatch(/\{\{[A-Za-z]+\}\}/);
         }
         expect(agents).toContain("A hand-written model alone is not complete");
@@ -187,7 +187,8 @@ describe("coding-agent instruction contract", () => {
         expect(agents).toContain("baseline-owned container");
         expect(agents).toContain("External `connectorConfig` models");
         expect(agents).toContain("state the reason and the pending");
-        expect(agents).toContain("Even if `verify project` passes");
+        expect(agents).toContain("`verify project` fails while a required local migration is missing or stale");
+        expect(sharedModels).toContain("verify fails while a");
         expect(agents).toContain("Generation is local, not Azure provisioning");
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
@@ -207,7 +208,7 @@ describe("coding-agent instruction contract", () => {
     expect(workflow?.content).toContain("--refresh-pending");
     expect(workflow?.content).toContain("infra/migrations/manifest.json");
     expect(workflow?.content).toContain(".swallowkit/artifacts.json");
-    expect(workflow?.content).toContain("a passing verify does not mean the model is complete or deployment-ready");
+    expect(workflow?.content).toContain("verify fails while required local container migrations are missing or stale");
   });
 
   it("covers the requested model-change, new-feature, BFF, and deployment scenarios", () => {

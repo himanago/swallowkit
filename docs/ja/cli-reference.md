@@ -53,7 +53,7 @@ npx swallowkit machine <command> <subcommand> [options]
 | `inspect drift` | 生成物と現在状態の乖離を検出する |
 | `inspect infra` | Bicep 資産（params / modules / outputs / container 配線）を Azure 呼び出しなしで解析する |
 | `inspect capabilities` | framework の能力契約（model 宣言子と書式例・認証導入 workflow・生成 CRUD の守備範囲・seed 適用方法・コマンド一覧）を返す |
-| `validate project` | 構造化された validation violation を返す |
+| `validate project` | 永続モデルの Cosmos コンテナー migration のローカルな不足・不一致を含む validation violation を返す |
 | `generate model` | `create-model` を非対話 JSON モードで実行する |
 | `generate scaffold` | `scaffold` を非対話 JSON モードで実行する |
 | `plan model` | スキーマ、shared export、コンテナー migration、manifest、生成台帳の変更を、プロジェクトに書き込まず preview する |
@@ -63,9 +63,9 @@ npx swallowkit machine <command> <subcommand> [options]
 | `apply scaffold` | plan の鮮度・承認を検証して scaffold を適用する（複数 model 対応） |
 | `plan auth` | 書き込まずに add-auth の変更計画を返す（`--allowed-providers` で SWA identity provider を指定） |
 | `apply auth` | plan の鮮度・承認を検証して認証コードを適用する |
-| `plan provision` | Azure 状態を確認し bootstrap / adoption / migration / reconcile の plan を返す |
+| `plan provision` | ローカルのモデルコンテナー migration 完備性を確認し、Azure 状態を調べて bootstrap / adoption / migration / reconcile の plan を返す |
 | `apply provision` | 承認済み plan を適用する（常に `--approve` 必須） |
-| `verify project` | structure / drift / typecheck / backend-build（+ 明示指定の build / lint / test とカスタム）を実行する（`--compact` で info-severity findings を抑制） |
+| `verify project` | structure（ローカルのモデルコンテナー migration 完備性を含む）/ drift / typecheck / backend-build（+ 明示指定の build / lint / test とカスタム）を実行する。Azure プロビジョニング済みであることは証明しません（`--compact` で info-severity findings を抑制） |
 | `explain failure` | 直近の verify 失敗の証拠と修復アクションを返す |
 
 ### 例

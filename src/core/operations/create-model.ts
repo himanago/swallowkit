@@ -247,7 +247,7 @@ export async function createModelOperation(options: CreateModelOperationOptions)
     }
   }
 
-  const targetSession = activeSession ?? new FileOperationSession("commit", projectRoot);
+  const targetSession = new FileOperationSession("collect", projectRoot, activeSession?.generatedAt);
   session.applyTo(targetSession);
 
   for (const modelInfo of generatedModels) {
@@ -259,7 +259,18 @@ export async function createModelOperation(options: CreateModelOperationOptions)
     );
   }
   if (generatedModels.length > 0) {
-    await syncProjectManifest(projectRoot, [...existingModels, ...generatedModels]);
+    const replacedModelPaths = new Set(generatedModels.map((modelInfo) => path.resolve(modelInfo.filePath)));
+    const manifestModels = [
+      ...existingModels.filter((modelInfo) => !replacedModelPaths.has(path.resolve(modelInfo.filePath))),
+      ...generatedModels,
+    ];
+    await syncProjectManifest(projectRoot, manifestModels, targetSession);
+  }
+  if (activeSession) {
+    targetSession.applyTo(activeSession);
+  } else {
+    const commitSession = new FileOperationSession("commit", projectRoot, targetSession.generatedAt);
+    targetSession.applyTo(commitSession);
   }
 
   return {

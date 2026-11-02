@@ -175,7 +175,7 @@ pnpm exec swallowkit machine explain failure --check typecheck
 ```
 :::
 
-- `verify project` は既定で `structure` / `drift` / `typecheck` / `backend-build` を実行し、根拠と `suggestedActions` を返します。バックエンド検証は C#/TypeScript のコンパイルと Python の構文検査（import や型は対象外）です。ツールチェーンがなければ理由付きで skip になります。`summary.done: true` は失敗がないことを意味し、skip した検査や実際の動作の検証済みを意味しません。本番ビルドも含める場合は `--checks "structure,drift,typecheck,backend-build,build"` を指定してください。PowerShell ではカンマ区切り値を引用符で囲みます。
+- `verify project` は既定で `structure` / `drift` / `typecheck` / `backend-build` を実行し、根拠と `suggestedActions` を返します。structure は各永続モデルに現在の Cosmos コンテナー migration（または一致する baseline 管理コンテナー）があることも確認し、connector と参照される helper schema は除外します。これはローカル定義の検証であり Azure の状態は照会しません。バックエンド検証は C#/TypeScript のコンパイルと Python の構文検査（import や型は対象外）です。ツールチェーンがなければ理由付きで skip になります。`summary.done: true` は失敗がないことを意味し、skip した検査、実際の動作、Azure へのプロビジョニング済みを意味しません。本番ビルドも含める場合は `--checks "structure,drift,typecheck,backend-build,build"` を指定してください。PowerShell ではカンマ区切り値を引用符で囲みます。
 - `--checks` には `build` / `lint` / `test`（package.json の同名 script がある場合のみ実行、なければ skip）も指定できます。
 - `swallowkit.config.json` の `verify.checks` にカスタムチェック（`{ "id": "smoke-api", "command": "node scripts/smoke.js" }`）を定義すると、既定セットに追加されます。id は `^[a-z][a-z0-9-]*$` に一致し、組み込み id と重複しないものだけが有効です。
 - `explain failure` は直近の verify 結果から失敗チェックの証拠と修復アクションを返します。

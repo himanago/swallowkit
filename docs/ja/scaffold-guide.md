@@ -340,7 +340,7 @@ npx swallowkit machine plan scaffold probe-item --skip-infra
 npx swallowkit machine apply scaffold --plan <planId>
 ```
 
-この scaffold plan では `infra/` 配下を変更しません。plan には `infra-skipped` の警告と `nextActions` が含まれます。`create-model` で登録済みのコンテナー migration はプロジェクト内に残ります。手書きまたはスキップされたモデルでは `swallowkit machine plan model-infrastructure probe-item` で preview し、返された plan を `swallowkit machine apply model --plan <planId>` で適用してください。`inspect drift` や `verify project` が migration 不足をエラーにしない場合があるため、verify 成功だけでは必要なインフラの存在やデプロイ可能性を証明できません。
+この scaffold plan では `infra/` 配下を変更しません。plan には `infra-skipped` の警告と `nextActions` が含まれます。`create-model` で登録済みのコンテナー migration はプロジェクト内に残ります。手書きまたはスキップされたモデルでは `swallowkit machine plan model-infrastructure probe-item` で preview し、返された plan を `swallowkit machine apply model --plan <planId>` で適用してください。`verify project` は各永続モデルに現在の Cosmos コンテナー migration（または一致する baseline 管理コンテナー）が登録されているかを確認し、不足・不一致があれば `machine plan provision` はローカルで停止します。これはローカルのインフラ定義の検証であり、Azure へのプロビジョニング済みであることは証明しません。
 
 ## ユーザー単位のデータに関する警告
 

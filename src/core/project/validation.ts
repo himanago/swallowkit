@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { loadProjectManifest, buildProjectManifest, ProjectManifest, ProjectManifestEntity, SWALLOWKIT_MANIFEST_PATH } from "./manifest";
 import { toCamelCase, toKebabCase } from "../scaffold/model-parser";
+import { inspectModelInfrastructure } from "./model-infrastructure";
 
 export type ProjectViolationSeverity = "error" | "warning";
 
@@ -303,6 +304,16 @@ export async function validateProject(projectRoot: string = process.cwd()): Prom
   validateGeneratedArtifacts(loaded.manifest, violations);
   validateLayeringViolations(projectRoot, loaded.manifest, violations);
   validateExternalTokenVerifierStubs(projectRoot, loaded.manifest, violations);
+
+  for (const finding of await inspectModelInfrastructure(projectRoot)) {
+    pushViolation(violations, {
+      code: finding.code,
+      severity: "error",
+      message: finding.message,
+      location: { path: path.relative(projectRoot, finding.filePath).replace(/\\/g, "/"), entity: finding.model },
+      suggestedFix: finding.suggestedFix,
+    });
+  }
 
   if (loaded.source === "file") {
     validateManifestDrift(projectRoot, loaded.manifest, rebuilt.manifest, violations);

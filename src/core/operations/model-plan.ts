@@ -64,16 +64,19 @@ function stableContentFingerprint(_relativePath: string, content: string): strin
 async function collectModelOperations(
   options: CreateModelOperationOptions,
   generatedAt?: string
-): Promise<FileOperationSession> {
+): Promise<{
+  session: FileOperationSession;
+  result: Awaited<ReturnType<typeof createModelOperation>>;
+}> {
   const projectRoot = process.cwd();
   const session = new FileOperationSession("collect", projectRoot, generatedAt);
   for (const configFile of ["swallowkit.config.js", "swallowkit.config.json", ".swallowkitrc.json"]) {
     session.registerInput(path.join(projectRoot, configFile));
   }
-  await runWithFileSession(session, async () => {
-    await createModelOperation(options);
+  const result = await runWithFileSession(session, async () => {
+    return createModelOperation(options);
   });
-  return session;
+  return { session, result };
 }
 
 function buildModelPlan(
@@ -129,7 +132,11 @@ async function collectModelInfrastructureOperations(
   model: string,
   options: NonNullable<ModelPlanData["modelInfrastructure"]>,
   generatedAt?: string
-): Promise<{ session: FileOperationSession; modelInfrastructure: NonNullable<ModelPlanData["modelInfrastructure"]> }> {
+): Promise<{
+  session: FileOperationSession;
+  modelInfrastructure: NonNullable<ModelPlanData["modelInfrastructure"]>;
+  result: Awaited<ReturnType<typeof addModelContainerMigration>>;
+}> {
   const projectRoot = process.cwd();
   const session = new FileOperationSession("collect", projectRoot, generatedAt);
   for (const configFile of ["swallowkit.config.js", "swallowkit.config.json", ".swallowkitrc.json"]) {
@@ -148,6 +155,7 @@ async function collectModelInfrastructureOperations(
       ...options,
       ...(result.resolvedSubscription ? { subscription: result.resolvedSubscription } : {}),
     },
+    result,
   };
 }
 
@@ -157,8 +165,8 @@ export async function planModelOperation(
   generatedAt?: string
 ): Promise<ModelPlanData> {
   const projectRoot = process.cwd();
-  const session = await collectModelOperations(options, generatedAt);
-  const plan = buildModelPlan(options, session);
+  const collected = await collectModelOperations(options, generatedAt);
+  const plan = buildModelPlan(options, collected.session);
   if (persist) savePlanState(plan, projectRoot);
   return plan;
 }
@@ -231,14 +239,33 @@ export async function applyModelOperation(options: ApplyModelOptions): Promise<{
     );
   }
 
-  const currentPlan = infrastructureRequest
-    ? await planModelInfrastructureOperation(
-        infrastructureRequest.model,
-        infrastructureRequest,
-        false,
-        basePlan.createdAt
-      )
-    : await planModelOperation({ names: basePlan.names, ...basePlan.options }, false, basePlan.createdAt);
+  let currentSession: FileOperationSession;
+  let currentPlan: ModelPlanData;
+  let generatedResult:
+    | { kind: "model"; result: Awaited<ReturnType<typeof createModelOperation>> }
+    | { kind: "model-infrastructure"; result: Awaited<ReturnType<typeof addModelContainerMigration>> };
+  if (infrastructureRequest) {
+    const collected = await collectModelInfrastructureOperations(
+      infrastructureRequest.model,
+      infrastructureRequest,
+      basePlan.createdAt
+    );
+    currentSession = collected.session;
+    generatedResult = { kind: "model-infrastructure", result: collected.result };
+    currentPlan = buildModelPlan({
+      names: [infrastructureRequest.model],
+      modelsDir: "shared/models",
+      overwriteMode: "never",
+    }, currentSession, crypto.randomUUID(), collected.modelInfrastructure);
+  } else {
+    const collected = await collectModelOperations(
+      { names: basePlan.names, ...basePlan.options },
+      basePlan.createdAt
+    );
+    currentSession = collected.session;
+    generatedResult = { kind: "model", result: collected.result };
+    currentPlan = buildModelPlan({ names: basePlan.names, ...basePlan.options }, currentSession);
+  }
   const writeSet = (plan: ModelPlanData) =>
     plan.operations.map(({ path: file, action, ownership, contentFingerprint }) => ({
       path: file,
@@ -268,13 +295,11 @@ export async function applyModelOperation(options: ApplyModelOptions): Promise<{
     );
   }
 
-  const result = infrastructureRequest
-    ? await addModelContainerMigration(infrastructureRequest.model, {
-        ...infrastructureRequest,
-        dryRun: false,
-        projectRoot,
-      })
-    : await createModelOperation({ names: basePlan.names, ...basePlan.options });
+  const commitSession = new FileOperationSession("commit", projectRoot, basePlan.createdAt);
+  currentSession.applyTo(commitSession);
+  const result = generatedResult.kind === "model-infrastructure"
+    ? { ...generatedResult.result, dryRun: false }
+    : generatedResult.result;
   deletePlanState(options.planId, projectRoot);
   return {
     planId: options.planId,

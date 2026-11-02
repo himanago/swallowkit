@@ -210,7 +210,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_validate_project",
-      description: "Validate project metadata, generated artifacts, and framework conventions.",
+      description: "Validate project metadata, generated artifacts, framework conventions, and current local Cosmos container migrations for persistent models. Returns status=failed for error-severity violations; connectors and referenced helper schemas do not require containers.",
       inputSchema: z.object({}),
       handler: async () => {
       const response = await executeMachineCommand(["validate", "project"], runMachineCli);
@@ -416,7 +416,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_verify_project",
-      description: "Run verification checks (structure, drift, typecheck, backend-build by default; build, lint, test and custom checks from swallowkit.config verify.checks are also available) and return machine-readable evidence. backend-build compiles standalone C#/TypeScript Functions or checks Python syntax; unavailable toolchains are skipped with a reason. summary.done=true means no checks failed, not that skipped checks were validated or runtime/auth flows work. Set compact=true to suppress info-severity findings and keep the output small.",
+      description: "Run verification checks (structure, drift, typecheck, backend-build by default; build, lint, test and custom checks from swallowkit.config verify.checks are also available) and return machine-readable evidence. The structure check blocks persistent models with missing or stale registered Cosmos container migrations, excluding connector models and referenced helpers; this checks local definitions, not Azure deployment state. backend-build compiles standalone C#/TypeScript Functions or checks Python syntax; unavailable toolchains are skipped with a reason. summary.done=true means no checks failed, not that skipped checks were validated or runtime/auth flows work. Set compact=true to suppress info-severity findings and keep the output small.",
       inputSchema: z.object({
         checks: z.array(z.string()).optional(),
         compact: z.boolean().optional(),
@@ -516,7 +516,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_plan_provision",
-      description: "Plan Azure bootstrap or pending infrastructure migrations. Existing untagged environments require explicit adoption with what-if; full main.bicep redeployment requires reconcile=true. Never deploys and always requires human approval.",
+      description: "Check local persistent-model container migration completeness, then plan Azure bootstrap or pending infrastructure migrations. Missing or stale local model migrations block planning before Azure queries. Existing untagged environments require explicit adoption with what-if; full main.bicep redeployment requires reconcile=true. Never deploys and always requires human approval.",
       inputSchema: z.object({
         resourceGroup: z.string(),
         location: z.string(),

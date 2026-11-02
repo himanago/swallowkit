@@ -44,7 +44,11 @@ function readManifestForSession(session: FileOperationSession): MigrationManifes
   }
   try {
     const manifest = JSON.parse(session.readFile(manifestPath)) as MigrationManifest;
-    validateMigrationManifest(manifest, session.rootDirectory);
+    validateMigrationManifest(
+      manifest,
+      session.rootDirectory,
+      new Set(session.operations.map((operation) => operation.path))
+    );
     const baselineDrift = findBaselineDrift(manifest, session.rootDirectory);
     if (baselineDrift.length > 0) {
       throw new MachineCommandError(
@@ -166,10 +170,39 @@ function cosmosAccountNameExpression(session: FileOperationSession): string {
 }
 
 export function generateModelContainerMigration(
-  model: { name: string; partitionKey: string },
+  model: {
+    name: string;
+    partitionKey: string;
+    fields: Array<{ name: string; type: string; isOptional: boolean; isArray: boolean; isNullable?: boolean }>;
+  },
   session: FileOperationSession = new FileOperationSession("commit"),
   options: { allowPendingRefresh?: boolean } = {}
 ): InfrastructureMigration | null {
+  const idField = model.fields.find((field) => field.name === "id");
+  if (!idField || idField.type !== "string" || idField.isOptional || idField.isNullable || idField.isArray) {
+    throw new MachineCommandError(
+      "model-entity-id-required",
+      `Cannot create a Cosmos container migration for ${model.name}: persistent entities require a required, non-null string id field; id-less schemas are helpers, not containers.`,
+      { model: model.name, field: "id", reason: "Persistent models require id: z.string() with no optional, nullable, or array wrapper." },
+      "blocked"
+    );
+  }
+  const partitionKeyField = /^\/[A-Za-z_][A-Za-z0-9_]*$/.test(model.partitionKey)
+    ? model.partitionKey.slice(1)
+    : null;
+  if (!partitionKeyField || !model.fields.some((field) => field.name === partitionKeyField)) {
+    throw new MachineCommandError(
+      "model-partition-key-invalid",
+      `Cannot create a Cosmos container migration for ${model.name}: partition key ${model.partitionKey} must be a single declared schema field.`,
+      {
+        model: model.name,
+        partitionKey: model.partitionKey,
+        reason: "The partition key must use the form /fieldName and reference a declared model field.",
+      },
+      "blocked"
+    );
+  }
+
   const manifest = readManifestForSession(session);
   const existing = manifest.migrations.find((migration) => migration.source === "model" && migration.sourceModel === model.name);
   if (!existing && baselineOwnsModelContainer(manifest, model, session)) {

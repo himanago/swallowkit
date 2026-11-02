@@ -346,9 +346,11 @@ an `infra-skipped` warning and a `nextActions` entry. A container migration
 already registered by `create-model` remains in the project; if the model was
 hand-written or skipped, preview
 `swallowkit machine plan model-infrastructure probe-item` and apply the returned
-plan with `swallowkit machine apply model --plan <planId>`. `inspect drift` and `verify project` may not treat a missing
-migration as an error, so a passing verify is not proof that required
-infrastructure exists or that the project is deployment-ready.
+plan with `swallowkit machine apply model --plan <planId>`. `verify project`
+checks that each persistent model has a current, registered Cosmos container
+migration (or a matching baseline-owned container); `machine plan provision`
+blocks locally if that definition is missing or stale. This verifies local
+infrastructure definitions only, not whether Azure has been provisioned.
 
 ## Per-User Data Warning
 

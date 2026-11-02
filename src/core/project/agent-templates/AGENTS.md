@@ -325,9 +325,10 @@ If an unapplied container definition must be refreshed after editing its partiti
 key, preview with
 `{{runCmd}} swallowkit machine plan model-infrastructure <model> --refresh-pending --resource-group <name>`;
 this checks the target's migration tag and deployment history before changing the template.
-Applied, attempted, unknown, or user-modified migrations are not rewritten. Even if
-`verify project` passes, do not mark the persistent model complete or describe
-the project as deployment-ready while required infrastructure is missing.
+Applied, attempted, unknown, or user-modified migrations are not rewritten.
+`verify project` fails while a required local migration is missing or stale.
+A passing verify confirms local model-to-container definitions only; it does
+not prove that Azure has been provisioned or that deployment succeeded.
 
 Treat plan `warnings` as decisions to make, not noise. In particular,
 `user-scoped-data-without-auth` means the model looks per-user (for example a

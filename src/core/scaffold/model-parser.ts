@@ -1293,11 +1293,15 @@ export async function getAllModels(modelsDir: string = "shared/models"): Promise
   const files = fs.readdirSync(fullModelsDir);
   const modelFiles = files.filter(file => file.endsWith('.ts'));
   const ledger = loadArtifactLedger(cwd);
-  
+  const activeSession = getActiveFileSession();
   const models: ModelInfo[] = [];
   
   for (const file of modelFiles) {
     const modelPath = path.join(fullModelsDir, file);
+    if (file.toLowerCase() === "index.ts" || file.toLowerCase().endsWith(".d.ts")) {
+      activeSession?.registerInput(modelPath);
+      continue;
+    }
     const relativePath = path.relative(cwd, modelPath).replace(/\\/g, "/");
     const artifact = findArtifactRecord(ledger, relativePath);
     if (relativePath === "shared/models/auth.ts" && artifact?.generator === "add-auth") {

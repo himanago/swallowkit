@@ -16,6 +16,7 @@ import { MachineCommandError } from "../../machine/errors";
 import type { MachineNextAction, MachineOperationStatus } from "../../machine/contracts";
 import { getSwallowKitVersion } from "../../version";
 import { inspectInfra, InfraInspection } from "../project/infra";
+import { inspectModelInfrastructure } from "../project/model-infrastructure";
 import { deletePlanState, listProvisionRuns, loadPlanState, loadProvisionRun, lockProvisionTarget, savePlanState, saveProvisionRun } from "../project/state";
 import { hashFileIfExists } from "./file-session";
 import {
@@ -121,7 +122,7 @@ export function readRemoteMigrationState(
       "deployment", "group", "list",
       "--resource-group", resourceGroup,
       ...subscriptionArgs(resolvedSubscription),
-      "--query", "[?starts_with(name, 'swallowkit-migration')].{name:name,state:properties.provisioningState}",
+      "--query", "[].{name:name,state:properties.provisioningState}",
       "-o", "json",
     ], 60_000);
     if (deployments.status !== 0 || deployments.failureKind || deployments.stdoutTruncated) {
@@ -136,7 +137,49 @@ export function readRemoteMigrationState(
     if (!Array.isArray(attempts) || attempts.some((attempt) => typeof attempt?.name !== "string" || typeof attempt?.state !== "string")) {
       throw new MachineCommandError("azure-state-query-failed", `Azure returned incomplete deployment history for migration ${targetVersion}.`, undefined, "blocked");
     }
+    const unidentifiableAttempts = attempts.filter((attempt) =>
+      attempt.name !== "swallowkit-baseline" &&
+      !/^swallowkit-migration-\d+-[a-f0-9]{12}$/.test(attempt.name!)
+    );
+    if (unidentifiableAttempts.length > 0) {
+      throw new MachineCommandError(
+        "migration-deployment-history-unavailable",
+        `Azure deployment history for ${resourceGroup} contains entries that cannot be attributed to a versioned SwallowKit migration; refusing to refresh a pending definition.`,
+        { deployments: unidentifiableAttempts },
+        "blocked"
+      );
+    }
+    const completedDeployments = [
+      { version: 0, name: "swallowkit-baseline" },
+      ...resolveMigrations(manifest, projectRoot)
+        .filter((migration) => migration.version <= state.version)
+        .map((migration) => ({
+          version: migration.version,
+          name: `swallowkit-migration-${migration.version}-${migration.checksum.slice(0, 12)}`,
+        })),
+    ];
+    const missingOrUnconfirmed = completedDeployments.filter(({ name }) => {
+      const matches = attempts.filter((attempt) => attempt.name === name);
+      return matches.length !== 1 || matches[0].state !== "Succeeded";
+    });
+    if (missingOrUnconfirmed.length > 0) {
+      throw new MachineCommandError(
+        "migration-deployment-history-incomplete",
+        `Azure deployment history for ${resourceGroup} does not prove a completed baseline and every migration through version ${state.version}; history may be missing, expired, or filtered, so the pending definition will not be refreshed.`,
+        {
+          version: targetVersion,
+          appliedVersion: state.version,
+          missingOrUnconfirmed: missingOrUnconfirmed.map(({ version, name }) => ({
+            version,
+            name,
+            states: attempts.filter((attempt) => attempt.name === name).map((attempt) => attempt.state),
+          })),
+        },
+        "blocked"
+      );
+    }
     const relevantAttempts = attempts.filter((attempt) => {
+      if (attempt.name === "swallowkit-baseline") return false;
       if (attempt.name === "swallowkit-migration") return true;
       const versioned = /^swallowkit-migration-(\d+)-/.exec(attempt.name!);
       if (!versioned) return true;
@@ -504,6 +547,20 @@ export async function planProvisionOperation(
   }
   if (!infra.parametersFile.exists) {
     warnings.push("infra/main.parameters.json not found; deployment will fail until it is created.");
+  }
+
+  const modelInfrastructureFindings = await inspectModelInfrastructure(projectRoot);
+  if (modelInfrastructureFindings.length > 0) {
+    throw new MachineCommandError(
+      "model-infrastructure-incomplete",
+      "Provisioning is blocked because one or more persistent models do not have a current registered Cosmos container migration.",
+      { findings: modelInfrastructureFindings },
+      "blocked",
+      [{
+        command: "swallowkit machine verify project",
+        description: "Review local model-infrastructure findings before planning an Azure provision.",
+      }]
+    );
   }
 
   const azCli = checkAzCliAvailability();

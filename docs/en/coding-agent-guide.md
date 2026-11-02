@@ -233,9 +233,9 @@ Inspect entities, infra, artifacts, and drift, then verify project. Match the
 model's container name and partition key to its Bicep, migration manifest, and
 artifact ledger; validate existing baseline wiring or external connector mapping
 where applicable. If generation is deferred (including `--skip-infra`), report
-why and what remains. Passing verification alone does not justify completion or
-deployment readiness while required infrastructure is missing. Local generation
-does not authorize Azure provisioning.
+why and what remains. Verify blocks missing or stale local container migrations,
+but a passing verification confirms only local definitions, not Azure
+provisioning. Local generation does not authorize Azure provisioning.
 
 ### Example request for your agent
 

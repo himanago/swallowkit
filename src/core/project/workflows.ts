@@ -67,7 +67,7 @@ Goal: add a persistent model and generate its required infrastructure, even with
    - \`status: "requires-human"\` → review \`data.conflicts\`; only proceed with \`--approve\` if overwriting is intended.
    - Must not change Bicep/infrastructure during the CRUD scaffold? Add \`--skip-infra\` to plan and apply. Nothing under \`infra/\` changes and
      the plan warns \`infra-skipped\`; the model container migration should already be registered by step 1 (or the backfill command).
-     State the reason and pending infrastructure work; a passing verify does not mean the model is complete or deployment-ready.
+     State the reason and pending infrastructure work; verify fails while required local container migrations are missing or stale, and a passing verify does not prove Azure provisioning succeeded.
    - Read \`data.warnings\`. \`user-scoped-data-without-auth\` means generated CRUD would expose every user's documents;
      add auth (\`swallowkit-add-auth\`) and owner-scoped ai-authored endpoints before exposing the model.
    - \`auth-policy-without-auth\` blocks generation before file writes: configure authentication with plan/apply auth,

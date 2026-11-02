@@ -52,7 +52,7 @@ npx swallowkit machine <command> <subcommand> [options]
 | `inspect drift` | Detect drift between generated artifacts and the current state |
 | `inspect infra` | Inspect Bicep assets (params / modules / outputs / container wiring) without calling Azure |
 | `inspect capabilities` | Return the framework capability contract: model declarations (with exact formats), auth workflow, generated-CRUD scope, seeding, and available commands |
-| `validate project` | Return structured validation violations |
+| `validate project` | Return structured validation violations, including missing or stale local Cosmos container migrations for persistent models |
 | `generate model` | Run `create-model` in non-interactive JSON mode |
 | `generate scaffold` | Run `scaffold` in non-interactive JSON mode |
 | `plan model` | Preview schema, shared export, container migration, manifest, and artifact-ledger writes without changing project files |
@@ -62,9 +62,9 @@ npx swallowkit machine <command> <subcommand> [options]
 | `apply scaffold` | Apply scaffold changes with plan freshness and approval checks; accepts multiple models |
 | `plan auth` | Compute the add-auth change plan without writing files (`--allowed-providers` sets SWA identity providers) |
 | `apply auth` | Apply auth code with plan freshness and approval checks |
-| `plan provision` | Inspect Azure state and return a bootstrap, adoption, migration, or reconcile plan |
+| `plan provision` | Check local model-container migration completeness, inspect Azure state, and return a bootstrap, adoption, migration, or reconcile plan |
 | `apply provision` | Apply an approved provisioning plan (always requires `--approve`) |
-| `verify project` | Run structure / drift / typecheck / backend-build (plus opt-in build / lint / test and custom checks); `--compact` suppresses info-severity findings |
+| `verify project` | Run structure (including local model-container migration completeness) / drift / typecheck / backend-build (plus opt-in build / lint / test and custom checks); this does not prove Azure provisioning; `--compact` suppresses info-severity findings |
 | `explain failure` | Return evidence and repair actions for the last verify failures |
 
 ### Examples

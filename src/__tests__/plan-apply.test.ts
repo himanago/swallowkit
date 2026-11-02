@@ -391,6 +391,7 @@ describe("plan / apply / drift / verify machine commands", () => {
     createNativeBackendFixture(tempDir, "csharp");
     writeFile(path.join(tempDir, "shared", "models", "answer-record.ts"), createModelSource("AnswerRecord"));
     createInfrastructureFixture(tempDir);
+    addLegacyContainerToInfrastructure(tempDir, "todo");
     addLegacyContainerToInfrastructure(tempDir, "answer-record");
     const original = initializeLegacyMigrations(tempDir);
     const restoreCodegenMocks = mockSuccessfulNativeCodegen();
@@ -456,7 +457,7 @@ describe("plan / apply / drift / verify machine commands", () => {
     createProjectFixture(tempDir);
     writeFile(
       path.join(tempDir, "shared", "models", "todo.ts"),
-      `${createModelSource("Todo")}\nexport const partitionKey = '/tenantId';\n`
+      `${createModelSource("Todo", "\n  tenantId: z.string(),")}\nexport const partitionKey = '/tenantId';\n`
     );
     createInfrastructureFixture(tempDir);
     addLegacyContainerToInfrastructure(tempDir, "todo");
@@ -527,7 +528,10 @@ describe("plan / apply / drift / verify machine commands", () => {
 
     const verify = await runMachine(machineArgs("verify", "project", "--checks", "structure,drift"));
     expect(verify.exitCode).toBe(0);
-    expect(verify.response.data.summary.done).toBe(true);
+    expect(verify.response.data.summary.done).toBe(false);
+    expect(verify.response.data.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "structure", status: "fail" }),
+    ]));
     const drift = await runMachine(machineArgs("inspect", "drift"));
     expect(drift.response.data.findings.filter((finding: { severity: string }) => finding.severity !== "info")).toEqual([]);
 
@@ -1064,6 +1068,8 @@ export type Todo = z.infer<typeof Todo>;
 
   it("verifies the project and explains failures", async () => {
     createProjectFixture(tempDir);
+    createInfrastructureFixture(tempDir);
+    initializeLegacyMigrations(tempDir);
     await runMachine(machineArgs("apply", "scaffold", "todo", "--api-only"));
 
     const verify = await runMachine(machineArgs("verify", "project", "--checks", "structure,drift"));

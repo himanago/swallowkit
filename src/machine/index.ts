@@ -249,9 +249,15 @@ function createMachineProgram(): Command {
   const validate = new Command("validate");
   validate
     .command("project")
-    .description("Validate SwallowKit project metadata and conventions")
+    .description("Validate SwallowKit project metadata, conventions, and local Cosmos container migration completeness")
     .action(async () => {
-      await handleMachineAction("validate-project", async () => validateProject());
+      await handleMachineAction(
+        "validate-project",
+        async () => validateProject(),
+        (result) => ({
+          status: result.violations.some((violation) => violation.severity === "error") ? "failed" : "complete",
+        })
+      );
     });
 
   const generate = new Command("generate");
@@ -484,7 +490,7 @@ function createMachineProgram(): Command {
 
   plan
     .command("provision")
-    .description("Review local infrastructure and current Azure state without writes (requires az login)")
+    .description("Check local model-container migrations, then review Azure state without writes (requires az login)")
     .requiredOption("-g, --resource-group <name>", "Resource group name")
     .requiredOption("--location <region>", "Primary location for Functions and Cosmos DB")
     .requiredOption("--swa-location <region>", "Static Web App location")
@@ -705,7 +711,7 @@ function createMachineProgram(): Command {
   const verify = new Command("verify");
   verify
     .command("project")
-    .description("Run verification checks (structure, drift, typecheck, backend-build) with machine-readable evidence")
+    .description("Run verification checks (including local persistent-model container migration completeness) with machine-readable evidence")
     .option(
       "--checks <ids>",
       "Comma-separated check ids to run (structure,drift,typecheck,backend-build,build,lint,test, plus custom ids from swallowkit.config verify.checks); quote CSV values in PowerShell"

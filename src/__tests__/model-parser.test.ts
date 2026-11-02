@@ -5,6 +5,27 @@ import { getAllModels, parseModelFile } from "../core/scaffold/model-parser";
 describe("parseModelFile", () => {
   afterEach(() => { jest.restoreAllMocks(); });
 
+  it("does not enumerate model barrels or declaration files as Cosmos entities", async () => {
+    const previousCwd = process.cwd();
+    const tempDir = fs.mkdtempSync(path.join(previousCwd, ".tmp-model-non-entities-"));
+    try {
+      process.chdir(tempDir);
+      const modelsDir = path.join(tempDir, "shared", "models");
+      fs.mkdirSync(modelsDir, { recursive: true });
+      fs.writeFileSync(path.join(modelsDir, "index.ts"), "export { Task } from './task';\n");
+      fs.writeFileSync(path.join(modelsDir, "types.d.ts"), "export interface GeneratedModelTypes { value: string }\n");
+      fs.writeFileSync(path.join(modelsDir, "task.ts"), `import { z } from 'zod/v4';
+export const Task = z.object({ id: z.string(), title: z.string() });
+`);
+
+      const models = await getAllModels();
+      expect(models.map((model) => model.name)).toEqual(["Task"]);
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps a referenced helper schema nested instead of enumerating it as a Cosmos entity", async () => {
     const previousCwd = process.cwd();
     const tempDir = fs.mkdtempSync(path.join(previousCwd, ".tmp-model-helpers-"));

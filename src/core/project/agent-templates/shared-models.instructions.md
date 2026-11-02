@@ -37,8 +37,9 @@ source-of-truth models, subject to the current result of
   Check the model, container Bicep, migration manifest, and artifact ledger
   correspondence, then inspect drift and verify project. For connector models,
   verify the external connector mapping instead of generating a Cosmos container.
-  If generation is deferred, state why and what remains; do not claim completion
-  or deployment readiness while required infrastructure is missing.
+  If generation is deferred, state why and what remains; verify fails while a
+  required local migration is missing or stale. A passing verify checks local
+  definitions, not whether Azure has been provisioned.
 - After editing a partition key, refresh an unapplied generated container only
   through `machine plan model-infrastructure <model> --refresh-pending
   --resource-group <name>` (and `--subscription <id>` when needed), then apply

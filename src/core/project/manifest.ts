@@ -4,7 +4,7 @@ import { getBackendLanguage, getFrontendFramework, getFullConfig, normalizeAuthC
 import { getAllModels, toCamelCase, toKebabCase } from "../scaffold/model-parser";
 import { AuthConfig, BackendLanguage, FrontendFramework, ConnectorDefinition, ModelAuthPolicy, ModelConnectorConfig } from "../../types";
 import { captureConsoleMessages, withWorkingDirectory } from "../operations/runtime";
-import { getActiveFileSession } from "../operations/file-session";
+import { FileOperationSession, getActiveFileSession } from "../operations/file-session";
 import type { ModelInfo } from "../scaffold/model-parser";
 
 const CONFIG_CANDIDATES = [
@@ -420,10 +420,14 @@ export async function loadProjectManifest(projectRoot: string = process.cwd()): 
   };
 }
 
-export async function syncProjectManifest(projectRoot: string = process.cwd(), modelsOverride?: ModelInfo[]): Promise<ProjectManifest> {
+export async function syncProjectManifest(
+  projectRoot: string = process.cwd(),
+  modelsOverride?: ModelInfo[],
+  fileSession?: FileOperationSession
+): Promise<ProjectManifest> {
   const { manifest } = await buildProjectManifest(projectRoot, modelsOverride);
   const manifestPath = path.join(projectRoot, SWALLOWKIT_MANIFEST_PATH);
-  const activeSession = getActiveFileSession();
+  const activeSession = fileSession ?? getActiveFileSession();
   if (activeSession) manifest.generatedAt = activeSession.generatedAt;
   const content = JSON.stringify(manifest, null, 2) + "\n";
   if (activeSession) {
