@@ -7,7 +7,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { spawnSync } from "child_process";
 import { getBackendLanguage, getConnectorDefinition, getAuthConfig, getFullConfig, getNormalizedAuthConfig, ensureSwallowKitProject, normalizeAuthConfig, validateConfig } from "../../core/config";
-import { ModelInfo, parseModelFile, toKebabCase, toPascalCase, toCamelCase } from "../../core/scaffold/model-parser";
+import { getModelDependencyPaths, ModelInfo, parseModelFile, toKebabCase, toPascalCase, toCamelCase } from "../../core/scaffold/model-parser";
 import { MachineCommandError } from "../../machine/errors";
 import {
   generateCSharpAzureFunctionsCRUD,
@@ -164,7 +164,7 @@ export async function scaffoldCommand(options: ScaffoldOptions) {
       ? [modelInfo]
       : await collectModelGraph(modelPath);
     for (const relatedModel of relatedModels) {
-      session.registerInput(relatedModel.filePath);
+      for (const dependency of getModelDependencyPaths(relatedModel.filePath)) session.registerInput(dependency);
     }
 
     // 4b. 書き込み前に外部 codegen toolchain を検証し、失敗時はプロジェクト無変更で終了する
@@ -971,4 +971,3 @@ ${models.map(m => `    { name: '${m.name}', path: '${m.path}', label: '${m.label
   session.writeFile(configPath, newConfigContent, { ownership: "extension-point", generator: SCAFFOLD_GENERATOR });
   console.log(`✅ Added ${modelInfo.name} to navigation menu`);
 }
-

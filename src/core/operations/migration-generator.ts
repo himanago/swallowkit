@@ -1,8 +1,10 @@
 import * as fs from "fs";
 import * as path from "path";
 import { MachineCommandError } from "../../machine/errors";
-import { FileOperationSession } from "./file-session";
+import { FileOperationSession, hashContent } from "./file-session";
 import { recordSessionOperations } from "../project/artifacts";
+import { findArtifactRecord, loadArtifactLedger } from "../project/artifacts";
+import { confirmPendingMigration, PendingMigrationTarget } from "./migration-refresh";
 import {
   InfrastructureMigration,
   MIGRATION_MANIFEST_PATH,
@@ -37,14 +39,21 @@ function readManifestForSession(session: FileOperationSession): MigrationManifes
   if (!session.fileExists(manifestPath)) {
     throw new MachineCommandError(
       "migration-manifest-not-found",
-      `Migration manifest not found. Run "swallowkit migrations init --legacy-baseline" before scaffolding new models.`,
+      `Migration manifest not found. Run "swallowkit migrations init --legacy-baseline" before generating or registering Cosmos models.`,
       undefined,
       "blocked"
     );
   }
   try {
+    loadMigrationManifest(session.rootDirectory);
     const manifest = JSON.parse(session.readFile(manifestPath)) as MigrationManifest;
-    validateMigrationManifest(manifest, session.rootDirectory);
+    validateMigrationManifest(manifest, session.rootDirectory, relativePath => {
+      const absolutePath = path.join(session.rootDirectory, relativePath);
+      if (!session.fileExists(absolutePath)) {
+        throw new MachineCommandError("migration-file-not-found", `Migration file not found: ${relativePath}`, undefined, "blocked");
+      }
+      return session.readFile(absolutePath);
+    });
     const baselineDrift = findBaselineDrift(manifest, session.rootDirectory);
     if (baselineDrift.length > 0) {
       throw new MachineCommandError(
@@ -85,9 +94,38 @@ function baselineOwnsModelContainer(
   if (!wired) return false;
 
   const containerBicep = session.readFile(path.join(session.rootDirectory, containerPath));
-  const baselinePartitionKey = containerBicep.match(
+  const moduleStart = mainBicep.search(new RegExp(`^\\s*module\\s+\\w+\\s+['"]containers/${containerSlug}-container\\.bicep['"]\\s*=\\s*\\{`, "m"));
+  if (moduleStart < 0) {
+    throw new MachineCommandError("baseline-container-configuration-unknown", "Cannot safely analyze the baseline container module wiring.",
+      { model: model.name, containerPath }, "blocked");
+  }
+  const bodyStart = mainBicep.indexOf("{", moduleStart);
+  let depth = 1;
+  let end = bodyStart + 1;
+  for (; end < mainBicep.length && depth > 0; end++) {
+    const character = mainBicep[end];
+    if (character === "'" || character === '"') {
+      const quote = character;
+      for (end++; end < mainBicep.length; end++) {
+        if (mainBicep[end] === "\\") end++;
+        else if (mainBicep[end] === quote) break;
+      }
+    } else if (character === "{") depth++;
+    else if (character === "}") depth--;
+  }
+  const moduleBody = mainBicep.slice(bodyStart, end);
+  const override = moduleBody.match(/partitionKeyPath\s*:\s*['"]([^'"]+)['"]/)?.[1];
+  if (depth !== 0 || (!override && /partitionKeyPath\s*:/.test(moduleBody))) {
+    throw new MachineCommandError("baseline-container-configuration-unknown", "The baseline partition key must be statically known; no container migration was generated.",
+      { model: model.name, containerPath }, "blocked");
+  }
+  const baselinePartitionKey = override ?? containerBicep.match(
     /param\s+partitionKeyPath\s+string\s*=\s*['"]([^'"]+)['"]/
   )?.[1];
+  if (!baselinePartitionKey) {
+    throw new MachineCommandError("baseline-container-configuration-unknown", "Cannot establish the partition key of the baseline-owned container.",
+      { model: model.name, containerPath }, "blocked");
+  }
   if (baselinePartitionKey && baselinePartitionKey !== model.partitionKey) {
     throw new MachineCommandError(
       "baseline-container-configuration-change",
@@ -153,9 +191,26 @@ param location string
 }
 
 export function generateModelContainerMigration(
-  model: { name: string; partitionKey: string },
-  session: FileOperationSession = new FileOperationSession("commit")
+  model: { name: string; partitionKey: string; fields?: Array<{
+    name: string; type: string; isOptional: boolean; isArray: boolean; isNullable?: boolean;
+  }> },
+  session: FileOperationSession = new FileOperationSession("commit"),
+  refreshTarget?: PendingMigrationTarget
 ): InfrastructureMigration | null {
+  if (model.fields) {
+    const id = model.fields.find(field => field.name === "id");
+    if (!id || id.type !== "string" || id.isOptional || id.isNullable || id.isArray) {
+      throw new MachineCommandError("model-entity-id-required",
+        `Only persistent models with a required string id own Cosmos containers; ${model.name} cannot be registered.`,
+        { model: model.name, field: "id", reason: "required-string-id" }, "blocked");
+    }
+  }
+  const partitionField = model.partitionKey.slice(1);
+  if (!/^\/[A-Za-z_][A-Za-z0-9_]*$/.test(model.partitionKey) ||
+      (model.fields && !model.fields.some(field => field.name === partitionField))) {
+    throw new MachineCommandError("invalid-model-partition-key", `Model ${model.name} must declare the partition key field ${model.partitionKey}.`,
+      { model: model.name, partitionKey: model.partitionKey }, "blocked");
+  }
   const manifest = readManifestForSession(session);
   const existing = manifest.migrations.find((migration) => migration.source === "model" && migration.sourceModel === model.name);
   if (!existing && baselineOwnsModelContainer(manifest, model, session)) {
@@ -212,13 +267,26 @@ resource container 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/container
 output containerName string = container.name
 `;
   const absoluteTemplate = path.join(session.rootDirectory, template);
+  session.registerInput(path.join(session.rootDirectory, MIGRATION_MANIFEST_PATH));
+  for (const file of manifest.baseline.files) session.registerInput(path.join(session.rootDirectory, file.path));
+  for (const migration of manifest.migrations) {
+    session.registerInput(path.join(session.rootDirectory, migration.template));
+    if (migration.parameters) session.registerInput(path.join(session.rootDirectory, migration.parameters));
+  }
   if (existing && session.fileExists(absoluteTemplate) && session.readFile(absoluteTemplate) !== bicep) {
-    throw new MachineCommandError(
-      "applied-migration-immutable",
-      `The generated migration for model ${model.name} differs from the current schema. Create a new explicit migration instead of changing container properties.`,
-      { version: existing.version, template },
-      "blocked"
-    );
+    if (!refreshTarget) {
+      throw new MachineCommandError(
+        "applied-migration-immutable",
+        `The migration for ${model.name} differs from the schema. Its applied status is unknown; no files were changed. Use migrations add-model --refresh-pending with an explicit Azure target to prove it is pending.`,
+        { version: existing.version, template, appliedStatus: "unknown" }, "blocked"
+      );
+    }
+    const record = findArtifactRecord(loadArtifactLedger(session.rootDirectory), template);
+    if (!record || record.generator !== GENERATOR || record.contentHash !== hashContent(session.readFile(absoluteTemplate))) {
+      throw new MachineCommandError("migration-provenance-unknown", "Only an unmodified generated model migration can be refreshed.",
+        { version: existing.version, template }, "blocked");
+    }
+    confirmPendingMigration(manifest, existing.version, refreshTarget, session.rootDirectory);
   }
   session.writeFile(absoluteTemplate, bicep, { ownership: "generated-once", generator: GENERATOR, sourceModel: model.name });
 

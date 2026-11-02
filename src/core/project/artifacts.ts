@@ -13,6 +13,7 @@ import {
   ArtifactOwnership,
   RecordedFileOperation,
   hashFileIfExists,
+  FileOperationSession,
 } from "../operations/file-session";
 
 export const SWALLOWKIT_ARTIFACTS_PATH = path.join(".swallowkit", "artifacts.json");
@@ -104,7 +105,8 @@ export interface RecordArtifactContext {
 export function recordSessionOperations(
   operations: RecordedFileOperation[],
   context: RecordArtifactContext = {},
-  projectRoot: string = process.cwd()
+  projectRoot: string = process.cwd(),
+  session?: FileOperationSession
 ): ArtifactLedger {
   const ledger: ArtifactLedger = loadArtifactLedger(projectRoot) ?? {
     version: SWALLOWKIT_ARTIFACTS_VERSION,
@@ -113,7 +115,7 @@ export function recordSessionOperations(
   };
 
   const byPath = new Map(ledger.artifacts.map((record) => [record.path, record] as const));
-  const now = new Date().toISOString();
+  const now = session?.generatedAt ?? new Date().toISOString();
   const generatorVersion = getSwallowKitVersion();
 
   for (const operation of operations) {
@@ -167,7 +169,13 @@ export function recordSessionOperations(
     swallowkitVersion: generatorVersion,
     artifacts: Array.from(byPath.values()),
   };
-  saveArtifactLedger(updated, projectRoot);
+  if (session) {
+    session.writeFile(path.join(projectRoot, SWALLOWKIT_ARTIFACTS_PATH), JSON.stringify({
+      ...updated, artifacts: [...updated.artifacts].sort((a, b) => a.path.localeCompare(b.path)),
+    }, null, 2) + "\n", { ownership: "metadata", generator: "artifact-ledger" });
+  } else {
+    saveArtifactLedger(updated, projectRoot);
+  }
   return updated;
 }
 

@@ -140,26 +140,82 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_validate_project",
-      description: "Validate project metadata, generated artifacts, and framework conventions.",
+      description: "Validate current project metadata, generated artifacts, framework conventions and Cosmos container registration. Missing/stale infrastructure and schema-analysis failures cannot pass.",
       inputSchema: z.object({}),
       handler: async () => {
       const response = await executeMachineCommand(["validate", "project"], runMachineCli);
-      return jsonTextContent(withSwallowKitMetadata(response.data));
+      return jsonTextContent(withSwallowKitMetadata(withOperationStatus(response)));
       },
     },
     {
       name: "swallowkit_generate_model",
-      description: "Generate SwallowKit model templates through the official generator.",
+      description: "Generate model templates and register Cosmos container migrations independently of CRUD. Connector models are excluded. Parsing/infrastructure errors block the whole batch; dryRun lists all writes without changing files.",
       inputSchema: z.object({
         names: z.array(z.string()).min(1),
         modelsDir: z.string().optional(),
         connector: z.string().optional(),
         overwrite: z.enum(["always", "never"]).optional(),
+        dryRun: z.boolean().optional(),
       }),
-      handler: async ({ names, modelsDir, connector, overwrite }: { names: string[]; modelsDir?: string; connector?: string; overwrite?: "always" | "never" }) => {
-      const response = await executeMachineCommand(["generate", "model", ...names, ...(modelsDir ? ["--models-dir", modelsDir] : []), ...(connector ? ["--connector", connector] : []), "--overwrite", overwrite || "never"], runMachineCli);
+      handler: async ({ names, modelsDir, connector, overwrite, dryRun }: { names: string[]; modelsDir?: string; connector?: string; overwrite?: "always" | "never"; dryRun?: boolean }) => {
+      const response = await executeMachineCommand(["generate", "model", ...names, ...(modelsDir ? ["--models-dir", modelsDir] : []), ...(connector ? ["--connector", connector] : []), "--overwrite", overwrite || "never", ...(dryRun ? ["--dry-run"] : [])], runMachineCli);
       return jsonTextContent(response.data);
       },
+    },
+    {
+      name: "swallowkit_add_model_migration",
+      description: "Register Cosmos infrastructure for a handwritten entity without changing schema bytes or generating CRUD. dryRun persists nothing. refreshPending requires explicit resourceGroup, pinned subscription and read-only Azure tag/checksum/retained-history evidence; missing history and unknown/applied/attempted states block. Cannot detect deleted attempts: never refresh after deleted history or deployment elsewhere. Does not deploy.",
+      inputSchema: z.object({
+        model: z.string(), dryRun: z.boolean().optional(), refreshPending: z.boolean().optional(),
+        resourceGroup: z.string().optional(), subscription: z.string().optional(),
+      }),
+      handler: async ({ model, dryRun, refreshPending, resourceGroup, subscription }: {
+        model: string; dryRun?: boolean; refreshPending?: boolean; resourceGroup?: string; subscription?: string;
+      }) => {
+        const args = ["migrations", "add-model", model];
+        if (dryRun) args.push("--dry-run");
+        if (refreshPending) args.push("--refresh-pending");
+        if (resourceGroup) args.push("--resource-group", resourceGroup);
+        if (subscription) args.push("--subscription", subscription);
+        return jsonTextContent((await executeMachineCommand(args, runMachineCli)).data);
+      },
+    },
+    {
+      name: "swallowkit_plan_model_infrastructure",
+      description: "Plan schema-preserving Cosmos migration registration or a proven-pending refresh. Writes only the persisted plan, not models, migrations or ledger; use swallowkit_apply_model after review. Refresh repeats read-only Azure tag/checksum/deployment-history proof on apply.",
+      inputSchema: z.object({
+        model: z.string(), refreshPending: z.boolean().optional(),
+        resourceGroup: z.string().optional(), subscription: z.string().optional(),
+      }),
+      handler: async ({ model, refreshPending, resourceGroup, subscription }: {
+        model: string; refreshPending?: boolean; resourceGroup?: string; subscription?: string;
+      }) => jsonTextContent((await executeMachineCommand([
+        "plan", "model-infrastructure", model,
+        ...(refreshPending ? ["--refresh-pending"] : []),
+        ...(resourceGroup ? ["--resource-group", resourceGroup] : []),
+        ...(subscription ? ["--subscription", subscription] : []),
+      ], runMachineCli)).data),
+    },
+    {
+      name: "swallowkit_plan_model",
+      description: "Plan model creation and every Cosmos migration/metadata write without changing application files.",
+      inputSchema: z.object({
+        names: z.array(z.string()).min(1), modelsDir: z.string().optional(),
+        connector: z.string().optional(), overwrite: z.enum(["always", "never"]).optional(),
+      }),
+      handler: async ({ names, modelsDir, connector, overwrite }: {
+        names: string[]; modelsDir?: string; connector?: string; overwrite?: "always" | "never";
+      }) => jsonTextContent((await executeMachineCommand([
+        "plan", "model", ...names, "--overwrite", overwrite ?? "never",
+        ...(modelsDir ? ["--models-dir", modelsDir] : []), ...(connector ? ["--connector", connector] : []),
+      ], runMachineCli)).data),
+    },
+    {
+      name: "swallowkit_apply_model",
+      description: "Apply a previously reviewed model plan after checking input membership, source/output fingerprints and exact staged content hashes. Refresh rechecks Azure evidence on the plan's pinned subscription. Does not provision Azure.",
+      inputSchema: z.object({ planId: z.string() }),
+      handler: async ({ planId }: { planId: string }) =>
+        jsonTextContent((await executeMachineCommand(["apply", "model", "--plan", planId], runMachineCli)).data),
     },
     {
       name: "swallowkit_scaffold_model",
@@ -252,7 +308,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_verify_project",
-      description: "Run verification checks (structure, drift, typecheck by default; build, lint, test and custom checks from swallowkit.config verify.checks are also available) and return machine-readable evidence. summary.done=true means the project passed all checks. Set compact=true to suppress info-severity findings and keep the output small.",
+      description: "Run verification checks (structure, drift, typecheck by default; build, lint, test and custom checks are available). Schema-analysis errors and missing/stale Cosmos infrastructure block structure verification; models are never silently dropped. summary.done=true only means the requested local checks passed/skipped, not Azure deployment or runtime success. Set compact=true to suppress info findings.",
       inputSchema: z.object({
         checks: z.array(z.string()).optional(),
         compact: z.boolean().optional(),

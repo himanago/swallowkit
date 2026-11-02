@@ -78,7 +78,9 @@ describe("coding-agent instruction contract", () => {
     expect(agentsMd).toContain("**whether or not it uses custom APIs**");
     expect(agentsMd).toContain("npx swallowkit create-model <name>");
     expect(agentsMd).toContain("npx swallowkit machine generate model <name> --overwrite never");
-    expect(agentsMd).toContain("it does not\n   create the Cosmos DB container by itself");
+    expect(agentsMd).toContain("New Cosmos models become provision targets without requiring CRUD scaffold");
+    expect(agentsMd).toContain("migrations add-model <model>");
+    expect(agentsMd).toContain("Unknown state and applied partition-key changes are blocked");
     expect(agentsMd).toContain("versioned\n   Bicep migrations");
     expect(agentsMd).toContain(".swallowkit/artifacts.json");
     expect(agentsMd).toContain("Adding a hand-written schema alone is not completion");

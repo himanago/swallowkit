@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { getBackendLanguage, getFullConfig, normalizeAuthConfig, validateConfig } from "../config";
-import { getAllModels, toCamelCase, toKebabCase } from "../scaffold/model-parser";
+import { getAllModels, ModelInfo, toCamelCase, toKebabCase } from "../scaffold/model-parser";
 import { AuthConfig, BackendLanguage, ConnectorDefinition, ModelAuthPolicy, ModelConnectorConfig } from "../../types";
 import { captureConsoleMessages, withWorkingDirectory } from "../operations/runtime";
 
@@ -287,7 +287,7 @@ function buildSystemRoutes(projectRoot: string): ProjectManifestRoute[] {
   ];
 }
 
-export async function buildProjectManifest(projectRoot: string = process.cwd()): Promise<{
+export async function buildProjectManifest(projectRoot: string = process.cwd(), stagedModels?: ModelInfo[]): Promise<{
   manifest: ProjectManifest;
   diagnostics: string[];
 }> {
@@ -299,7 +299,7 @@ export async function buildProjectManifest(projectRoot: string = process.cwd()):
     const config = getFullConfig(configPath || undefined);
     const configValidation = validateConfig(config);
     const { result: entities, messages } = await captureConsoleMessages(async () => {
-      const models = await getAllModels("shared/models");
+      const models = stagedModels ?? await getAllModels("shared/models");
       return models.map((model) => ({
         name: model.name,
         displayName: model.displayName,
@@ -374,9 +374,9 @@ export function readProjectManifest(projectRoot: string = process.cwd()): Projec
   return JSON.parse(raw) as ProjectManifest;
 }
 
-export async function loadProjectManifest(projectRoot: string = process.cwd()): Promise<LoadedProjectManifest> {
+export async function loadProjectManifest(projectRoot: string = process.cwd(), refresh = false): Promise<LoadedProjectManifest> {
   const manifestPath = path.join(projectRoot, SWALLOWKIT_MANIFEST_PATH);
-  if (fs.existsSync(manifestPath)) {
+  if (!refresh && fs.existsSync(manifestPath)) {
     return {
       manifest: readProjectManifest(projectRoot)!,
       source: "file",
@@ -385,7 +385,7 @@ export async function loadProjectManifest(projectRoot: string = process.cwd()): 
   }
 
   const { manifest, diagnostics } = await buildProjectManifest(projectRoot);
-  diagnostics.unshift("manifest:not-found-reconstructed");
+  diagnostics.unshift(refresh && fs.existsSync(manifestPath) ? "manifest:live-reconstructed" : "manifest:not-found-reconstructed");
   return {
     manifest,
     source: "reconstructed",

@@ -140,14 +140,16 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
 
   program
     .command("create-model <names...>")
-    .description("Create model template files with id, createdAt, and updatedAt fields")
+    .description("Create model templates and register Cosmos container migrations independently of CRUD (connectors excluded)")
     .option("--models-dir <dir>", "Models directory", "shared/models")
     .option("--connector <name>", "Associate model with a connector defined in swallowkit.config.js")
-    .action((names, options) => {
-      createModelCommand({
+    .option("--dry-run", "List every model, migration, and metadata write without changing files", false)
+    .action(async (names, options) => {
+      await createModelCommand({
         names,
         modelsDir: options.modelsDir,
         connector: options.connector,
+        dryRun: options.dryRun,
       });
     });
 

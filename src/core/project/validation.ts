@@ -2,6 +2,9 @@ import * as fs from "fs";
 import * as path from "path";
 import { loadProjectManifest, buildProjectManifest, ProjectManifest, ProjectManifestEntity, SWALLOWKIT_MANIFEST_PATH } from "./manifest";
 import { toCamelCase, toKebabCase } from "../scaffold/model-parser";
+import { checkModelInfrastructure } from "../operations/model-infrastructure";
+import { withWorkingDirectory } from "../operations/runtime";
+import { MachineCommandError } from "../../machine/errors";
 
 export type ProjectViolationSeverity = "error" | "warning";
 
@@ -14,6 +17,7 @@ export interface ProjectViolation {
     entity?: string;
   };
   suggestedFix?: string;
+  details?: unknown;
 }
 
 export interface ProjectValidationResult {
@@ -284,6 +288,16 @@ export async function validateProject(projectRoot: string = process.cwd()): Prom
 
   if (loaded.source === "file") {
     validateManifestDrift(projectRoot, loaded.manifest, rebuilt.manifest, violations);
+  }
+
+  try {
+    await withWorkingDirectory(projectRoot, () => checkModelInfrastructure(projectRoot));
+  } catch (error) {
+    if (!(error instanceof MachineCommandError)) throw error;
+    pushViolation(violations, {
+      code: error.code, severity: "error", message: error.message, details: error.details,
+      suggestedFix: "Register matching Cosmos infrastructure with migrations add-model; never rewrite applied history or bypass schema-analysis errors.",
+    });
   }
 
   return {

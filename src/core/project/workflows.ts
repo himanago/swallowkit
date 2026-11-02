@@ -36,10 +36,10 @@ export function buildWorkflowDocs(runCmd: string): WorkflowDoc[] {
     title: "Add a new model (autonomous loop)",
     skillName: "swallowkit-add-model",
     skillDescription:
-      "Add a new data model to a SwallowKit project and deterministically derive CRUD Functions, BFF routes, UI pages, and Cosmos DB infra from it using the plan/apply/verify loop. Use when asked to add a model, entity, resource, table, or a new CRUD feature.",
+      "Add a persistent model with registered Cosmos infrastructure, independently of optional CRUD Functions, BFF routes and UI. Use when asked to add a model, entity, resource, table, or a new CRUD feature.",
     content: `# Workflow: Add a new model
 
-Goal: add a data model and derive CRUD/BFF/UI/infra deterministically.
+Goal: register a persistent model and its infrastructure; derive CRUD/BFF/UI only when needed.
 
 For persistent models, this workflow is required even when all APIs are custom.
 A hand-written schema alone is not completion. Non-persistent types remain
@@ -57,11 +57,24 @@ unfinished work; never claim deployability with required infrastructure missing.
 
 1. Create the model file (deterministic template):
    \`${runCmd} swallowkit machine generate model <name> --overwrite never\`
+   This also registers the Cosmos container migration and generation ledger.
+   Preview with \`--dry-run\`, or use \`machine plan model <name>\` and
+   \`machine apply model --plan <planId>\` to review every write before applying.
 2. Edit \`shared/models/<name>.ts\` — add domain fields (free-form authoring).
-3. Compute the change plan (writes nothing):
+   For a handwritten model use \`migrations add-model <name>\` without rewriting
+   the schema or generating CRUD. A changed partition key requires
+   \`migrations add-model <name> --refresh-pending --resource-group <rg>\`
+   (optional \`--subscription <id>\`): read-only Azure tag/checksum and deployment
+   history checks must show no attempt of this generated migration in retained history.
+   Unknown or applied state is blocked. Proof applies only to the selected
+   target; never rewrite history used by another environment.
+   The subscription is pinned once per operation/plan. Empty/missing expected
+   history blocks; deleted attempts cannot be recovered, so do not refresh
+   after history deletion/truncation or out-of-band deployment.
+3. If CRUD is wanted, compute its change plan (writes no application files):
    \`${runCmd} swallowkit machine plan scaffold <name>\`
    - \`status: "requires-human"\` → review \`data.conflicts\`; only proceed with \`--approve\` if overwriting is intended.
-4. Apply:
+4. If a CRUD plan was created, apply it:
    \`${runCmd} swallowkit machine apply scaffold --plan <planId>\`
 5. Verify:
    \`${runCmd} swallowkit machine verify project\`
@@ -71,7 +84,12 @@ unfinished work; never claim deployability with required infrastructure missing.
      container wiring in \`infra/main.bicep\`), and the
      generation ledger \`.swallowkit/artifacts.json\`. Use \`machine inspect entities\`,
      \`machine inspect infra\`, and \`machine inspect drift\` and inspect actual files.
-     Model creation alone does not generate containers; scaffold does.
+     Model creation registers containers without requiring scaffold.
+     Schema ambiguity and unsupported fields (including \`z.record\`) block
+     generation and verification instead of silently omitting models.
+     Separate id-less helpers require actual embedded references from a
+     persistent entity and no persistence metadata. Their analysis failures
+     still block and their source dependencies remain fingerprinted.
      Local verification is not proof of Azure deployment.
 6. If \`dev-seeds/\` exists, update seed JSON for the new model. Seeds are only
    applied by \`${runCmd} swallowkit dev --seed-env <environment>\` — editing the
@@ -102,6 +120,11 @@ Goal: change a schema and re-align every generated artifact.
 ## Steps
 
 1. Edit \`shared/models/<name>.ts\` (free-form authoring).
+   Keep the filename-matching PascalCase schema export (legacy camelCase
+   \`Schema\` is supported); helper order must not select a different entity.
+   A partition-key change is not an ordinary regeneration: use the explicit
+   \`migrations add-model --refresh-pending --resource-group\` flow above only
+   for a migration proven never attempted. Applied Cosmos keys are immutable.
 2. Check what drifted:
    \`${runCmd} swallowkit machine inspect drift\`
    - \`schema-drift\` findings list the models whose artifacts are stale.
@@ -170,6 +193,10 @@ the scoping key from the verified principal, never from the request body.
     content: `# Workflow: Verify and repair
 
 Goal: converge the project to a verified state after any change.
+Unsupported schema analysis and missing/stale Cosmos infrastructure must not
+be ignored. Check the structured file/schema/field/reason diagnostic; never
+reorder schema exports or hand-edit the ledger to get a passing result.
+Local verification is not proof of Azure deployment.
 
 ## Loop
 

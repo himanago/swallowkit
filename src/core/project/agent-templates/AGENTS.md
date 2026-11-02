@@ -261,11 +261,23 @@ Adding a hand-written schema alone is not completion.
 1. Inspect current capabilities and entities. Use
    `{{runCmd}} swallowkit create-model <name>` or the agent-facing equivalent
    `{{runCmd}} swallowkit machine generate model <name> --overwrite never`.
-   This creates the schema, shared export, and model metadata; it does not
-   create the Cosmos DB container by itself.
-2. Author domain fields, then plan/apply scaffold for that model using the
-   current options. In 1.x, scaffold adds new Cosmos DB containers as versioned
+   This creates the schema, shared export, model metadata, and versioned
    Bicep migrations under `infra/migrations/`, recorded in its `manifest.json`.
+   New Cosmos models become provision targets without requiring CRUD scaffold.
+   Preview every write with `--dry-run`, or use `machine plan model <name>`
+   and `machine apply model --plan <planId>`.
+2. Author domain fields. For an existing hand-written model, run
+   `{{runCmd}} swallowkit migrations add-model <model>` to register infrastructure
+   without rewriting the schema or generating CRUD. Scaffold is optional for
+   custom APIs. If the partition key changes after template creation, use
+   `migrations add-model <model> --refresh-pending --resource-group <rg>`
+   (optionally `--subscription <id>`): this performs read-only Azure checks.
+   Only an unmodified generated migration proven pending for that target may
+   be refreshed. Unknown state and applied partition-key changes are blocked.
+   The subscription is resolved once and pinned in plans and queries. Empty
+   or missing expected deployment history blocks refresh. Retained history
+   cannot reveal deleted attempts or out-of-band changes: do not refresh if
+   history was removed/truncated or the artifact was applied elsewhere.
    Existing baseline-owned containers remain wired in `infra/main.bicep`;
    do not add duplicate containers or edit applied migrations.
 3. Verify the correspondence between the model, container name/partition key,
@@ -273,6 +285,19 @@ Adding a hand-written schema alone is not completion.
    generation ledger. Use `machine inspect entities`, `machine inspect infra`,
    `machine inspect drift`, and `machine verify project`; inspect the actual
    files too. Local generation/verification does not mean Azure was deployed.
+   Missing or stale container definitions and schema-analysis failures block
+   verification/provisioning; never treat omitted models as a passing result.
+
+The parser prefers the filename-matching PascalCase schema export, then the
+legacy camelCase `Schema` export; multiple unmatched candidates stop with a
+structured error. Helper ordering must not change the selected entity.
+Separate id-less helpers are excluded only with actual embedded references
+reachable from persistent models and no persistence metadata. Unsupported helper
+fields still block; helper dependencies remain fingerprinted. Unreferenced
+id-less files and invalid persistence ids block with classification diagnostics.
+`z.record` is currently unsupported by the generation contract (including
+string values); failures identify file/schema/field/reason. Do not reorder
+schemas, edit the ledger, or cast away dictionary value types as a workaround.
 
 Custom APIs and non-persistent types remain ai-authored. Connector-backed
 models follow their connector workflow rather than inventing Cosmos containers.

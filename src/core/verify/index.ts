@@ -20,6 +20,7 @@ import { saveLastVerifyState } from "../project/state";
 import { ProjectViolation, validateProject } from "../project/validation";
 import { CustomVerifyCheck } from "../../types";
 import { detectFromProject, getCommands } from "../../utils/package-manager";
+import { MachineCommandError } from "../../machine/errors";
 
 export type VerifyCheckStatus = "pass" | "fail" | "skip" | "error";
 
@@ -31,7 +32,8 @@ export interface VerifyCheckEvidence {
   logTail?: string[];
   /** --compact で抑制された info-severity findings の件数。 */
   suppressedInfoFindings?: number;
-  errorCode?: "verification-command-unavailable";
+  errorCode?: string;
+  errorDetails?: unknown;
   diagnostics?: string[];
 }
 
@@ -90,8 +92,13 @@ async function runStructureCheck(projectRoot: string): Promise<VerifyCheckResult
       status: "error",
       durationMs: Date.now() - startedAt,
       fixable: false,
-      evidence: { logTail: [error instanceof Error ? error.message : String(error)] },
-      suggestedActions: ["Run this command inside a SwallowKit project root."],
+      evidence: {
+        logTail: [error instanceof Error ? error.message : String(error)],
+        ...(error instanceof MachineCommandError ? { errorCode: error.code, errorDetails: error.details } : {}),
+      },
+      suggestedActions: [error instanceof MachineCommandError
+        ? "Resolve the reported schema or infrastructure error; never omit models or edit the ledger to bypass it."
+        : "Run this command inside a SwallowKit project root."],
     };
   }
 }

@@ -1,9 +1,11 @@
 import * as path from "path";
 import { ensureSwallowKitProject, loadConfig } from "../config";
-import { toPascalCase } from "../scaffold/model-parser";
-import { syncProjectManifest } from "../project/manifest";
+import { getAllModels, getModelDependencyPaths, parseModelFile, toPascalCase } from "../scaffold/model-parser";
+import { buildProjectManifest, SWALLOWKIT_MANIFEST_PATH } from "../project/manifest";
 import { recordSessionOperations } from "../project/artifacts";
 import { FileOperationSession, getActiveFileSession } from "./file-session";
+import { generateModelContainerMigration } from "./migration-generator";
+import { MachineCommandError } from "../../machine/errors";
 
 const CREATE_MODEL_GENERATOR = "create-model";
 
@@ -13,6 +15,7 @@ export interface CreateModelOperationOptions {
   connector?: string;
   overwriteMode?: "prompt" | "always" | "never";
   confirmOverwrite?: (filePath: string) => Promise<boolean>;
+  dryRun?: boolean;
 }
 
 export interface CreateModelOperationResult {
@@ -20,6 +23,9 @@ export interface CreateModelOperationResult {
   skippedFiles: string[];
   updatedIndex: boolean;
   connectorType?: "rdb" | "api";
+  infrastructureFiles: string[];
+  dryRun: boolean;
+  operations: Array<{ path: string; action: string; ownership: string }>;
 }
 
 function generateModelTemplate(modelName: string): string {
@@ -113,6 +119,11 @@ function updateSharedIndex(kebabName: string, pascalName: string, session: FileO
 
 export async function createModelOperation(options: CreateModelOperationOptions): Promise<CreateModelOperationResult> {
   ensureSwallowKitProject("create-model");
+  for (const name of options.names) {
+    if (!/^[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)*$/.test(name)) {
+      throw new MachineCommandError("invalid-model-name", `Invalid model name: ${name}. Use letters, numbers, hyphens or underscores.`, { name }, "blocked");
+    }
+  }
 
   let connectorType: "rdb" | "api" | undefined;
   if (options.connector) {
@@ -130,7 +141,9 @@ export async function createModelOperation(options: CreateModelOperationOptions)
 
   const modelsDir = options.modelsDir || "shared/models";
 
-  const session = getActiveFileSession() ?? new FileOperationSession("commit");
+  const targetSession = options.dryRun ? new FileOperationSession("collect") :
+    getActiveFileSession() ?? new FileOperationSession("commit");
+  const session = new FileOperationSession("collect", targetSession.rootDirectory, targetSession.generatedAt);
   // jest 等の環境で path.resolve の内部 cwd キャッシュが process.chdir と食い違うことが
   // あるため、cwd を明示的に固定して絶対パスを組み立てる。
   const projectRoot = process.cwd();
@@ -139,7 +152,12 @@ export async function createModelOperation(options: CreateModelOperationOptions)
 
   const createdFiles: string[] = [];
   const skippedFiles: string[] = [];
+  const infrastructureFiles: string[] = [];
   let updatedIndex = false;
+  const models = await getAllModels(modelsDir);
+  for (const model of models) {
+    for (const dependency of getModelDependencyPaths(model.filePath)) session.registerInput(dependency);
+  }
 
   for (const name of options.names) {
     const kebabName = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -165,27 +183,44 @@ export async function createModelOperation(options: CreateModelOperationOptions)
     const content = options.connector && connectorType
       ? generateConnectorModelTemplate(name, options.connector, connectorType)
       : generateModelTemplate(name);
+    const model = await parseModelFile(resolveFromRoot(filePath), { sourceContent: content });
+    if (!model.connectorConfig) {
+      const migration = generateModelContainerMigration(model, session);
+      if (migration) infrastructureFiles.push(migration.template);
+    }
     session.writeFile(resolveFromRoot(filePath), content, {
       ownership: "user-owned",
       generator: CREATE_MODEL_GENERATOR,
       sourceModel: pascalName,
     });
     createdFiles.push(filePath.replace(/\\/g, "/"));
+    const existingIndex = models.findIndex(existing => existing.filePath === model.filePath);
+    if (existingIndex < 0) models.push(model);
+    else models[existingIndex] = model;
 
     if (updateSharedIndex(kebabName, pascalName, session)) {
       updatedIndex = true;
     }
   }
 
-  if (session.mode === "commit") {
-    recordSessionOperations(session.operations, {});
-    await syncProjectManifest();
+  if (createdFiles.length > 0) {
+    const { manifest } = await buildProjectManifest(projectRoot, models);
+    session.writeFile(path.join(projectRoot, SWALLOWKIT_MANIFEST_PATH), JSON.stringify({
+      ...manifest, generatedAt: session.generatedAt,
+    }, null, 2) + "\n", {
+      ownership: "metadata", generator: CREATE_MODEL_GENERATOR,
+    });
+    recordSessionOperations(session.operations, {}, projectRoot, session);
   }
+  session.replayInto(targetSession);
 
   return {
     createdFiles,
     skippedFiles,
     updatedIndex,
+    infrastructureFiles,
+    dryRun: options.dryRun ?? false,
+    operations: session.operations.map(({ path: file, action, ownership }) => ({ path: file, action, ownership })),
     ...(connectorType ? { connectorType } : {}),
   };
 }

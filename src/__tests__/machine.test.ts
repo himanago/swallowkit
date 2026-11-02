@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { createMigrationManifest, saveMigrationManifest } from "../core/project/migrations";
 import { EventEmitter } from "events";
 import * as childProcess from "child_process";
 import { runMachineCli } from "../machine";
@@ -266,6 +267,8 @@ describe("machine CLI", () => {
   });
 
   it("generates model templates through the machine interface", async () => {
+    writeFile(path.join(tempDir, "infra", "main.bicep"), "targetScope = 'resourceGroup'\n");
+    saveMigrationManifest(createMigrationManifest(tempDir), tempDir);
     writeFile(path.join(tempDir, "package.json"), JSON.stringify({ name: "sample-app" }, null, 2));
     writeFile(
       path.join(tempDir, "swallowkit.config.js"),

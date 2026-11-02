@@ -46,6 +46,8 @@ export interface CapabilitiesContract {
   sharedModels: {
     idFieldRule: string;
     buildNote: string;
+    infrastructure: string;
+    schemaAnalysis: string;
   };
   seeding: {
     createTemplates: string;
@@ -169,6 +171,8 @@ export function inspectCapabilities(): CapabilitiesContract {
       idFieldRule: "id: z.string() (required). createdAt/updatedAt: z.string().optional(). The backend owns their values.",
       buildNote:
         "verify typecheck resolves the shared package from its built dist/. SwallowKit rebuilds shared automatically during verify; when typechecking manually, build the shared package first (errors like \"no exported member\" usually mean a stale dist).",
+      infrastructure: "create-model registers Cosmos container Bicep, migration manifest and artifact ledger without CRUD; migrations add-model backfills handwritten schemas byte-for-byte. Connector models are excluded. --dry-run lists every write. --refresh-pending requires an explicit target, pinned subscription and read-only Azure tag/checksum/retained-deployment-history evidence; empty/missing expected history and unknown or attempted/applied definitions block. Deleted attempts/out-of-band changes cannot be proven absent; never refresh after history deletion or deployment elsewhere. Local verification is not deployment.",
+      schemaAnalysis: "Prefer the filename-matching PascalCase export, then matching legacy camelCase Schema; one unmatched object export is allowed, ambiguity blocks with candidates. Entities require string id; separate id-less helpers require actual embedded references reachable from an entity and no persistence metadata, otherwise classification blocks. Helper errors/dependency fingerprints are retained. z.record is unsupported across generation targets, including string values; file/schema/field/reason errors block the whole operation and incomplete verification cannot pass.",
     },
     seeding: {
       createTemplates: "swallowkit create-dev-seeds <environment> — writes dev-seeds/<environment>/<model>.json templates.",
@@ -179,6 +183,8 @@ export function inspectCapabilities(): CapabilitiesContract {
       "inspect project | entities | routes | artifacts | boundaries | infra | drift | capabilities",
       "validate project",
       "generate model <names...> | generate scaffold <model>",
+      "migrations add-model <model> [--dry-run] [--refresh-pending --resource-group <rg> --subscription <id>]",
+      "plan model <names...> | plan model-infrastructure <model> | apply model --plan <id>",
       "plan scaffold <models...> | plan auth --provider <p> [--scheme <name>] [--allowed-providers <csv>] | plan provision -g <rg> --location <loc> --swa-location <loc> [--adopt-existing --baseline 0 --what-if] [--reconcile --what-if]",
       "apply scaffold [models...] --plan <id> [--approve] | apply auth --plan <id> [--approve] | apply provision --plan <id> --approve",
       "verify project [--checks <ids>] [--compact]",

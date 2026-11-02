@@ -4,7 +4,7 @@
  * callFunction ヘルパー方式
  */
 
-import { ModelInfo, toCamelCase } from "./model-parser";
+import { getManagedFieldMask, ModelInfo, toCamelCase } from "./model-parser";
 
 /**
  * BFF callFunction ヘルパー (lib/api/call-function.ts) のコードを生成
@@ -148,7 +148,7 @@ import { callFunction } from '@/lib/api/call-function';
 import { ${schemaName} } from '${sharedPackageName}';
 import { z } from 'zod/v4';
 
-const InputSchema = ${schemaName}.omit({ id: true, createdAt: true, updatedAt: true });
+const InputSchema = ${schemaName}.omit(${getManagedFieldMask(model)});
 
 // GET /api/${modelCamel} - 一覧取得
 export async function GET() {
@@ -177,7 +177,7 @@ export async function POST(request: NextRequest) {
 import { callFunction } from '@/lib/api/call-function';
 import { ${schemaName} } from '${sharedPackageName}';
 
-const InputSchema = ${schemaName}.omit({ id: true, createdAt: true, updatedAt: true });
+const InputSchema = ${schemaName}.omit(${getManagedFieldMask(model)});
 
 // GET /api/${modelCamel}/{id} - 詳細取得
 export async function GET(
@@ -259,7 +259,7 @@ import { z } from 'zod/v4';`;
     listImports = `import { NextRequest } from 'next/server';
 ${listImports}
 
-const InputSchema = ${schemaName}.omit({ id: true, createdAt: true, updatedAt: true });`;
+const InputSchema = ${schemaName}.omit(${getManagedFieldMask(model)});`;
   }
 
   let listHandlers = "";
@@ -312,7 +312,7 @@ import { callFunction } from '@/lib/api/call-function';
 import { ${schemaName} } from '${sharedPackageName}';`;
 
     if (hasUpdate) {
-      detailImports += `\n\nconst InputSchema = ${schemaName}.omit({ id: true, createdAt: true, updatedAt: true });`;
+      detailImports += `\n\nconst InputSchema = ${schemaName}.omit(${getManagedFieldMask(model)});`;
     }
 
     if (hasGetById) {

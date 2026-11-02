@@ -254,11 +254,22 @@ model 変更に関する追加事項:
 1. 現在の capabilities と entities を確認し、`{{runCmd}} swallowkit create-model <name>`、
    または Agent 向けの同等操作
    `{{runCmd}} swallowkit machine generate model <name> --overwrite never` を使います。
-   この操作はスキーマ、shared export、モデルのメタデータを作成しますが、
-   Cosmos DB コンテナー自体は作成しません。
-2. ドメインのフィールドを記述し、現在のオプションを確認してモデルの scaffold を plan/apply します。
-   1.x の scaffold は新しい Cosmos DB コンテナーを `infra/migrations/` の versioned Bicep
-   migration として追加し、同ディレクトリの `manifest.json` に記録します。
+   スキーマ、shared export、メタデータに加え、Cosmos コンテナーの Bicep migration を
+   `infra/migrations/manifest.json` に登録します。CRUD scaffold は不要です。
+   `--dry-run` で全書き込みを確認するか、`machine plan model <name>` と
+   `machine apply model --plan <planId>` を使ってください。
+2. ドメインのフィールドを記述します。既存の手書きモデルには
+   `migrations add-model <model>` を使います。スキーマの内容を変更せず、
+   CRUD を生成せずにインフラを登録します。カスタム API に scaffold は必須ではありません。
+   作成後に partition key を変更した場合は
+   `migrations add-model <model> --refresh-pending --resource-group <rg>`
+   （必要なら `--subscription <id>`）で Azure を読み取り専用で確認します。
+   指定環境で未適用と確認できる未編集の生成 migration だけを更新できます。
+   適用状況が不明な場合や適用済みの場合は停止します。
+   subscription は一度解決し、クエリーと保存した計画に固定します。履歴が空の場合や
+   必要な baseline・過去 version の履歴が不足する場合も停止します。削除済みの試行や
+   管理外の変更は履歴から確認できません。履歴を削除・省略した場合や別環境で適用済みの
+   artifact は refresh してはいけません。
    baseline が所有する既存コンテナーは `infra/main.bicep` の組み込みを維持します。
    コンテナーを重複追加したり、適用済み migration を編集したりしてはなりません。
 3. モデル、コンテナー名と partition key、Bicep の組み込みまたは migration manifest、
@@ -266,6 +277,18 @@ model 変更に関する追加事項:
    `machine inspect entities`、`machine inspect infra`、`machine inspect drift`、
    `machine verify project` を実行し、実際のファイルも確認してください。
    ローカルでの生成・検証は Azure へのデプロイ完了を意味しません。
+   コンテナー定義の不足や不整合、モデル解析失敗は検証・provision を停止します。
+
+解析対象はファイル名に対応する PascalCase export、次に従来の camelCase `Schema` export
+を優先します。一意に選べない場合は候補付きのエラーで停止します。ヘルパーの宣言順で
+対象を変えてはなりません。`z.record` は文字列値も含め現在の生成契約では未対応です。
+エラーの file/schema/field/reason を確認し、スキーマの並び替え、台帳の手修正、
+値型を弱める変換で回避しないでください。
+
+別ファイルの補助スキーマは、永続モデルから実際の埋め込み参照で到達でき、`id` と
+永続化メタデータを持たない場合にだけ除外します。補助スキーマの解析失敗は停止理由になり、
+依存ファイルの変更も fingerprint で検出します。参照のない `id` 未定義ファイルや
+不正な永続化用 `id` は、推測でコンテナー化せず分類エラーで停止します。
 
 カスタム API と非永続化型は ai-authored のまま自由に実装できます。Connector-backed モデルは
 connector の手順に従い、不要な Cosmos コンテナーを作らないでください。
