@@ -143,7 +143,7 @@ export async function createModelOperation(options: CreateModelOperationOptions)
 
   const targetSession = options.dryRun ? new FileOperationSession("collect") :
     getActiveFileSession() ?? new FileOperationSession("commit");
-  const session = new FileOperationSession("collect", targetSession.rootDirectory);
+  const session = new FileOperationSession("collect", targetSession.rootDirectory, targetSession.generatedAt);
   // jest 等の環境で path.resolve の内部 cwd キャッシュが process.chdir と食い違うことが
   // あるため、cwd を明示的に固定して絶対パスを組み立てる。
   const projectRoot = process.cwd();
@@ -205,7 +205,9 @@ export async function createModelOperation(options: CreateModelOperationOptions)
 
   if (createdFiles.length > 0) {
     const { manifest } = await buildProjectManifest(projectRoot, models);
-    session.writeFile(path.join(projectRoot, SWALLOWKIT_MANIFEST_PATH), JSON.stringify(manifest, null, 2) + "\n", {
+    session.writeFile(path.join(projectRoot, SWALLOWKIT_MANIFEST_PATH), JSON.stringify({
+      ...manifest, generatedAt: session.generatedAt,
+    }, null, 2) + "\n", {
       ownership: "metadata", generator: CREATE_MODEL_GENERATOR,
     });
     recordSessionOperations(session.operations, {}, projectRoot, session);

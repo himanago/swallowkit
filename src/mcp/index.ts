@@ -164,7 +164,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_add_model_migration",
-      description: "Register Cosmos infrastructure for a handwritten model without modifying its bytes or generating CRUD. dryRun lists every write without persisting files. refreshPending requires an explicit resourceGroup and authoritative Azure tag/checksum plus deployment-history proof via read-only queries; unknown/applied/attempted migrations are never rewritten. Does not deploy.",
+      description: "Register Cosmos infrastructure for a handwritten entity without changing schema bytes or generating CRUD. dryRun persists nothing. refreshPending requires explicit resourceGroup, pinned subscription and read-only Azure tag/checksum/retained-history evidence; missing history and unknown/applied/attempted states block. Cannot detect deleted attempts: never refresh after deleted history or deployment elsewhere. Does not deploy.",
       inputSchema: z.object({
         model: z.string(), dryRun: z.boolean().optional(), refreshPending: z.boolean().optional(),
         resourceGroup: z.string().optional(), subscription: z.string().optional(),
@@ -212,7 +212,7 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_apply_model",
-      description: "Apply a previously reviewed model plan after checking input/output fingerprints. Does not provision Azure.",
+      description: "Apply a previously reviewed model plan after checking input membership, source/output fingerprints and exact staged content hashes. Refresh rechecks Azure evidence on the plan's pinned subscription. Does not provision Azure.",
       inputSchema: z.object({ planId: z.string() }),
       handler: async ({ planId }: { planId: string }) =>
         jsonTextContent((await executeMachineCommand(["apply", "model", "--plan", planId], runMachineCli)).data),

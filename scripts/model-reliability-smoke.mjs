@@ -58,14 +58,17 @@ try {
   assert.equal(loadMigrationManifest(root).migrations.length, 1);
   assert.equal(fs.existsSync(path.join(root, 'functions', 'src', 'learning-profile.ts')), false);
 
+  write('shared/models/topic-mastery.ts', `import {z} from 'zod/v4';
+export const TopicMastery = z.object({topicId:z.string(),score:z.number()});`);
   write('shared/models/learning-profile.ts', `import {z} from 'zod/v4';
-export const TopicMastery = z.object({topicId:z.string(),score:z.number()});
+import {TopicMastery} from './topic-mastery';
 export const unrelatedSchema = z.object({wrong:z.string()});
 export const LearningProfile = z.object({id:z.string(),name:z.string(),userId:z.string(),masteryByTopic:z.array(TopicMastery)});
 export type LearningProfile = z.infer<typeof LearningProfile>;
 `);
   const before = fs.readFileSync(path.join(root, 'shared', 'models', 'learning-profile.ts'));
   await addModelMigrationOperation('learning-profile');
+  assert.deepEqual(loadMigrationManifest(root).migrations.map(migration => migration.sourceModel), ['LearningProfile']);
   assert.deepEqual(fs.readFileSync(path.join(root, 'shared', 'models', 'learning-profile.ts')), before);
   const plan = await planScaffoldOperation({ model: 'learning-profile' });
   assert.equal(plan.schemaAnalysis.canonicalModel.schemaName, 'LearningProfile');

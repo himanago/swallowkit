@@ -191,10 +191,20 @@ param location string
 }
 
 export function generateModelContainerMigration(
-  model: { name: string; partitionKey: string; fields?: Array<{ name: string }> },
+  model: { name: string; partitionKey: string; fields?: Array<{
+    name: string; type: string; isOptional: boolean; isArray: boolean; isNullable?: boolean;
+  }> },
   session: FileOperationSession = new FileOperationSession("commit"),
   refreshTarget?: PendingMigrationTarget
 ): InfrastructureMigration | null {
+  if (model.fields) {
+    const id = model.fields.find(field => field.name === "id");
+    if (!id || id.type !== "string" || id.isOptional || id.isNullable || id.isArray) {
+      throw new MachineCommandError("model-entity-id-required",
+        `Only persistent models with a required string id own Cosmos containers; ${model.name} cannot be registered.`,
+        { model: model.name, field: "id", reason: "required-string-id" }, "blocked");
+    }
+  }
   const partitionField = model.partitionKey.slice(1);
   if (!/^\/[A-Za-z_][A-Za-z0-9_]*$/.test(model.partitionKey) ||
       (model.fields && !model.fields.some(field => field.name === partitionField))) {

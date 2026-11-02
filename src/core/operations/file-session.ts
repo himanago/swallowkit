@@ -79,6 +79,7 @@ export function toProjectRelativePath(rootDirectory: string, absolutePath: strin
 export class FileOperationSession {
   readonly mode: FileSessionMode;
   readonly rootDirectory: string;
+  readonly generatedAt: string;
   readonly warnings: string[] = [];
 
   private readonly operationsByPath = new Map<string, RecordedFileOperation>();
@@ -87,9 +88,10 @@ export class FileOperationSession {
   private readonly overlay = new Map<string, string | null>();
   private schemaAnalysisValue: SchemaAnalysisSnapshot | null = null;
 
-  constructor(mode: FileSessionMode, rootDirectory: string = process.cwd()) {
+  constructor(mode: FileSessionMode, rootDirectory: string = process.cwd(), generatedAt = new Date().toISOString()) {
     this.mode = mode;
     this.rootDirectory = rootDirectory;
+    this.generatedAt = generatedAt;
   }
 
   get operations(): RecordedFileOperation[] {

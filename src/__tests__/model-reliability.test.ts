@@ -3,7 +3,7 @@ import * as path from "path";
 import * as childProcess from "child_process";
 import { createModelOperation } from "../core/operations/create-model";
 import { planProvisionOperation, applyProvisionOperation } from "../core/operations/provision-operations";
-import { FileOperationSession, runWithFileSession } from "../core/operations/file-session";
+import { FileOperationSession, hashFileIfExists, runWithFileSession } from "../core/operations/file-session";
 import { createMigrationManifest, saveMigrationManifest, loadMigrationManifest, getMigrationTagKey, encodeMigrationState, checksumAtVersion } from "../core/project/migrations";
 import { getAllModels, parseModelFile } from "../core/scaffold/model-parser";
 import { runVerify } from "../core/verify";
@@ -13,14 +13,21 @@ import { runMachineCli } from "../machine";
 import { buildSwallowKitToolDefinitions } from "../mcp";
 import { generateAuthModels } from "../core/scaffold/auth-generator";
 import { recordSessionOperations } from "../core/project/artifacts";
+import { savePlanState } from "../core/project/state";
 
 jest.mock("child_process", () => ({
   ...jest.requireActual<typeof import("child_process")>("child_process"),
   spawnSync: jest.fn(),
 }));
 
+jest.mock("../core/operations/azure-cli-query", () => ({
+  ...jest.requireActual<typeof import("../core/operations/azure-cli-query")>("../core/operations/azure-cli-query"),
+  resolveAzureCliInvocation: () => ({ file: "fixture-az", args: [] }),
+}));
+
 describe("stable model reliability", () => {
   const cwd = process.cwd();
+  const subscription = "11111111-1111-1111-1111-111111111111";
   let root: string;
 
   function write(relative: string, content: string): string {
@@ -249,6 +256,49 @@ export const todoSchema=z.object({id:z.string(),title:z.string()});`);
     expect(fs.existsSync(path.join(root, "shared", "models", "other.ts"))).toBe(false);
   });
 
+  it("rejects newly discovered entity/helper inputs after planning without changing application files", async () => {
+    const plan = await planModelOperation({ kind: "model", options: { names: ["probe"], overwriteMode: "never" } });
+    write("shared/models/topic-mastery.ts", `import {z} from 'zod/v4';
+export const TopicMastery=z.object({topicId:z.string(),score:z.number()});`);
+    write("shared/models/learning-profile.ts", `import {z} from 'zod/v4';
+import {TopicMastery} from './topic-mastery';
+export const LearningProfile=z.object({id:z.string(),masteryByTopic:z.array(TopicMastery)});`);
+    const before = snapshot();
+    await expect(applyModelOperation(plan.planId)).rejects.toMatchObject({ code: "stale-plan" });
+    expect(snapshot()).toEqual(before);
+  });
+
+  it("applies exactly the staged bytes, including deterministic manifest and ledger timestamps", async () => {
+    const plan = await planModelOperation({ kind: "model", options: { names: ["probe"], overwriteMode: "never" } });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await applyModelOperation(plan.planId);
+    for (const operation of plan.operations) {
+      expect(hashFileIfExists(path.join(root, operation.path))).toBe(operation.newHash);
+    }
+  });
+
+  it("rejects a changed staged output hash without writing", async () => {
+    const plan = await planModelOperation({ kind: "model", options: { names: ["probe"], overwriteMode: "never" } });
+    plan.operations[0].newHash = "f".repeat(64);
+    savePlanState(plan);
+    const before = snapshot();
+    await expect(applyModelOperation(plan.planId)).rejects.toMatchObject({ code: "stale-plan" });
+    expect(snapshot()).toEqual(before);
+  });
+
+  it.each(["entity", "dependency"])("rejects a removed %s input without writing", async removed => {
+    write("shared/models/topic-mastery.ts", `import {z} from 'zod/v4';
+export const TopicMastery=z.object({topicId:z.string(),score:z.number()});`);
+    write("shared/models/learning-profile.ts", `import {z} from 'zod/v4';
+import {TopicMastery} from './topic-mastery';
+export const LearningProfile=z.object({id:z.string(),masteryByTopic:z.array(TopicMastery)});`);
+    const plan = await planModelOperation({ kind: "model", options: { names: ["probe"], overwriteMode: "never" } });
+    fs.unlinkSync(path.join(root, "shared", "models", removed === "entity" ? "learning-profile.ts" : "topic-mastery.ts"));
+    const before = snapshot();
+    await expect(applyModelOperation(plan.planId)).rejects.toMatchObject({ code: "stale-plan" });
+    expect(snapshot()).toEqual(before);
+  });
+
   it("backfills a handwritten model byte-for-byte, excludes embedded helpers, and reruns as a no-op", async () => {
     const source = `import {z} from 'zod/v4';
 export const Helper=z.object({name:z.string()});
@@ -286,6 +336,120 @@ export const Probe=z.object({id:z.string(),nested:helperSchema});`);
     expect(JSON.stringify(inspection.data)).not.toContain('"name":"nested"');
   });
 
+  it("does not register an imported helper-only file as an independent Cosmos entity", async () => {
+    write("app/api/.gitkeep", "");
+    write("functions/.gitkeep", "");
+    const helper = write("shared/models/topic-mastery.ts", `import {z} from 'zod/v4';
+export const TopicMastery=z.object({topicId:z.string(),score:z.number()});`);
+    write("shared/models/learning-profile.ts", `import {z} from 'zod/v4';
+import {TopicMastery} from './topic-mastery';
+export const LearningProfile=z.object({id:z.string(),userId:z.string(),masteryByTopic:z.array(TopicMastery)});
+export const partitionKey='/userId';`);
+    expect((await getAllModels()).map(model => model.name)).toEqual(["LearningProfile"]);
+    const model = await parseModelFile(path.join(root, "shared", "models", "learning-profile.ts"));
+    expect(model.fields.find(field => field.name === "masteryByTopic")?.isNestedSchema).toBe(false);
+    const plan = await planModelOperation({ kind: "model-infrastructure", model: "learning-profile" });
+    expect(plan.fingerprints["shared/models/topic-mastery.ts"]).toBeDefined();
+    await applyModelOperation(plan.planId);
+    expect(loadMigrationManifest(root).migrations.map(migration => migration.sourceModel)).toEqual(["LearningProfile"]);
+    const verification = await runVerify(["structure"]);
+    expect(verification.checks.find(check => check.id === "structure")?.status).toBe("pass");
+    const before = snapshot();
+    await expect(addModelMigrationOperation("topic-mastery")).rejects.toMatchObject({ code: "model-entity-id-required" });
+    expect(snapshot()).toEqual(before);
+    fs.appendFileSync(helper, "\n// changed helper\n");
+    const stale = await planModelOperation({ kind: "model", options: { names: ["probe"], overwriteMode: "never" } });
+    fs.appendFileSync(helper, "\n// changed again\n");
+    await expect(applyModelOperation(stale.planId)).rejects.toMatchObject({ code: "stale-plan" });
+    write("shared/models/topic-mastery.ts", `import {z} from 'zod/v4';
+export const TopicMastery=z.object({topicId:z.string(),output:z.record(z.string(),z.string())});`);
+    await expect(getAllModels()).rejects.toMatchObject({
+      code: "schema-analysis-unsupported", details: { filePath: helper, field: "output", reason: "ZodRecord" },
+    });
+  });
+
+  it("blocks unclassified id-less models and never hides invalid persistence ids as helpers", async () => {
+    write("shared/models/topic-mastery.ts", `import {z} from 'zod/v4';
+export const TopicMastery=z.object({topicId:z.string(),score:z.number()});`);
+    await expect(getAllModels()).rejects.toMatchObject({ code: "model-classification-ambiguous" });
+    write("shared/models/learning-profile.ts", `import {z} from 'zod/v4';
+import {TopicMastery} from './topic-mastery';
+export const LearningProfile=z.object({id:z.string(),mastery:z.array(TopicMastery)});`);
+    write("shared/models/topic-mastery.ts", `import {z} from 'zod/v4';
+export const TopicMastery=z.object({id:z.string().optional(),score:z.number()});`);
+    await expect(getAllModels()).rejects.toMatchObject({ code: "model-entity-id-required" });
+  });
+
+  it("pins the default subscription once in persisted refresh plans and all subsequent queries", async () => {
+    await createModelOperation({ names: ["probe"], overwriteMode: "never" });
+    write("shared/models/probe.ts", `import {z} from 'zod/v4';
+export const Probe=z.object({id:z.string(),userId:z.string()}); export const partitionKey='/userId';`);
+    let activeSubscription = subscription;
+    const az = jest.mocked(childProcess.spawnSync as (
+      file: string, args: readonly string[]
+    ) => childProcess.SpawnSyncReturns<string>);
+    az.mockImplementation((_file, args) => ({
+      status: 0, stdout: args[0] === "account" ? activeSubscription : "false",
+      stderr: "", pid: 0, output: [], signal: null,
+    }));
+    const request = { kind: "model-infrastructure" as const, model: "probe",
+      options: { refreshPending: true, resourceGroup: "rg-fictional" } };
+    const plan = await planModelOperation(request);
+    expect(plan.request).toMatchObject({ options: { subscription } });
+    expect(request.options).not.toHaveProperty("subscription");
+    activeSubscription = "22222222-2222-2222-2222-222222222222";
+    await applyModelOperation(plan.planId);
+    expect(az.mock.calls.filter(([, args]) => args[0] === "account")).toHaveLength(1);
+    for (const [, args] of az.mock.calls.filter(([, args]) => args[0] !== "account")) {
+      expect(args[args.indexOf("--subscription") + 1]).toBe(subscription);
+    }
+  });
+
+  it("pins a default subscription throughout existence, tags and retained-history queries", async () => {
+    await createModelOperation({ names: ["probe"], overwriteMode: "never" });
+    const manifest = loadMigrationManifest(root);
+    write("shared/models/probe.ts", `import {z} from 'zod/v4';
+export const Probe=z.object({id:z.string(),userId:z.string()}); export const partitionKey='/userId';`);
+    const az = jest.mocked(childProcess.spawnSync as (
+      file: string, args: readonly string[]
+    ) => childProcess.SpawnSyncReturns<string>);
+    az.mockImplementation((_file, args) => ({
+      status: 0, stdout: args[0] === "account" ? subscription :
+        args[1] === "exists" ? "true" :
+          args[0] === "deployment" ? JSON.stringify([{ name: "swallowkit-baseline", properties: { provisioningState: "Succeeded" } }]) :
+            JSON.stringify({ [getMigrationTagKey(manifest.projectId)]: encodeMigrationState({
+              schemaVersion: 1, version: 0, checksum: manifest.baseline.checksum,
+            }) }),
+      stderr: "", pid: 0, output: [], signal: null,
+    }));
+    const before = snapshot();
+    const result = await addModelMigrationOperation("probe", {
+      refreshPending: true, resourceGroup: "rg-fictional", dryRun: true,
+    });
+    expect(result.refreshTarget).toEqual({ resourceGroup: "rg-fictional", subscription });
+    expect(az.mock.calls.map(([, args]) => args.slice(0, 2))).toEqual([
+      ["account", "show"], ["group", "exists"], ["group", "show"], ["deployment", "group"],
+    ]);
+    expect(az.mock.calls.slice(1).every(([, args]) => args[args.indexOf("--subscription") + 1] === subscription)).toBe(true);
+    expect(snapshot()).toEqual(before);
+  });
+
+  it.each(["", "not-a-subscription"])("fails closed when the default subscription cannot be pinned: %j", async stdout => {
+    await createModelOperation({ names: ["probe"], overwriteMode: "never" });
+    write("shared/models/probe.ts", `import {z} from 'zod/v4';
+export const Probe=z.object({id:z.string(),userId:z.string()}); export const partitionKey='/userId';`);
+    const az = jest.mocked(childProcess.spawnSync as (
+      file: string, args: readonly string[]
+    ) => childProcess.SpawnSyncReturns<string>);
+    az.mockReturnValue({ status: 0, stdout, stderr: "", pid: 0, output: [], signal: null });
+    const before = snapshot();
+    await expect(planModelOperation({ kind: "model-infrastructure", model: "probe",
+      options: { refreshPending: true, resourceGroup: "rg-fictional" } }))
+      .rejects.toMatchObject({ code: "migration-subscription-unavailable" });
+    expect(snapshot()).toEqual(before);
+    expect(az).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps refresh dry-run byte-for-byte read-only and repeats Azure proof on apply", async () => {
     await createModelOperation({ names: ["probe"], overwriteMode: "never" });
     const manifest = loadMigrationManifest(root);
@@ -296,7 +460,7 @@ export const Probe=z.object({id:z.string(),userId:z.string()}); export const par
     ) => childProcess.SpawnSyncReturns<string>);
     az.mockReturnValue({ status: 0, stdout: "false", stderr: "", pid: 0, output: [], signal: null });
     const before = snapshot();
-    const options = { refreshPending: true, resourceGroup: "rg-fictional" };
+    const options = { refreshPending: true, resourceGroup: "rg-fictional", subscription };
     const preview = await addModelMigrationOperation("probe", { ...options, dryRun: true });
     expect(preview.operations.some(operation => operation.path.endsWith("main.bicep"))).toBe(true);
     expect(snapshot()).toEqual(before);
@@ -365,7 +529,7 @@ export const Profile=z.object({id:z.string(),userId:z.string()}); export const p
     expect(fs.readFileSync(file, "utf8")).toBe(source);
   });
 
-  it.each(["pending", "absent-group", "applied", "unknown", "checksum-drift", "Running", "Accepted", "Succeeded", "Failed", "unknown-history"])("refreshes only authoritatively pending generated migrations: %s", async status => {
+  it.each(["pending", "absent-group", "applied", "unknown", "checksum-drift", "Running", "Accepted", "Succeeded", "Failed", "unknown-history", "empty-history"])("refreshes only authoritatively pending generated migrations: %s", async status => {
     await createModelOperation({ names: ["probe"], overwriteMode: "never" });
     const manifest = loadMigrationManifest(root);
     const migration = manifest.migrations[0];
@@ -384,16 +548,17 @@ export const Probe=z.object({id:z.string(),userId:z.string()}); export const par
       status: 0, stdout: args[0] === "deployment" ?
         JSON.stringify(["Running", "Accepted", "Succeeded", "Failed"].includes(status) ?
           [{ name: "swallowkit-migration-0001", properties: { provisioningState: status } }] :
-          status === "unknown-history" ? {} : []) :
+          status === "unknown-history" ? {} : status === "empty-history" ? [] :
+            [{ name: "swallowkit-baseline", properties: { provisioningState: "Succeeded" } }]) :
         args[1] === "exists" ? String(status !== "absent-group") :
           JSON.stringify(status === "unknown" ? {} : { [getMigrationTagKey(manifest.projectId)]: encodeMigrationState(state) }),
       stderr: "", pid: 0, output: [], signal: null,
     }));
-    const action = () => addModelMigrationOperation("probe", { refreshPending: true, resourceGroup: "rg-fictional" });
+    const action = () => addModelMigrationOperation("probe", { refreshPending: true, resourceGroup: "rg-fictional", subscription });
     if (status === "pending" || status === "absent-group") {
       const plan = await planModelOperation({
         kind: "model-infrastructure", model: "probe",
-        options: { refreshPending: true, resourceGroup: "rg-fictional" },
+        options: { refreshPending: true, resourceGroup: "rg-fictional", subscription },
       });
       expect(fs.readFileSync(path.join(root, migration.template), "utf8")).toBe(template);
       await applyModelOperation(plan.planId);
@@ -403,7 +568,7 @@ export const Probe=z.object({id:z.string(),userId:z.string()}); export const par
         code: status === "applied" ? "applied-migration-immutable" :
           status === "checksum-drift" ? "migration-checksum-mismatch" :
             status === "unknown" ? "migration-state-unavailable" :
-              status === "unknown-history" ? "migration-deployment-history-unavailable" : "migration-deployment-attempted",
+              ["unknown-history", "empty-history"].includes(status) ? "migration-deployment-history-unavailable" : "migration-deployment-attempted",
       });
       expect(fs.readFileSync(path.join(root, migration.template), "utf8")).toBe(template);
     }

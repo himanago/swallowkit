@@ -842,21 +842,37 @@ npx swallowkit migrations add-model profile --refresh-pending \
 ```
 
 この明示オプションは Azure を**読み取り専用**で確認し、デプロイは行いません。
+Windows の MSI 版 `az.cmd` は同梱 Python のエントリーポイントへ解決し、
+シェルを使わず引数配列で実行します。subscription を省略した場合は現在の ID を一度だけ
+解決・検証し、全クエリーと保存した計画に固定します。アクティブな subscription の
+切り替えで apply の対象が変わることはありません。
 未編集の生成ファイルであることに加え、指定グループが存在しないこと、または
 プロジェクト固有の migration tag・チェックサムと完全なデプロイ履歴から
 対象 migration が一度も実行されていないことを確認します。Running、Accepted、
 Succeeded なのに tag が古い場合、Failed・部分適用、識別不能な旧デプロイ、
 履歴不明、適用済みの場合は、ローカルファイルを変更せず停止します。
 今後の migration のデプロイ名は `swallowkit-migration-0001` の形式です。
+履歴が空の場合や、baseline・適用済み version の履歴が不足する場合も停止します。
+Azure から削除済みの実行履歴は復元できません。残存履歴は判断材料であり、削除済みの
+試行や管理外のリソース変更がないことの証明ではありません。履歴を削除・省略した場合や
+管理外でデプロイした場合は refresh せず、明示的な前方 migration を作成してください。
 確認は指定環境だけが対象です。別の環境で適用済みの履歴を更新してはいけません。
 適用済み Cosmos の partition key の変更には、明示的なデータ・リソース移行が必要です。
 
 保存した計画から backfill・更新する場合は `machine plan model-infrastructure <model>`
 （必要なら上記の refresh オプション）と `machine apply model --plan <id>` を使います。
 MCP では `swallowkit_plan_model_infrastructure` と `swallowkit_apply_model` が同等の操作です。
-apply は fingerprint と未適用状態・履歴を再確認します。モデル変更後は provision を
+apply は入力一覧、fingerprint、メタデータを含む生成内容の hash、未適用状態・履歴を
+再確認します。モデル変更後は provision を
 再計画してください。Cosmos 定義の不足や不整合は検証・provision を停止します。
 ローカル検証はデプロイの証明ではありません。provision の承認、待機、再表示の契約は変更しません。
+
+別ファイルの埋め込みスキーマは、永続エンティティから実際に参照され、`id` と
+永続化メタデータを持たない場合にだけコンテナー対象から除外します。全モデルファイルを
+先に解析するため、補助スキーマの未対応フィールドも停止理由になり、依存ファイルの
+変更も計画の fingerprint で検出します。永続モデルの `id` は必須の文字列です。
+参照のない `id` 未定義ファイルは `model-classification-ambiguous` で停止し、推測で
+コンテナーを生成しません。
 
 ## swallowkit add-connector
 

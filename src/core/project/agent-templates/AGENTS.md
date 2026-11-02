@@ -274,6 +274,10 @@ Adding a hand-written schema alone is not completion.
    (optionally `--subscription <id>`): this performs read-only Azure checks.
    Only an unmodified generated migration proven pending for that target may
    be refreshed. Unknown state and applied partition-key changes are blocked.
+   The subscription is resolved once and pinned in plans and queries. Empty
+   or missing expected deployment history blocks refresh. Retained history
+   cannot reveal deleted attempts or out-of-band changes: do not refresh if
+   history was removed/truncated or the artifact was applied elsewhere.
    Existing baseline-owned containers remain wired in `infra/main.bicep`;
    do not add duplicate containers or edit applied migrations.
 3. Verify the correspondence between the model, container name/partition key,
@@ -287,6 +291,10 @@ Adding a hand-written schema alone is not completion.
 The parser prefers the filename-matching PascalCase schema export, then the
 legacy camelCase `Schema` export; multiple unmatched candidates stop with a
 structured error. Helper ordering must not change the selected entity.
+Separate id-less helpers are excluded only with actual embedded references
+reachable from persistent models and no persistence metadata. Unsupported helper
+fields still block; helper dependencies remain fingerprinted. Unreferenced
+id-less files and invalid persistence ids block with classification diagnostics.
 `z.record` is currently unsupported by the generation contract (including
 string values); failures identify file/schema/field/reason. Do not reorder
 schemas, edit the ledger, or cast away dictionary value types as a workaround.

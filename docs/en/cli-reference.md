@@ -706,7 +706,13 @@ use the schema-preserving backfill below instead.
 The parser prefers the filename-matching PascalCase export, then the matching
 legacy camelCase `Schema` export. A single unmatched object export is supported;
 multiple unmatched exports block with structured candidates. Embedded helpers
-never become separate container targets. `z.record` (including string values)
+in separate files are excluded only when they have no `id` or persistence
+metadata and an actual embedded-schema reference from a persistent entity.
+All model files are analyzed before classification; unsupported helper fields
+still block, and imported helper sources remain plan dependencies. A persistent
+entity requires a non-optional string `id`; unreferenced id-less files stop with
+`model-classification-ambiguous`, not a guessed container.
+`z.record` (including string values)
 is not currently supported across generation targets: analysis blocks with
 file/schema/field/reason instead of dropping the field or silently omitting an
 entity. Creation and verification cannot succeed with that incomplete analysis.
@@ -735,13 +741,23 @@ npx swallowkit migrations add-model profile --refresh-pending \
 # Review, then repeat without --dry-run.
 ```
 
-This opt-in makes **read-only** Azure queries, not deployments. It requires
+This opt-in makes **read-only** Azure queries, not deployments. On Windows,
+the MSI `az.cmd` is resolved to its bundled Python entrypoint and launched with
+literal argument arrays, without a command shell. If subscription is omitted,
+the current account ID is resolved once, validated and pinned on every query
+and in persisted plans; switching the active subscription does not retarget apply.
+This operation requires
 unmodified generated-file provenance and proof that the selected target group
 does not exist, or a matching project migration tag/checksum plus complete
 deployment history showing the migration was never attempted. Running, Accepted,
 Succeeded-with-stale-tag, Failed/partial, legacy unidentifiable deployments,
 unknown history, and applied migrations block before any local writes. Future
 migration deployments use versioned names (`swallowkit-migration-0001`).
+Empty history or missing expected baseline/previous-version deployments also
+blocks refresh. Azure cannot expose deleted deployment attempts: retained history
+is evidence, not proof against deleted records or out-of-band resource changes.
+Do not refresh if history was deleted/truncated or deployments occurred outside
+the tracked flow; use an explicit forward migration instead.
 Proof is only for the selected target: do not refresh history already applied
 in another environment. Applied Cosmos partition keys require explicit data and
 resource migration, not regeneration.
@@ -749,7 +765,8 @@ resource migration, not regeneration.
 For persisted backfill/refresh plans use `machine plan model-infrastructure <model> [--refresh-pending --resource-group <rg> --subscription <id>]`, followed
 by `machine apply model --plan <id>`. MCP equivalents are
 `swallowkit_plan_model_infrastructure` and `swallowkit_apply_model`.
-Apply checks fingerprints and re-queries
+Apply checks input membership, source/output fingerprints and exact staged
+content hashes (including metadata), and re-queries
 pending state/history. Re-plan provision after any model change. Missing/stale
 Cosmos definitions block verification/provision; local verification never proves
 deployment. Provision approval and human wait/replay behavior are unchanged.

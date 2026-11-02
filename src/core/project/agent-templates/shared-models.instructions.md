@@ -16,6 +16,10 @@ source-of-truth models, subject to the current result of
 - Match the filename with the PascalCase schema export (or legacy camelCase
   `Schema` export). Embedded helpers never own containers; ambiguous exports
   block generation instead of selecting the first declaration.
+- Separate helper files are excluded only with a real nested-schema reference
+  from a persistent entity and no `id` or persistence metadata. Unsupported helper
+  fields still block analysis and helper sources remain fingerprint dependencies.
+  Unreferenced id-less files stop with a classification error, not a guessed container.
 - `z.record` is not supported by the current generation contract. Analysis
   failures identify file/schema/field/reason and block the operation; never
   drop a field, weaken its type, or reorder schemas to hide the failure.

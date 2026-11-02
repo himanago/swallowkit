@@ -57,6 +57,12 @@ export function getManagedFieldMask(model: Pick<ModelInfo, "fields">): string {
   return `{ ${keys.map(key => `${key}: true`).join(", ")} }`;
 }
 
+function resolveSchemaDependencyPath(modelPath: string, specifier: string): string | undefined {
+  const base = path.resolve(path.dirname(modelPath), specifier);
+  return [base.replace(/\.js$/, ".ts"), `${base}.ts`, path.join(base, "index.ts"), base]
+    .find(candidate => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+}
+
 export function getModelDependencyPaths(modelPath: string): string[] {
   const visited = new Set<string>();
   const visit = (file: string): void => {
@@ -68,9 +74,7 @@ export function getModelDependencyPaths(modelPath: string): string[] {
       if ((!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) ||
           !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier) ||
           !statement.moduleSpecifier.text.startsWith(".")) continue;
-      const base = path.resolve(path.dirname(absolute), statement.moduleSpecifier.text);
-      const dependency = [base.replace(/\.js$/, ".ts"), `${base}.ts`, path.join(base, "index.ts"), base]
-        .find(candidate => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+      const dependency = resolveSchemaDependencyPath(absolute, statement.moduleSpecifier.text);
       if (!dependency) {
         throw new MachineCommandError("schema-dependency-not-found", `Cannot resolve ${statement.moduleSpecifier.text} from ${absolute}.`,
           { filePath: absolute, specifier: statement.moduleSpecifier.text }, "blocked");
@@ -392,6 +396,7 @@ function mergeNestedSchemaInfo(fields: FieldInfo[], nestedRefs: NestedSchemaRef[
   for (const ref of nestedRefs) {
     const field = fields.find(f => f.name === ref.fieldName);
     if (field) {
+      if (field.isNestedSchema === false) continue;
       field.isNestedSchema = true;
       field.nestedSchemaName = ref.schemaName;
       field.nestedModelName = ref.modelName;
@@ -457,19 +462,31 @@ interface ParsedSchemaFields {
 function staticParseFields(modelPath: string, schemaName: string, content: string): FieldInfo[] | null {
   const source = ts.createSourceFile(modelPath, content, ts.ScriptTarget.Latest, true);
   const constants = new Map<string, ts.Expression>();
-  const importedObjectSchemas = new Set<string>();
+  const importedObjectSchemas = new Map<string, boolean>();
+  const objectHasId = (expression: ts.Expression): boolean | undefined => {
+    if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression) ||
+        !ts.isIdentifier(expression.expression.expression) || expression.expression.expression.text !== "z" ||
+        expression.expression.name.text !== "object" || !expression.arguments[0] ||
+        !ts.isObjectLiteralExpression(expression.arguments[0]) ||
+        expression.arguments[0].properties.some(property => !ts.isPropertyAssignment(property))) return undefined;
+    return expression.arguments[0].properties.some(property =>
+      property.name && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) && property.name.text === "id");
+  };
   for (const statement of source.statements) {
     if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier) &&
         statement.moduleSpecifier.text.startsWith(".") && statement.importClause?.namedBindings &&
         ts.isNamedImports(statement.importClause.namedBindings)) {
-      const base = path.resolve(path.dirname(modelPath), statement.moduleSpecifier.text);
-      const targetPath = [base, `${base}.ts`, path.join(base, "index.ts")].find(candidate => fs.existsSync(candidate));
+      const targetPath = resolveSchemaDependencyPath(modelPath, statement.moduleSpecifier.text);
       if (targetPath) {
         const targetContent = fs.readFileSync(targetPath, "utf-8");
+        const target = ts.createSourceFile(targetPath, targetContent, ts.ScriptTarget.Latest, true);
         for (const element of statement.importClause.namedBindings.elements) {
           const importedName = element.propertyName?.text ?? element.name.text;
-          if (new RegExp(`(?:export\\s+)?const\\s+${importedName}\\s*=\\s*z\\.object\\s*\\(`).test(targetContent)) {
-            importedObjectSchemas.add(element.name.text);
+          for (const declaration of target.statements.filter(ts.isVariableStatement)
+            .flatMap(variable => [...variable.declarationList.declarations])) {
+            if (!ts.isIdentifier(declaration.name) || declaration.name.text !== importedName || !declaration.initializer) continue;
+            const hasId = objectHasId(declaration.initializer);
+            if (hasId !== undefined) importedObjectSchemas.set(element.name.text, hasId);
           }
         }
       }
@@ -507,7 +524,8 @@ function staticParseFields(modelPath: string, schemaName: string, content: strin
       const resolved = constants.get(expression.text);
       if (resolved) return parseExpression(resolved);
       return importedObjectSchemas.has(expression.text)
-        ? { type: "object", isOptional: false, isNullable: false, isArray: false }
+        ? { type: "object", isOptional: false, isNullable: false, isArray: false,
+          ...(importedObjectSchemas.get(expression.text) ? {} : { isNestedSchema: false }) }
         : null;
     }
     if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression)) return null;
@@ -525,7 +543,12 @@ function staticParseFields(modelPath: string, schemaName: string, content: strin
     if (["string", "number", "boolean", "date"].includes(method)) {
       return { type: method, isOptional: false, isNullable: false, isArray: false };
     }
-    if (method === "object") return { type: "object", isOptional: false, isNullable: false, isArray: false };
+    if (method === "object") {
+      const hasId = objectHasId(expression);
+      if (hasId === undefined) return null;
+      return { type: "object", isOptional: false, isNullable: false, isArray: false,
+        ...(hasId ? {} : { isNestedSchema: false }) };
+    }
     if (method === "array" && expression.arguments[0]) {
       const element = parseExpression(expression.arguments[0]);
       return element ? { ...element, isArray: true } : null;
@@ -693,7 +716,11 @@ if (isObject) {
       isForeignKey = true;
     }
     
-    return { name: key, type, isOptional, isNullable, isArray, enumValues, isForeignKey, referencedModel };
+    const nestedShape = type === 'object'
+      ? (typeof fieldDef._def.shape === 'function' ? fieldDef._def.shape() : fieldDef._def.shape)
+      : undefined;
+    return { name: key, type, isOptional, isNullable, isArray, enumValues, isForeignKey, referencedModel,
+      ...(nestedShape && !Object.prototype.hasOwnProperty.call(nestedShape, 'id') ? { isNestedSchema: false } : {}) };
   });
   
   if (!fields.length) throw new Error('Empty object schemas cannot define an entity');
@@ -990,6 +1017,37 @@ export async function getAllModels(modelsDir: string = "shared/models"): Promise
       artifact.path === relativePath && artifact.generator === "add-auth")) continue;
     models.push(await parseModelFile(modelPath));
   }
-  
-  return models;
+
+  const declaredPersistence = new Set(models.filter(model => model.connectorConfig || model.authPolicy ||
+    /export\s+const\s+partitionKey\b/.test(fs.readFileSync(model.filePath, "utf8")) ||
+    ledger?.artifacts.some(artifact => artifact.sourceModel === model.name &&
+      ["create-model", "scaffold", "infrastructure-migration"].includes(artifact.generator)))
+    .map(model => model.filePath));
+  const embeddedFiles = new Set<string>();
+  const visitReferences = (model: ModelInfo): void => {
+    for (const reference of model.nestedSchemaRefs) {
+      const file = resolveSchemaDependencyPath(model.filePath, reference.importPath);
+      if (!file || embeddedFiles.has(file)) continue;
+      embeddedFiles.add(file);
+      const nested = models.find(candidate => candidate.filePath === file);
+      if (nested) visitReferences(nested);
+    }
+  };
+  models.filter(model => model.hasId || declaredPersistence.has(model.filePath)).forEach(visitReferences);
+  return models.filter(model => {
+    const id = model.fields.find(field => field.name === "id");
+    const relativePath = path.relative(cwd, model.filePath).replace(/\\/g, "/");
+    if (id || declaredPersistence.has(model.filePath)) {
+      if (!id || id.type !== "string" || id.isOptional || id.isNullable || id.isArray) {
+        throw new MachineCommandError("model-entity-id-required",
+          `Persistent model ${model.name} must declare a required string id; it cannot be treated as an embedded helper.`,
+          { filePath: model.filePath, schemaName: model.schemaName, field: "id", reason: "required-string-id" }, "blocked");
+      }
+      return true;
+    }
+    if (embeddedFiles.has(model.filePath)) return false;
+    throw new MachineCommandError("model-classification-ambiguous",
+      `Cannot classify ${relativePath}: no persistence id/metadata and no embedded schema reference. Move helper-only schemas outside shared/models or embed them explicitly; do not generate a container by guessing.`,
+      { filePath: model.filePath, schemaName: model.schemaName, reason: "no-entity-id-or-embedded-reference" }, "blocked");
+  });
 }

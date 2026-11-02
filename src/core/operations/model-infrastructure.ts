@@ -7,7 +7,7 @@ import { recordSessionOperations } from "../project/artifacts";
 import { FileOperationSession, getActiveFileSession } from "./file-session";
 import { generateModelContainerMigration } from "./migration-generator";
 import { MachineCommandError } from "../../machine/errors";
-import { PendingMigrationTarget } from "./migration-refresh";
+import { PendingMigrationTarget, resolvePendingMigrationTarget } from "./migration-refresh";
 
 export interface AddModelMigrationOptions extends PendingMigrationTarget {
   refreshPending?: boolean;
@@ -18,7 +18,7 @@ export async function addModelMigrationOperation(modelInput: string, options: Ad
   ensureSwallowKitProject("migrations add-model");
   const target = options.dryRun ? new FileOperationSession("collect") :
     getActiveFileSession() ?? new FileOperationSession("commit");
-  const session = new FileOperationSession("collect", target.rootDirectory);
+  const session = new FileOperationSession("collect", target.rootDirectory, target.generatedAt);
   const models = await getAllModels();
   const model = await parseModelFile(resolveModelPath(modelInput));
   if (model.connectorConfig) {
@@ -27,10 +27,13 @@ export async function addModelMigrationOperation(modelInput: string, options: Ad
   for (const candidate of [...models, model]) {
     for (const dependency of getModelDependencyPaths(candidate.filePath)) session.registerInput(dependency);
   }
-  const migration = generateModelContainerMigration(model, session, options.refreshPending ? options : undefined);
+  const refreshTarget = options.refreshPending ? resolvePendingMigrationTarget(options) : undefined;
+  const migration = generateModelContainerMigration(model, session, refreshTarget);
   if (session.operations.some(operation => operation.action !== "skip")) {
     const { manifest } = await buildProjectManifest(session.rootDirectory, models);
-    session.writeFile(path.join(session.rootDirectory, SWALLOWKIT_MANIFEST_PATH), JSON.stringify(manifest, null, 2) + "\n", {
+    session.writeFile(path.join(session.rootDirectory, SWALLOWKIT_MANIFEST_PATH), JSON.stringify({
+      ...manifest, generatedAt: session.generatedAt,
+    }, null, 2) + "\n", {
       ownership: "metadata", generator: "model-infrastructure",
     });
     recordSessionOperations(session.operations, {}, session.rootDirectory, session);
@@ -38,6 +41,7 @@ export async function addModelMigrationOperation(modelInput: string, options: Ad
   session.replayInto(target);
   return {
     model: model.name, template: migration?.template ?? null, dryRun: options.dryRun ?? false,
+    ...(refreshTarget ? { refreshTarget } : {}),
     operations: session.operations.map(({ path: file, action, ownership }) => ({ path: file, action, ownership })),
   };
 }

@@ -115,7 +115,7 @@ export function recordSessionOperations(
   };
 
   const byPath = new Map(ledger.artifacts.map((record) => [record.path, record] as const));
-  const now = new Date().toISOString();
+  const now = session?.generatedAt ?? new Date().toISOString();
   const generatorVersion = getSwallowKitVersion();
 
   for (const operation of operations) {

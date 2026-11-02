@@ -65,9 +65,12 @@ unfinished work; never claim deployability with required infrastructure missing.
    the schema or generating CRUD. A changed partition key requires
    \`migrations add-model <name> --refresh-pending --resource-group <rg>\`
    (optional \`--subscription <id>\`): read-only Azure tag/checksum and deployment
-   history checks must prove this generated migration has never been attempted.
+   history checks must show no attempt of this generated migration in retained history.
    Unknown or applied state is blocked. Proof applies only to the selected
    target; never rewrite history used by another environment.
+   The subscription is pinned once per operation/plan. Empty/missing expected
+   history blocks; deleted attempts cannot be recovered, so do not refresh
+   after history deletion/truncation or out-of-band deployment.
 3. If CRUD is wanted, compute its change plan (writes no application files):
    \`${runCmd} swallowkit machine plan scaffold <name>\`
    - \`status: "requires-human"\` → review \`data.conflicts\`; only proceed with \`--approve\` if overwriting is intended.
@@ -84,6 +87,9 @@ unfinished work; never claim deployability with required infrastructure missing.
      Model creation registers containers without requiring scaffold.
      Schema ambiguity and unsupported fields (including \`z.record\`) block
      generation and verification instead of silently omitting models.
+     Separate id-less helpers require actual embedded references from a
+     persistent entity and no persistence metadata. Their analysis failures
+     still block and their source dependencies remain fingerprinted.
      Local verification is not proof of Azure deployment.
 6. If \`dev-seeds/\` exists, update seed JSON for the new model. Seeds are only
    applied by \`${runCmd} swallowkit dev --seed-env <environment>\` — editing the
