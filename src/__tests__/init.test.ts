@@ -449,6 +449,9 @@ describe("GitHub Actions workflow generation", () => {
 
     expect(() => loadYaml(workflow)).not.toThrow();
     expect(workflow).toContain("seed_name:");
+    expect(workflow).toContain("force:");
+    expect(workflow).toContain("default: false");
+    expect(workflow).toContain("BOOTSTRAP_FORCE: ${{ inputs.force && 'true' || 'false' }}");
     expect(workflow).toContain("function_app_name:");
     expect(workflow).toContain('$GITHUB_REF" != "refs/heads/main"');
     expect(workflow).toContain("CONFIRMED_FUNCTION_APP_NAME");
@@ -469,6 +472,12 @@ describe("GitHub Actions workflow generation", () => {
     }
     expect(workflow).toContain('--header "Authorization: Bearer $BOOTSTRAP_TOKEN"');
     expect(workflow).toContain("trap cleanup_bootstrap_token EXIT");
+    expect(workflow).toContain("FUNCTION_APP_URL: ${{ steps.deploy-temporary.outputs.app-url }}");
+    expect(workflow).not.toContain("$FUNCTION_APP_NAME.azurewebsites.net");
+    expect(workflow).toContain('BOOTSTRAP_URL="${FUNCTION_APP_URL%/}/api/seed-bootstrap"');
+    expect(workflow).toContain("for attempt in {1..12}");
+    expect(workflow).toContain("no initialization POST was sent");
+    expect(workflow.match(/--request POST/g)).toHaveLength(1);
     expect(workflow).toContain('process.env.GITHUB_ENV,"BOOTSTRAP_TOKEN="+token');
     expect(workflow).not.toContain("outputs.token");
     expect(workflow).not.toContain('Authorization: ******');
@@ -490,6 +499,17 @@ describe("GitHub Actions workflow generation", () => {
       expect(script).toContain("safeParse");
       expect(script).toContain("MAX_DOCUMENTS = 500");
       expect(script).toContain("MAX_BYTES = 4194304");
+      expect(script.match(/seedDocumentIndex/g)?.length).toBeGreaterThanOrEqual(2);
+      if (backend === "csharp") {
+        expect(script).toContain("cosmosStatusCode");
+        expect(script).toContain("cosmosSubStatusCode");
+        expect(script).toContain("BuildFailureDetails(error)");
+      }
+      expect(script).toContain(backend === "csharp"
+        ? 'string.Equals(request.Method, \\"GET\\"'
+        : backend === "python"
+          ? 'if req.method.upper() == \\"GET\\"'
+          : 'if (request.method.toUpperCase() === \\"GET\\")');
       expect(script).toContain(backend === "csharp"
         ? "AuthorizationLevel.Anonymous"
         : backend === "python"

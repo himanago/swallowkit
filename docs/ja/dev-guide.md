@@ -99,6 +99,34 @@ Emulator のリセットやデータ削除は不要です。
 
 Dev seeds を使うと、サーバー起動前にローカルの Cosmos DB Emulator に既知のデータを投入できます。
 
+### モデルの定義から Azure への初期投入まで
+
+SwallowKit では `shared/models/` の Zod スキーマから CRUD を生成し、`dev-seeds/<name>/` の JSON で動作を確認できます。同じ seed ファイルを Azure の初期データにも使えるため、ローカル用とクラウド用で別々の投入スクリプトを管理する必要はありません。Azure への投入は TypeScript・C#・Python のバックエンドに対応し、GitHub Actions から手動で実行します。
+
+1. `shared/models/` にモデルを定義し、`swallowkit scaffold <model>` で CRUD と対応するインフラ migration を生成します。モデルの書き方と生成対象は [Scaffold ガイド](./scaffold-guide.md)を参照してください。
+2. `swallowkit create-dev-seeds local` で JSON のテンプレートを作ります。画面から入力したデータを保存する場合は `swallowkit create-dev-seeds local --from-emulator` を使います。既存の seed ファイルを上書きする場合だけ `--force` を付けてください。
+3. JSON を確認・編集し、`swallowkit dev --seed-env local` でローカルの対象コンテナーを置き換えて、画面や API の動作を確認します。seed を適用せず開発を続ける場合は `--seed-env` を省略してください。
+4. Azure で使う seed ファイルをレビューし、モデル・生成コードとともにコミットします。個人情報や秘密情報をテストデータとしてコミットしないでください。
+5. 対象の Azure 環境へ `swallowkit provision` でインフラとモデルの migration を適用し、データベースとコンテナーを用意します。通常の Functions デプロイと GitHub Actions のシークレット設定も済ませてください。
+6. `main` から **Initialize Azure Cosmos DB seed data** を手動実行し、`seed_name` に `local` を指定します。Function App 名を確認入力し、初回は通常モードで投入します。完了後は初期化と通常版への復元の両方を確認してください。
+
+Azure への具体的な投入手順、制限、復旧方法は[デプロイガイド](./deployment-guide.md)の「Cosmos DB の初期データ投入」を参照してください。
+
+### データを修正するときの使い分け
+
+初期データの誤りを見つけたら、まず seed の JSON を修正してローカルで再確認します。レビュー済みの修正を Azure に反映するときは、手動ワークフローの `force` を有効にできます。同じ `id`・パーティションキーのアイテム全体を置き換えますが、seed に含まれないアイテムは残ります。稼働中のアプリで使う場合は、利用者が更新した値も上書きすることに注意してください。
+
+名前が似ていても、次の操作は対象と動作が異なります。
+
+| 操作 | 対象と動作 |
+|---|---|
+| `create-dev-seeds ... --force` | ローカルの seed ファイルを上書きします。Azure には投入しません。 |
+| `dev --seed-env <name>` | ローカル Emulator の対応するコンテナーを seed の内容で置き換えます。Azure には投入しません。 |
+| Azure ワークフローの `force: false` | 未作成のアイテムを追加し、同じ内容はスキップします。内容が異なる既存アイテムがあると停止します。 |
+| Azure ワークフローの `force: true` | seed のアイテムを作成・上書きします。seed にないアイテムやコンテナーは削除しません。 |
+
+Azure の force は全件削除を伴うリセットでも、一括で成功・失敗が決まるトランザクションでもありません。途中で失敗しても書き込み済みのデータは残るため、結果の件数と診断情報を確認してから再実行してください。
+
 ### シードテンプレートの作成
 
 ::: code-group

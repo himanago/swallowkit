@@ -100,6 +100,34 @@ custom partition key; resetting the emulator or deleting data is unnecessary.
 
 Dev seeds let you populate the local Cosmos DB Emulator with known data before starting the server.
 
+### From model definition to Azure initialization
+
+SwallowKit generates CRUD from the Zod schemas in `shared/models/` and lets you test it with JSON under `dev-seeds/<name>/`. The same reviewed seed files can initialize Azure, without maintaining separate local and cloud data-loading scripts. Azure initialization supports TypeScript, C#, and Python backends through a manually dispatched GitHub Actions workflow.
+
+1. Define the model in `shared/models/` and run `swallowkit scaffold <model>` to generate CRUD and the corresponding infrastructure migration. See the [scaffold guide](./scaffold-guide.md) for model definitions and generated outputs.
+2. Run `swallowkit create-dev-seeds local` to create JSON templates. To preserve data entered through the application, use `swallowkit create-dev-seeds local --from-emulator`. Add `--force` only when you intend to overwrite existing seed files.
+3. Review and edit the JSON, then run `swallowkit dev --seed-env local` to replace the matching local containers and check the UI and API. Omit `--seed-env` when continuing development without reapplying seeds.
+4. Review the files intended for Azure and commit them with the models and generated code. Do not commit personal data or secrets as test fixtures.
+5. Run `swallowkit provision` against the intended Azure environment to apply infrastructure/model migrations and create the database and containers. Complete the ordinary Functions deployment and GitHub Actions secret configuration.
+6. From `main`, manually run **Initialize Azure Cosmos DB seed data**, set `seed_name` to `local`, and confirm the Function App name. Use default mode for the first initialization, and check both the initialization and ordinary-package restoration results.
+
+See the Cosmos DB bootstrap seed section in the [deployment guide](./deployment-guide.md) for cloud execution, limits, and recovery.
+
+### Correcting seed data
+
+When you find a mistake in initial data, edit the seed JSON and check it locally first. To apply the reviewed correction to Azure, enable `force` in the manual workflow. It replaces the entire item with the same `id` and partition key, but retains items absent from the seed. On a live app, this also overwrites values that users may have changed.
+
+These similarly named options operate on different targets:
+
+| Operation | Target and behavior |
+|---|---|
+| `create-dev-seeds ... --force` | Overwrites local seed files; does not initialize Azure. |
+| `dev --seed-env <name>` | Replaces matching local Emulator containers with seed contents; does not initialize Azure. |
+| Azure workflow `force: false` | Creates missing items, skips identical items, and stops on different existing items. |
+| Azure workflow `force: true` | Creates or overwrites seed items; does not delete items absent from the seed or containers. |
+
+Azure force is neither a delete-all reset nor an atomic transaction. Earlier writes remain after a failure; review counts and diagnostics before rerunning.
+
 ### Create seed templates
 
 ::: code-group
