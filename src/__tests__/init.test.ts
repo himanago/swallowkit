@@ -488,6 +488,54 @@ describe("GitHub Actions workflow generation", () => {
     expect(normalWorkflow).toContain("cancel-in-progress: false");
   });
 
+  it.each<[string, string | null]>([
+    ["http://app-unique.region.azurewebsites.net", "https://app-unique.region.azurewebsites.net/api/seed-bootstrap"],
+    ["https://app-unique.region.azurewebsites.net/", "https://app-unique.region.azurewebsites.net/api/seed-bootstrap"],
+    ["", null],
+    ["ftp://app.azurewebsites.net", null],
+  ])("uses HTTPS for bootstrap requests from deployment URL %s", (appUrl, expectedUrl) => {
+    const workflow = loadYaml(getGitHubBootstrapWorkflow("npm", "typescript")) as {
+      jobs: { initialize: { steps: { name?: string; run?: string }[] } };
+    };
+    const initialize = workflow.jobs.initialize.steps.find((step) => step.name === "Initialize Cosmos DB")!.run!;
+    const root = fs.mkdtempSync(path.join(process.cwd(), ".tmp-bootstrap-url-"));
+    const bash = process.platform === "win32"
+      ? path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Git", "bin", "bash.exe")
+      : "bash";
+    try {
+      const result = spawnSync(bash, ["-e", "-c", `
+curl() {
+  for arg in "$@"; do
+    if [[ "$arg" == http* ]]; then printf '%s\\n' "$arg" >> ./curl-urls; fi
+  done
+  if [[ "$*" == *--write-out* ]]; then printf '200'; else printf '{}'; fi
+}
+${initialize}`], {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          FUNCTION_APP_URL: appUrl,
+          BOOTSTRAP_TOKEN: "test-only",
+          GITHUB_ENV: "./github-env",
+        },
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(expectedUrl ? 0 : 1);
+      if (expectedUrl) {
+        expect(fs.readFileSync(path.join(root, "curl-urls"), "utf8").trim().split(/\r?\n/))
+          .toEqual([expectedUrl, expectedUrl]);
+      } else {
+        expect(fs.existsSync(path.join(root, "curl-urls"))).toBe(false);
+        expect(result.stdout).toContain("valid HTTPS Function App URL");
+      }
+      expect(fs.readFileSync(path.join(root, "github-env"), "utf8")).toContain("BOOTSTRAP_TOKEN=\n");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.each(["typescript", "csharp", "python"] as const)("generates a safe, authenticated %s bootstrap preparation script", (backend) => {
     const script = buildBootstrapSeedPreparationScript(backend);
     const scriptPath = path.join(os.tmpdir(), `swallowkit-bootstrap-${backend}-${process.pid}.mjs`);

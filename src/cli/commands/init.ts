@@ -3087,6 +3087,7 @@ ${temporaryBuild}      - name: Mark temporary deployment attempt
             echo "BOOTSTRAP_TOKEN=" >> "$GITHUB_ENV"
           }
           trap cleanup_bootstrap_token EXIT
+          FUNCTION_APP_URL="\${FUNCTION_APP_URL/#http:/https:}"
           if [[ "$FUNCTION_APP_URL" != https://* ]]; then
             echo "::error::Deployment did not return a valid HTTPS Function App URL."
             exit 1
