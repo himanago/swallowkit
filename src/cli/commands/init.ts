@@ -3007,6 +3007,11 @@ on:
         description: Confirm the Azure Functions app name configured in AZURE_FUNCTIONAPP_NAME
         required: true
         type: string
+      force:
+        description: Create or overwrite seed items; keep items absent from the seed (not atomic)
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: swallowkit-functions-\${{ github.repository }}
@@ -3054,6 +3059,7 @@ ${backendSetup}      - name: Generate temporary initialization token
       - name: Validate selected seed and generate temporary Function
         env:
           SEED_NAME: \${{ inputs.seed_name }}
+          BOOTSTRAP_FORCE: \${{ inputs.force && 'true' || 'false' }}
           BOOTSTRAP_TOKEN_HASH: \${{ steps.bootstrap-token.outputs.hash }}
           BOOTSTRAP_EXPIRES_AT: \${{ steps.bootstrap-token.outputs.expires }}
         run: node .github/scripts/prepare-cosmos-bootstrap.mjs "$SEED_NAME"
@@ -3074,17 +3080,47 @@ ${temporaryBuild}      - name: Mark temporary deployment attempt
       - name: Initialize Cosmos DB
         if: success()
         env:
-          FUNCTION_APP_NAME: \${{ secrets.AZURE_FUNCTIONAPP_NAME }}
+          FUNCTION_APP_URL: \${{ steps.deploy-temporary.outputs.app-url }}
         run: |
           cleanup_bootstrap_token() {
             unset BOOTSTRAP_TOKEN
             echo "BOOTSTRAP_TOKEN=" >> "$GITHUB_ENV"
           }
           trap cleanup_bootstrap_token EXIT
+          FUNCTION_APP_URL="\${FUNCTION_APP_URL/#http:/https:}"
+          if [[ "$FUNCTION_APP_URL" != https://* ]]; then
+            echo "::error::Deployment did not return a valid HTTPS Function App URL."
+            exit 1
+          fi
+          BOOTSTRAP_URL="\${FUNCTION_APP_URL%/}/api/seed-bootstrap"
+          ready=false
+          for attempt in {1..12}; do
+            if status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \\
+              --connect-timeout 5 --max-time 10 \\
+              --header "Authorization: Bearer $BOOTSTRAP_TOKEN" \\
+              "$BOOTSTRAP_URL"); then
+              if [ "$status" = "200" ]; then
+                ready=true
+                break
+              fi
+              if [ "$status" != "404" ] && [ "$status" != "502" ] && [ "$status" != "503" ] && [ "$status" != "504" ]; then
+                echo "::error::Bootstrap readiness check failed with HTTP $status; no initialization POST was sent."
+                exit 1
+              fi
+              echo "Bootstrap route is not ready (HTTP $status; attempt $attempt/12)."
+            else
+              echo "Bootstrap readiness request failed (attempt $attempt/12)."
+            fi
+            if [ "$attempt" -lt 12 ]; then sleep 5; fi
+          done
+          if [ "$ready" != "true" ]; then
+            echo "::error::Bootstrap route did not become ready; no initialization POST was sent. Check the deployed hostname, Function registration, startup logs, and network access."
+            exit 1
+          fi
           if ! curl --fail-with-body --silent --show-error --max-time 210 \\
             --request POST \\
             --header "Authorization: Bearer $BOOTSTRAP_TOKEN" \\
-            "https://$FUNCTION_APP_NAME.azurewebsites.net/api/seed-bootstrap"; then
+            "$BOOTSTRAP_URL"; then
             echo "::error::Seed initialization failed or its write outcome is indeterminate. The workflow will restore the ordinary Functions package; retry only after reviewing the reported partial result."
             exit 1
           fi

@@ -143,11 +143,57 @@ Use the values printed by `swallowkit provision` under "CI/CD settings". If a va
 
 ### Optional Cosmos DB bootstrap seed (GitHub Actions; TypeScript, C#, and Python)
 
-Generated TypeScript, C#, and Python projects include `.github/workflows/initialize-cosmos-seeds.yml`. This is a separate, manual workflow; normal push deployments do not seed data. Keep one source of truth in the existing `dev-seeds/<name>/` directory. For example, generate a template with `npx swallowkit create-dev-seeds local`, or explicitly export the local Emulator with `npx swallowkit create-dev-seeds local --from-emulator`. Review and edit the JSON, then use `npx swallowkit dev --seed-env local` to test it locally. **That local command replaces the selected Emulator containers; Azure bootstrap does not.** Commit only the reviewed seed files you intend to use in Azure.
+Use the reviewed JSON under `dev-seeds/<name>/` to initialize Azure Cosmos DB with the same data you tested locally. See [local development](./dev-guide.md#dev-seeds) for the flow from model definition and CRUD generation to seed capture and local testing. This section covers applying those seeds to Azure and deliberately correcting initial data when needed.
+
+Generated TypeScript, C#, and Python projects include `.github/workflows/initialize-cosmos-seeds.yml`. This is a separate, manual workflow; normal push deployments do not seed data.
+
+Keep one source of truth in the existing `dev-seeds/<name>/` directory. Generate a template with `npx swallowkit create-dev-seeds local`, or explicitly export the local Emulator with `npx swallowkit create-dev-seeds local --from-emulator`. Review and edit the JSON, then use `npx swallowkit dev --seed-env local` to test it locally. That local command replaces the selected Emulator containers. For Azure, choose the default or force write mode described below. Commit only the reviewed seed files you intend to use in Azure.
+
+#### Before running
+
+The database and **every container referenced by the seed must already exist in Azure**. After adding or scaffolding models, apply the pending infrastructure migrations with `swallowkit provision` against the intended resource group before initializing seeds. Neither normal bootstrap nor `force` creates databases or containers. Shared schema validation and a successful Functions deployment do not prove that the corresponding Azure containers exist.
+
+```bash
+# Use the existing application's resource group and subscription.
+npx swallowkit provision --resource-group <existing-resource-group> \
+  --subscription <existing-subscription> \
+  --location <existing-location> --swa-location <existing-swa-location>
+```
+
+Confirm that provisioning succeeded, the target database contains the expected containers (names are case-sensitive), and the Functions app points to that account and database. Do not run `--reconcile`, delete resources, or create a different database merely to retry a seed run. A new provisioning operation can deploy resources and incur costs; use your project's normal infrastructure approval process.
+
+#### Run and choose the write mode
 
 From the repository's `main` branch, go to **Actions → Initialize Azure Cosmos DB seed data → Run workflow**, enter the exact directory name as `seed_name`, and confirm the Function App name configured in `AZURE_FUNCTIONAPP_NAME`. The workflow rejects non-`main` refs, invalid names, missing directories/files, unknown models, invalid Zod data, and seeds over 500 documents or 4 MiB. It validates with the built shared Zod schemas, fixes the selected data into a temporary TypeScript, C#, or Python Function at build time, then deploys it, calls it, and redeploys the saved ordinary Functions package. The endpoint does not accept a seed name, arbitrary JSON, or a container name.
 
-Azure bootstrap uses create-only semantics: new items are created, identical items are skipped (Cosmos system properties are ignored), and differing items cause a conflict. It never replaces or deletes existing items or containers. A failed run can have committed earlier items; review the reported counts and conflict before retrying. Re-running the same reviewed seed is safe for already-created identical items.
+| Input | Meaning |
+|---|---|
+| `seed_name` | Existing directory under `dev-seeds/`, for example `local` |
+| `function_app_name` | Exact confirmation of `AZURE_FUNCTIONAPP_NAME` |
+| `force` | Off by default; enable only to create or overwrite seed items without deleting other items |
+
+The workflow uses the deployment action's `app-url` output instead of constructing a hostname from the app name; Flex Consumption hostnames can include a unique suffix and region. Before sending a single initialization POST, it polls the same endpoint with authenticated, read-only GET requests (up to 12 attempts, with a 10-second request timeout and 5 seconds between attempts). GET only checks the temporary Function's token and expiry; it does not access Cosmos DB. Readiness failures still trigger restoration. A persistent 404 requires checking the actual hostname, deployed Function registration, and startup logs. For older generated projects, update both the workflow and `.github/scripts/prepare-cosmos-bootstrap.mjs` together; a workflow with readiness polling requires the new GET handler.
+
+By default, Azure bootstrap uses create-only semantics: new items are created, identical items are skipped (Cosmos system properties are ignored), and differing items cause a conflict. It never replaces or deletes existing items or containers. A failed run can have committed earlier items; review the reported counts and conflict before retrying. Re-running the same reviewed seed is safe for already-created identical items.
+
+To explicitly overwrite seed items, select `force` when dispatching the workflow (default: `false`). Force uses upsert for each validated seed item: it creates a missing item or replaces the entire item with the same `id` and partition key, including removing properties absent from the seed. Items absent from the seed and containers are never deleted. Changing a partition key creates a separate item; it does not remove the old one. Force is fixed into the temporary package, not accepted from the HTTP request. The `upserted` count reports successful force writes (both creates and replacements); `created` and `skipped` remain zero in this mode. This is not an atomic reset: earlier writes remain if a later write fails. Review the seed and target before enabling force. Existing projects must update both the workflow and preparation script.
+
+#### Results and troubleshooting
+
+A successful POST returns counts such as `{"created":0,"upserted":44,"skipped":0,"conflicts":0,"failed":0}` for a force run. Confirm that the initialization step **and** the subsequent ordinary-package restoration both succeed. Restoration restores code, not database contents: it never rolls back successful seed writes.
+
+| Result | Meaning and action |
+|---|---|
+| Readiness GET initially returns 404, then succeeds | The temporary route was still starting. No seed writes occur during GET polling. |
+| Readiness never succeeds | Check the deployment URL, Function registration/startup, authentication expiry, and network access. No initialization POST was sent. |
+| POST returns 409 / `data-conflict` | Default mode found different existing data. Inspect the reported seed position; correct the seed or deliberately select `force`. |
+| POST returns 503 with C# `cosmosStatusCode: 404` | This is a Cosmos resource error, not the readiness 404. Verify the database/container and connection target. `404` / `1003` for `upsert-item` can indicate a missing container: provision the pending model migrations before retrying. |
+| POST times out or returns `write-outcome-unknown` | Earlier writes remain; the failed write may also have committed. Inspect diagnostics and existing data before retrying. Do not interpret the wrapper 503 as proof of transient Cosmos unavailability. |
+| Ordinary-package restoration fails | Redeploy the ordinary Functions package using the existing deployment workflow after correcting the deployment issue. |
+
+For C# bootstrap failures, the response also includes the operation, container name, zero-based seed position, elapsed time, exception type, and (for Cosmos exceptions) status/substatus codes, activity ID, and retry delay. The HTTP 503 wrapper alone does not identify the underlying Cosmos error. These diagnostics omit exception messages, document values, and connection details. A positive `upserted` count means partial writes already occurred; inspect the diagnostic result before deciding whether to retry.
+
+On a data conflict, the response includes `containerName` and `seedDocumentIndex` (zero-based position in the validated seed array). Use these to locate the seed item and compare its `id` and partition key with the existing Cosmos item. Document values are not included in the error. A 409 remains a failed initialization, not an indeterminate outcome or a successful skip. Keep existing data unchanged until the difference has been reviewed.
 
 The temporary endpoint explicitly uses `authLevel: anonymous` and separately requires a cryptographically random UUID v4 in the `Authorization: Bearer` header. GitHub Actions masks the raw token; only its SHA-256 hash and expiry are embedded in the temporary package. The token expires after 15 minutes. This is a temporary bearer credential, **not verification of the GitHub user's identity**. The workflow continues to use `Azure/functions-action` and `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`; publish profiles have security limitations compared with OIDC. OIDC migration is not part of this feature and remains a future improvement. No Subscription or Resource Group lookup is performed. The workflow relies on the existing GitHub Actions dispatch permissions, branch protections, and secret access; protect `main` and restrict who can run deployments, especially for production.
 

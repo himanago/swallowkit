@@ -16,6 +16,7 @@ public sealed class BootstrapSeedFunction
 {
     private const string ExpectedTokenHash = "__TOKEN_HASH__";
     private const long TokenExpiresAt = __EXPIRES_AT__;
+    private const bool Force = __FORCE__;
     private const string EncodedSeed = "__SEED_BASE64__";
     private const string DatabaseName = __DATABASE_NAME__;
     private const int ProcessingLimitSeconds = 180;
@@ -26,7 +27,7 @@ public sealed class BootstrapSeedFunction
 
     [Function("seedBootstrap")]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "seed-bootstrap")] HttpRequestData request)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = "seed-bootstrap")] HttpRequestData request)
     {
         var authHeader = request.Headers.TryGetValues("Authorization", out var values)
             ? values.FirstOrDefault()
@@ -57,19 +58,32 @@ public sealed class BootstrapSeedFunction
             return await WriteResponseAsync(request, HttpStatusCode.Unauthorized, new { errorCategory = "authentication" });
         }
 
+        if (string.Equals(request.Method, "GET", StringComparison.OrdinalIgnoreCase))
+        {
+            return await WriteResponseAsync(request, HttpStatusCode.OK, new { ready = true });
+        }
+
         var started = DateTimeOffset.UtcNow;
         var created = 0;
+        var upserted = 0;
         var skipped = 0;
         var conflicts = 0;
         var failed = 0;
+        string? activeContainerName = null;
+        int? activeSeedDocumentIndex = null;
+        var operation = "create-client";
 
         try
         {
             using var client = CreateCosmosClient();
+            operation = "decode-seed";
             var containers = JArray.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(EncodedSeed)));
             foreach (var containerSeed in containers.OfType<JObject>())
             {
                 var containerName = containerSeed.Value<string>("containerName")!;
+                activeContainerName = containerName;
+                activeSeedDocumentIndex = null;
+                operation = "get-container";
                 var partitionKeyField = containerSeed.Value<string>("partitionKeyField")!;
                 var container = client.GetContainer(
                     Environment.GetEnvironmentVariable("COSMOS_DB_DATABASE_NAME") ?? DatabaseName,
@@ -77,11 +91,13 @@ public sealed class BootstrapSeedFunction
 
                 foreach (var item in containerSeed["documents"]!.OfType<JObject>())
                 {
+                    activeSeedDocumentIndex = ((JArray)containerSeed["documents"]!).IndexOf(item);
+                    operation = "validate-item";
                     if ((DateTimeOffset.UtcNow - started).TotalSeconds >= ProcessingLimitSeconds)
                     {
                         return await WriteResponseAsync(request, HttpStatusCode.GatewayTimeout, new
                         {
-                            created, skipped, conflicts, failed, errorCategory = "processing-time-limit"
+                            created, upserted, skipped, conflicts, failed, errorCategory = "processing-time-limit"
                         });
                     }
 
@@ -94,11 +110,19 @@ public sealed class BootstrapSeedFunction
                         failed++;
                         return await WriteResponseAsync(request, HttpStatusCode.BadRequest, new
                         {
-                            created, skipped, conflicts, failed, errorCategory = "invalid-seed"
+                            created, upserted, skipped, conflicts, failed, errorCategory = "invalid-seed"
                         });
                     }
 
                     var partitionKey = ToPartitionKey(partitionValue);
+                    if (Force)
+                    {
+                        operation = "upsert-item";
+                        await container.UpsertItemAsync(item, partitionKey);
+                        upserted++;
+                        continue;
+                    }
+                    operation = "read-item";
                     var existing = await ReadExistingAsync(container, id, partitionKey);
                     if (existing is not null)
                     {
@@ -110,17 +134,20 @@ public sealed class BootstrapSeedFunction
                         conflicts++;
                         return await WriteResponseAsync(request, HttpStatusCode.Conflict, new
                         {
-                            created, skipped, conflicts, failed, errorCategory = "data-conflict"
+                            created, upserted, skipped, conflicts, failed, errorCategory = "data-conflict",
+                            containerName, seedDocumentIndex = ((JArray)containerSeed["documents"]!).IndexOf(item)
                         });
                     }
 
                     try
                     {
+                        operation = "create-item";
                         await container.CreateItemAsync(item, partitionKey);
                         created++;
                     }
                     catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.Conflict)
                     {
+                        operation = "read-after-conflict";
                         var racedItem = await ReadExistingAsync(container, id, partitionKey);
                         if (racedItem is not null && DocumentsEqual(racedItem, item))
                         {
@@ -130,15 +157,8 @@ public sealed class BootstrapSeedFunction
                         conflicts++;
                         return await WriteResponseAsync(request, HttpStatusCode.Conflict, new
                         {
-                            created, skipped, conflicts, failed, errorCategory = "data-conflict"
-                        });
-                    }
-                    catch (Exception)
-                    {
-                        failed++;
-                        return await WriteResponseAsync(request, HttpStatusCode.ServiceUnavailable, new
-                        {
-                            created, skipped, conflicts, failed, errorCategory = "write-outcome-unknown"
+                            created, upserted, skipped, conflicts, failed, errorCategory = "data-conflict",
+                            containerName, seedDocumentIndex = ((JArray)containerSeed["documents"]!).IndexOf(item)
                         });
                     }
                 }
@@ -148,19 +168,36 @@ public sealed class BootstrapSeedFunction
             {
                 return await WriteResponseAsync(request, HttpStatusCode.GatewayTimeout, new
                 {
-                    created, skipped, conflicts, failed, errorCategory = "processing-time-limit"
+                    created, upserted, skipped, conflicts, failed, errorCategory = "processing-time-limit"
                 });
             }
-            return await WriteResponseAsync(request, HttpStatusCode.OK, new { created, skipped, conflicts, failed });
+            return await WriteResponseAsync(request, HttpStatusCode.OK, new { created, upserted, skipped, conflicts, failed });
         }
-        catch (Exception)
+        catch (Exception error)
         {
             failed++;
             return await WriteResponseAsync(request, HttpStatusCode.ServiceUnavailable, new
             {
-                created, skipped, conflicts, failed, errorCategory = "write-outcome-unknown"
+                created, upserted, skipped, conflicts, failed, errorCategory = "write-outcome-unknown",
+                containerName = activeContainerName, seedDocumentIndex = activeSeedDocumentIndex,
+                operation, elapsedMs = (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds,
+                diagnostics = BuildFailureDetails(error)
             });
         }
+    }
+
+    private static object BuildFailureDetails(Exception error)
+    {
+        var cosmosError = error as CosmosException;
+        return new
+        {
+            exceptionType = error.GetType().Name,
+            innerExceptionType = error.InnerException?.GetType().Name,
+            cosmosStatusCode = cosmosError is null ? (int?)null : (int)cosmosError.StatusCode,
+            cosmosSubStatusCode = cosmosError?.SubStatusCode,
+            activityId = cosmosError?.ActivityId,
+            retryAfterMs = cosmosError?.RetryAfter?.TotalMilliseconds
+        };
     }
 
     private static CosmosClient CreateCosmosClient()
@@ -267,6 +304,7 @@ from azure.identity import DefaultAzureCredential
 bp = func.Blueprint()
 EXPECTED_TOKEN_HASH = "__TOKEN_HASH__"
 TOKEN_EXPIRES_AT = __EXPIRES_AT__
+FORCE = __FORCE_PYTHON__
 ENCODED_SEED = "__SEED_BASE64__"
 DATABASE_NAME = os.environ.get("COSMOS_DB_DATABASE_NAME", __DATABASE_NAME__)
 PROCESSING_LIMIT_SECONDS = 180
@@ -338,9 +376,10 @@ def _get_container(client, container_name):
     return database.get_container_client(container_name)
 
 
-def _write_failure(created, skipped, conflicts, failed, category, status):
+def _write_failure(created, skipped, conflicts, failed, category, status, **details):
     return _json_response(
         {
+            **details,
             "created": created,
             "skipped": skipped,
             "conflicts": conflicts,
@@ -351,7 +390,7 @@ def _write_failure(created, skipped, conflicts, failed, category, status):
     )
 
 
-@bp.route(route="seed-bootstrap", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@bp.route(route="seed-bootstrap", methods=["GET", "POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def seed_bootstrap(req: func.HttpRequest) -> func.HttpResponse:
     auth_header = req.headers.get("Authorization", "")
     scheme, separator, token = auth_header.partition(" ")
@@ -363,8 +402,13 @@ def seed_bootstrap(req: func.HttpRequest) -> func.HttpResponse:
     if not hmac.compare_digest(supplied_hash, EXPECTED_TOKEN_HASH):
         return _json_response({"errorCategory": "authentication"}, 401)
 
+    if req.method.upper() == "GET":
+        return _json_response({"ready": True}, 200)
+
     started = time.monotonic()
-    created = skipped = conflicts = failed = 0
+    created = skipped = conflicts = failed = upserted = 0
+    def write_failure(*args, **details):
+        return _write_failure(*args, upserted=upserted, **details)
     client = None
     credential = None
     try:
@@ -373,9 +417,9 @@ def seed_bootstrap(req: func.HttpRequest) -> func.HttpResponse:
         for seed in seeds:
             container = _get_container(client, seed["containerName"])
             partition_key_field = seed["partitionKeyField"]
-            for document in seed["documents"]:
+            for document_index, document in enumerate(seed["documents"]):
                 if time.monotonic() - started >= PROCESSING_LIMIT_SECONDS:
-                    return _write_failure(
+                    return write_failure(
                         created, skipped, conflicts, failed, "processing-time-limit", 504
                     )
 
@@ -383,10 +427,15 @@ def seed_bootstrap(req: func.HttpRequest) -> func.HttpResponse:
                 partition_key = document.get(partition_key_field)
                 if not isinstance(item_id, str) or not item_id or partition_key is None:
                     failed += 1
-                    return _write_failure(created, skipped, conflicts, failed, "invalid-seed", 400)
+                    return write_failure(created, skipped, conflicts, failed, "invalid-seed", 400)
                 if isinstance(partition_key, (dict, list)):
                     failed += 1
-                    return _write_failure(created, skipped, conflicts, failed, "invalid-seed", 400)
+                    return write_failure(created, skipped, conflicts, failed, "invalid-seed", 400)
+
+                if FORCE:
+                    container.upsert_item(body=document)
+                    upserted += 1
+                    continue
 
                 try:
                     existing = container.read_item(item=item_id, partition_key=partition_key)
@@ -398,7 +447,8 @@ def seed_bootstrap(req: func.HttpRequest) -> func.HttpResponse:
                         skipped += 1
                         continue
                     conflicts += 1
-                    return _write_failure(created, skipped, conflicts, failed, "data-conflict", 409)
+                    return write_failure(created, skipped, conflicts, failed, "data-conflict", 409,
+                                          containerName=seed["containerName"], seedDocumentIndex=document_index)
 
                 try:
                     container.create_item(body=document)
@@ -412,24 +462,25 @@ def seed_bootstrap(req: func.HttpRequest) -> func.HttpResponse:
                         skipped += 1
                         continue
                     conflicts += 1
-                    return _write_failure(created, skipped, conflicts, failed, "data-conflict", 409)
+                    return write_failure(created, skipped, conflicts, failed, "data-conflict", 409,
+                                          containerName=seed["containerName"], seedDocumentIndex=document_index)
                 except Exception:
                     failed += 1
-                    return _write_failure(
+                    return write_failure(
                         created, skipped, conflicts, failed, "write-outcome-unknown", 503
                     )
 
         if time.monotonic() - started >= PROCESSING_LIMIT_SECONDS:
-            return _write_failure(
+            return write_failure(
                 created, skipped, conflicts, failed, "processing-time-limit", 504
             )
         return _json_response(
-            {"created": created, "skipped": skipped, "conflicts": conflicts, "failed": failed},
+            {"created": created, "upserted": upserted, "skipped": skipped, "conflicts": conflicts, "failed": failed},
             200,
         )
     except Exception:
         failed += 1
-        return _write_failure(created, skipped, conflicts, failed, "write-outcome-unknown", 503)
+        return write_failure(created, skipped, conflicts, failed, "write-outcome-unknown", 503)
     finally:
         if credential is not None:
             credential.close()
@@ -442,6 +493,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 const expectedTokenHash = "__TOKEN_HASH__";
 const tokenExpiresAt = __EXPIRES_AT__;
+const force = __FORCE__;
 const encodedSeed = "__SEED_BASE64__";
 const databaseName = process.env.COSMOS_DB_DATABASE_NAME ?? __DATABASE_NAME__;
 const processingLimitMs = 180_000;
@@ -515,8 +567,13 @@ async function seedBootstrap(request: HttpRequest, context: InvocationContext): 
     return response(401, { errorCategory: "authentication" });
   }
 
+  if (request.method.toUpperCase() === "GET") {
+    return response(200, { ready: true });
+  }
+
   const started = Date.now();
   let created = 0;
+  let upserted = 0;
   let skipped = 0;
   let conflicts = 0;
   let failed = 0;
@@ -531,16 +588,21 @@ async function seedBootstrap(request: HttpRequest, context: InvocationContext): 
       const container = client.database(databaseName).container(seed.containerName);
       for (const document of seed.documents) {
         if (Date.now() - started >= processingLimitMs) {
-          return response(504, { created, skipped, conflicts, failed, errorCategory: "processing-time-limit" });
+          return response(504, { created, upserted, skipped, conflicts, failed, errorCategory: "processing-time-limit" });
         }
         const partitionValue = document[seed.partitionKeyField];
         if (typeof document.id !== "string" || !document.id.trim() ||
             (typeof partitionValue !== "string" && typeof partitionValue !== "number" && typeof partitionValue !== "boolean")) {
           failed++;
-          return response(400, { created, skipped, conflicts, failed, errorCategory: "invalid-seed" });
+          return response(400, { created, upserted, skipped, conflicts, failed, errorCategory: "invalid-seed" });
         }
 
         const partitionKey = partitionValue as PartitionValue;
+        if (force) {
+          await container.items.upsert(document);
+          upserted++;
+          continue;
+        }
         let existing: Record<string, unknown> | undefined;
         try {
           const result = await container.item(document.id, partitionKey).read<Record<string, unknown>>();
@@ -554,7 +616,8 @@ async function seedBootstrap(request: HttpRequest, context: InvocationContext): 
             continue;
           }
           conflicts++;
-          return response(409, { created, skipped, conflicts, failed, errorCategory: "data-conflict" });
+          return response(409, { created, upserted, skipped, conflicts, failed, errorCategory: "data-conflict",
+            containerName: seed.containerName, seedDocumentIndex: seed.documents.indexOf(document) });
         }
 
         try {
@@ -568,19 +631,20 @@ async function seedBootstrap(request: HttpRequest, context: InvocationContext): 
             continue;
           }
           conflicts++;
-          return response(409, { created, skipped, conflicts, failed, errorCategory: "data-conflict" });
+          return response(409, { created, upserted, skipped, conflicts, failed, errorCategory: "data-conflict",
+            containerName: seed.containerName, seedDocumentIndex: seed.documents.indexOf(document) });
         }
       }
     }
 
     if (Date.now() - started >= processingLimitMs) {
-      return response(504, { created, skipped, conflicts, failed, errorCategory: "processing-time-limit" });
+      return response(504, { created, upserted, skipped, conflicts, failed, errorCategory: "processing-time-limit" });
     }
-    return response(200, { created, skipped, conflicts, failed });
+    return response(200, { created, upserted, skipped, conflicts, failed });
   } catch (error) {
     failed++;
     context.error("Cosmos bootstrap failed; a write may have an indeterminate outcome.", error);
-    return response(503, { created, skipped, conflicts, failed, errorCategory: "write-outcome-unknown" });
+    return response(503, { created, upserted, skipped, conflicts, failed, errorCategory: "write-outcome-unknown" });
   } finally {
     client?.dispose();
     credential?.close();
@@ -588,7 +652,7 @@ async function seedBootstrap(request: HttpRequest, context: InvocationContext): 
 }
 
 app.http("seedBootstrap", {
-  methods: ["POST"],
+  methods: ["GET", "POST"],
   route: "seed-bootstrap",
   authLevel: "anonymous",
   handler: seedBootstrap,
@@ -614,6 +678,7 @@ const FUNCTION_TEMPLATE = __FUNCTION_TEMPLATE__;
 const seedName = process.argv[2] || "";
 const tokenHash = process.env.BOOTSTRAP_TOKEN_HASH || "";
 const expiresAt = Number(process.env.BOOTSTRAP_EXPIRES_AT || 0);
+const force = process.env.BOOTSTRAP_FORCE || "false";
 
 function fail(message) {
   console.error("Bootstrap seed preparation failed: " + message);
@@ -622,6 +687,9 @@ function fail(message) {
 
 if (!SEED_NAME_PATTERN.test(seedName)) {
   fail("seed_name must start with an alphanumeric character and contain only letters, numbers, hyphens, or underscores (max 64 characters).");
+}
+if (force !== "true" && force !== "false") {
+  fail("BOOTSTRAP_FORCE must be true or false.");
 }
 if (!/^[a-f0-9]{64}$/.test(tokenHash) || !Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) {
   fail("temporary authentication settings are missing or invalid.");
@@ -786,6 +854,8 @@ const databaseName = packageName.charAt(0).toUpperCase() + packageName.slice(1) 
 const generatedFunction = FUNCTION_TEMPLATE
   .replaceAll("__TOKEN_HASH__", tokenHash)
   .replaceAll("__EXPIRES_AT__", String(expiresAt))
+  .replaceAll("__FORCE__", force)
+  .replaceAll("__FORCE_PYTHON__", force === "true" ? "True" : "False")
   .replaceAll("__DATABASE_NAME__", JSON.stringify(databaseName))
   .replaceAll("__SEED_BASE64__", encodedSeed);
 

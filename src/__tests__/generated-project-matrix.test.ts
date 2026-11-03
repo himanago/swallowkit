@@ -20,6 +20,7 @@ import * as childProcess from "child_process";
 import { builtinModules } from "module";
 import { EventEmitter } from "events";
 import * as ts from "typescript";
+import { createHash } from "crypto";
 import { runMachineCli } from "../machine";
 import { addAuthCommand } from "../cli/commands/add-auth";
 import { buildGeneratedProjectDependencies, buildGeneratedProjectDevDependencies, buildSwallowKitConfigSource, createAzureFunctionsProject, createSharedPackage } from "../cli/commands/init";
@@ -766,8 +767,8 @@ export type LearningProfile = z.infer<typeof LearningProfile>;
     }
   }, 60_000);
 
-  const validateBootstrapFunction = async (backend: BackendLanguage) => {
-    const root = path.join(workRoot, `bootstrap-${backend}`, PROJECT);
+  const validateBootstrapFunction = async (backend: BackendLanguage, force = false) => {
+    const root = path.join(workRoot, `bootstrap-${backend}-${force}`, PROJECT);
     await createSkeleton(root, "react", backend, "js");
     const sharedModel = path.join(root, "shared", "models", "probe-item.ts");
     write(sharedModel, MODEL_SOURCE);
@@ -793,7 +794,8 @@ export type LearningProfile = z.infer<typeof LearningProfile>;
       cwd: root,
       env: {
         ...process.env,
-        BOOTSTRAP_TOKEN_HASH: "a".repeat(64),
+        BOOTSTRAP_TOKEN_HASH: createHash("sha256").update("matrix-bootstrap-token").digest("hex"),
+        BOOTSTRAP_FORCE: String(force),
         BOOTSTRAP_EXPIRES_AT: String(Math.floor(Date.now() / 1000) + 900),
       },
       encoding: "utf-8",
@@ -805,16 +807,111 @@ export type LearningProfile = z.infer<typeof LearningProfile>;
       expect(checkPython(functionsRoot)).toEqual([]);
     } else if (backend === "csharp") {
       expect(await dotnetBuild(functionsRoot)).toEqual([]);
+      if (force) {
+        const projectName = fs.readdirSync(functionsRoot).find((file) => file.endsWith(".csproj"))!;
+        const framework = fs.readFileSync(path.join(functionsRoot, projectName), "utf8")
+          .match(/<TargetFramework>([^<]+)<\/TargetFramework>/)![1];
+        const probeRoot = path.join(root, "diagnostic-probe");
+        write(path.join(probeRoot, "Probe.csproj"),
+          `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>${framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup><ItemGroup><ProjectReference Include="../functions/${projectName}" /></ItemGroup></Project>`);
+        write(path.join(probeRoot, "Program.cs"), `
+using System.Net;
+using System.Reflection;
+using System.Text.Json;
+using Microsoft.Azure.Cosmos;
+using SwallowKit.Functions;
+var describe = typeof(BootstrapSeedFunction).GetMethod("BuildFailureDetails", BindingFlags.NonPublic | BindingFlags.Static)!;
+var errors = new Exception[] {
+    new CosmosException("PRIVATE-COSMOS-MESSAGE", HttpStatusCode.TooManyRequests, 1002, "activity-test", 1),
+    new InvalidOperationException("PRIVATE-CONNECTION-STRING", new TimeoutException("PRIVATE-ENDPOINT")),
+};
+Console.WriteLine(JsonSerializer.Serialize(errors.Select(error => describe.Invoke(null, new object[] { error }))));
+`);
+        const probe = real.spawnSync("dotnet", ["run", "--project", path.join(probeRoot, "Probe.csproj"), "--verbosity", "quiet"], {
+          cwd: root, encoding: "utf8", timeout: 120_000,
+          env: { ...process.env, DOTNET_CLI_TELEMETRY_OPTOUT: "1", MSBUILDDISABLENODEREUSE: "1" },
+        });
+        expect({ status: probe.status, error: probe.stderr }).toEqual({ status: 0, error: "" });
+        const output = probe.stdout.trim().split(/\r?\n/).pop()!;
+        expect(output).not.toContain("PRIVATE-");
+        expect(JSON.parse(output)).toEqual([
+          expect.objectContaining({
+            exceptionType: "CosmosException", cosmosStatusCode: 429,
+            cosmosSubStatusCode: 1002, activityId: "activity-test",
+          }),
+          expect.objectContaining({
+            exceptionType: "InvalidOperationException", innerExceptionType: "TimeoutException",
+            cosmosStatusCode: null,
+          }),
+        ]);
+      }
     } else {
       expect(typecheck(
         path.join(functionsRoot, "tsconfig.json"),
         path.join(root, "shared", "index.ts"),
       )).toEqual([]);
+      const source = fs.readFileSync(path.join(functionsRoot, "src", "bootstrap-seed.ts"), "utf8");
+      const compiled = ts.transpileModule(source, {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      }).outputText;
+      const register = jest.fn();
+      const cosmos = jest.fn<() => unknown>(() => { throw new Error("Readiness must not access Cosmos DB"); });
+      const credential = jest.fn(() => { throw new Error("Readiness must not request Azure credentials"); });
+      const load = (id: string) => {
+        if (id === "@azure/functions") return { app: { http: register } };
+        if (id === "@azure/cosmos") return { CosmosClient: cosmos };
+        if (id === "@azure/identity") return { DefaultAzureCredential: credential };
+        if (id === "node:crypto") return { createHash, timingSafeEqual: jest.requireActual<typeof import("crypto")>("crypto").timingSafeEqual };
+        throw new Error(`Unexpected generated import: ${id}`);
+      };
+      new Function("require", "exports", compiled)(load, {});
+      const options = register.mock.calls[0][1] as {
+        methods: string[];
+        handler: (request: { method: string; headers: Map<string, string> }, context: object) => Promise<unknown>;
+      };
+      expect(options.methods).toEqual(["GET", "POST"]);
+      expect(await options.handler({
+        method: "GET", headers: new Map([["authorization", "Bearer matrix-bootstrap-token"]]),
+      }, {})).toEqual({ status: 200, jsonBody: { ready: true } });
+      expect(await options.handler({
+        method: "GET", headers: new Map([["authorization", "Bearer incorrect-token"]]),
+      }, {})).toEqual({ status: 401, jsonBody: { errorCategory: "authentication" } });
+      expect(cosmos).not.toHaveBeenCalled();
+      expect(credential).not.toHaveBeenCalled();
+      if (force) {
+        const upsert = jest.fn(async () => ({}));
+        const dispose = jest.fn();
+        cosmos.mockImplementation(() => ({
+          database: () => ({ container: () => ({ items: { upsert } }) }),
+          dispose,
+        }));
+        const previousEndpoint = process.env.CosmosDBConnection__accountEndpoint;
+        const previousConnection = process.env.CosmosDBConnection;
+        delete process.env.CosmosDBConnection__accountEndpoint;
+        process.env.CosmosDBConnection = "matrix-only";
+        try {
+          expect(await options.handler({
+            method: "POST", headers: new Map([["authorization", "Bearer matrix-bootstrap-token"]]),
+          }, {})).toEqual({
+            status: 200, jsonBody: { created: 0, upserted: 1, skipped: 0, conflicts: 0, failed: 0 },
+          });
+          expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ id: "seed-1" }));
+          expect(dispose).toHaveBeenCalled();
+        } finally {
+          if (previousEndpoint === undefined) delete process.env.CosmosDBConnection__accountEndpoint;
+          else process.env.CosmosDBConnection__accountEndpoint = previousEndpoint;
+          if (previousConnection === undefined) delete process.env.CosmosDBConnection;
+          else process.env.CosmosDBConnection = previousConnection;
+        }
+      }
     }
   };
 
   it("type-checks the generated TypeScript bootstrap endpoint", async () => {
     await validateBootstrapFunction("typescript");
+  }, 5 * 60 * 1000);
+  it("executes forced bootstrap upserts without requiring read or delete operations", async () => {
+    await validateBootstrapFunction("typescript", true);
   }, 5 * 60 * 1000);
 
   toolchainGate(Boolean(PYTHON), "Python >= 3.10")(
@@ -822,9 +919,19 @@ export type LearningProfile = z.infer<typeof LearningProfile>;
     () => validateBootstrapFunction("python"),
     5 * 60 * 1000,
   );
+  toolchainGate(Boolean(PYTHON), "Python >= 3.10")(
+    "validates the generated Python force bootstrap endpoint",
+    () => validateBootstrapFunction("python", true),
+    5 * 60 * 1000,
+  );
   toolchainGate(DOTNET, ".NET SDK", process.env.SWALLOWKIT_TEST_SKIP_DOTNET === "1")(
     "compiles the generated C# bootstrap endpoint with the Functions app",
     () => validateBootstrapFunction("csharp"),
+    5 * 60 * 1000,
+  );
+  toolchainGate(DOTNET, ".NET SDK", process.env.SWALLOWKIT_TEST_SKIP_DOTNET === "1")(
+    "compiles the generated C# force bootstrap endpoint",
+    () => validateBootstrapFunction("csharp", true),
     5 * 60 * 1000,
   );
 
