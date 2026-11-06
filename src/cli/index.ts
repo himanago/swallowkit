@@ -11,7 +11,7 @@ import { createMigrationCommand } from "./commands/create-migration";
 import { migrationsCommand } from "./commands/migrations";
 import { configureMcpCommand } from "./commands/configure-mcp";
 import { addConnectorCommand } from "./commands/add-connector";
-import { addAuthCommand } from "./commands/add-auth";
+import { applyAuthOperation } from "../core/operations/auth-operations";
 import { planScaffoldOperation } from "../core/operations/scaffold-plan";
 import { inspectArtifacts } from "../core/project/artifacts";
 import { detectDrift } from "../core/project/drift";
@@ -206,12 +206,15 @@ export function createProgram(devCommandOverride: Command = devCommand): Command
     .option("--provider <provider>", "Auth provider: custom-jwt | swa | external-token | swa-custom | none", "custom-jwt")
     .option("--scheme <name>", "Add a named authentication scheme")
     .option("--allowed-providers <list>", "Comma-separated SWA identity providers to allow (e.g. github,aad); defaults to aad")
-    .action((options) => {
-      addAuthCommand({
+    .action(async (options) => {
+      const result = await applyAuthOperation({
         provider: options.provider,
         scheme: options.scheme,
         allowedProviders: options.allowedProviders ? String(options.allowedProviders).split(",") : undefined,
       });
+      console.log(`Authentication setup complete (${result.provider}${result.scheme ? ` / ${result.scheme}` : ""}).`);
+      for (const warning of result.warnings) console.warn(warning);
+      for (const diagnostic of result.diagnostics) console.warn(diagnostic);
     });
 
   program

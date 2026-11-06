@@ -223,3 +223,8 @@ pnpm exec swallowkit dev --mock-connectors
 - [Scaffold ガイド](/ja/scaffold-guide) — CRUD 生成とモデル設定
 - [Azure へのデプロイ](/ja/deployment-guide) — ローカルからクラウドへ
 - [外部コネクタ](/ja/connector-guide) — MySQL、PostgreSQL、REST API への接続
+
+
+### Durable Functions と Azurite
+
+独立 Durable Functions が Azure Storage provider と `UseDevelopmentStorage=true` を使う場合は、`swallowkit dev` の前に Azurite を起動してください。dev はこの設定で標準の Blob、Queue、Table ポート（10000〜10002）に到達できない場合に案内します。HTTP の起動確認は HTTP の範囲です。Durable の接続はテスト用オーケストレーションで確認します。Azure Storage への接続や他の Durable provider には各構成の前提が適用されます。Cosmos DB Emulator は別のサービスです。

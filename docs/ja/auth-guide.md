@@ -1,7 +1,7 @@
 # 認証
 
 React も全プロバイダーと名前付きスキームに対応します。マネージド BFF はリクエストごとに
-SWA principal / bearer token を転送し、custom-jwt は `/api/auth/{action}` と
+SWA principal と外部トークン専用ヘッダーを扱い、custom-jwt は `/api/auth/{action}` と
 HttpOnly Cookie を使います。認可は独立 Functions が担当します。
 Next.js の proxy / API Routes は生成しません。
 パスと SWA ポートの使い方は [React の認証](./react-guide.md#認証とコネクタ)を参照してください。
@@ -564,3 +564,35 @@ swallowkit add-auth --scheme lineUser --provider external-token
 生成された `functions/src/auth/schemes/line-user/verifier.ts` を実装してください。初期 stub は全 token を拒否します。管理系・一般ユーザー系の route group layout で、それぞれ `lib/auth/schemes/admin/auth-context` と `lib/auth/schemes/line-user/auth-context` の Provider をスコープします。LINE側UIはスキーム固有 authenticated fetch を使用します。UIのロール表示制御はUX用途だけで、Functionsがセキュリティ境界です。
 
 管理者SWA principalは`lineUserOnly`を選択できず、LINE Bearer tokenは`adminOnly`を選択できません。検証失敗後のprovider fallbackはありません。`swa-custom`は予約扱いで名前付きスキームには使用できないため、`swa`と別のcustom/externalスキームを組み合わせてください。
+
+
+### 外部トークンの転送と移行
+
+| 経路 | ブラウザーからの資格情報 | 独立 Functions への転送 |
+|---|---|---|
+| React SPA → SWA managed BFF | 同一オリジンの `/api/*` に `x-swallowkit-external-token`（トークン値のみ） | `Authorization: Bearer …` とサーバー側の `x-functions-key` |
+| Next.js API Routes | 通常の `Authorization: Bearer …`。ホストがヘッダーを保持することが前提 | `Authorization: Bearer …` とサーバー側の `x-functions-key` |
+| SWA を介さない独立 Functions への直接通信 | 通常の `Authorization: Bearer …`。関数キーを使う直接テストはサーバー側で実施 | Functions が検証 |
+
+SWA managed API で Authorization が置換された報告と、カスタムヘッダーによる回避例があります。リンク済みバックエンドも SWA のプロキシを経由しますが、managed API と同じヘッダー挙動かは個別に確認してください。SwallowKit の生成構成では独立 Functions をリンクしません。[Azure SWA #34](https://github.com/Azure/static-web-apps/issues/34)、[Azure SWA #275](https://github.com/Azure/static-web-apps/issues/275)、[リンク済み Functions の制約](https://learn.microsoft.com/en-us/azure/static-web-apps/functions-bring-your-own)
+
+React BFF は受信した Authorization を読みません。外部ヘッダーを優先し、ヘッダーがない場合に限り custom-jwt が有効なら既存の HttpOnly Cookie を使います。外部トークン用の Cookie はありません。SWA principal は独立した入力です。名前付きポリシーは候補が一つのときだけ検証し、同じ資格情報源を使う複数スキームを一つのポリシーに設定できません。外部 IdP ごとにポリシーを分けます。外部トークンで利用する SWA ルートには SWA 組み込みログインを必須にするルールを適用しないでください。アダプターは毎回 SDK の現行セッションを参照し、更新後のトークンまたはログアウト後の null を返してください。トークンを URL、ログ、エラー、永続ストレージに残さないでください。
+
+verifier は IdP の署名または検証 API、issuer、audience、期限、subject を確認し、サーバーで決めた roles を返します。名前付き guard は欠落・不正・期限切れを 401、検証先障害を 503、未設定を 500 に分類します。期限切れは verifier が明示します。C# は `ExternalTokenExpiredException`、TS は `ExternalTokenVerificationError` の第 3 引数 `expired_token`、Python は `expired=True` を使えます。BFF は既知の status と code の組だけを固定文言で返します。独自 API で同じ分類を返す場合は、この code 契約に合わせてください。
+
+名前付き C# guard は、スキーム別の `Func<string, CancellationToken, Task<ExternalPrincipal_<scheme>>>` を invocation DI から解決し、キャンセルを渡します。Program.cs で HttpClient、設定、テスト用ハンドラーを持つサービスのメソッドを登録できます。登録がなければ既存の static `VerifyAsync(string)` を呼びます。既存 verifier の差し替えは任意です。単一プロバイダーの C# は `ExternalAuthPrincipal` のデリゲートと `ExternalAuthVerificationException` を使います。
+
+名前付き AuthProvider を使う場合は `load-user.ts` を実装するか `loadUser` を渡します。必要ならスキームで保護したアプリ所有のエンドポイントを BFF と Functions に実装し、`authenticatedFetch` で呼びます。loader は検証済みの `{ id, loginId, name, email, roles: string[] }`、ログアウト時は null を返し、404、HTML、通信障害では例外を送出します。SDK の identity 変更時は `identityVersion` を更新するか `refresh()` を呼びます。単一プロバイダー構成には既存の `/api/auth/me` が生成されます。
+
+beta.1 のプロジェクトルートで次を実行します。単一プロバイダーの場合は `--scheme line` を省略します。
+
+```sh
+swallowkit machine plan auth --provider external-token --scheme line --refresh
+swallowkit machine apply auth --plan <plan-id>
+swallowkit machine inspect boundaries
+swallowkit machine verify project
+```
+
+`unknown-provenance` や `modified-after-generation` があれば、現行の BFF、fetch、context と生成内容を比較し、独自差分を退避してから必要な場合だけ `--approve` で適用してください。token-adapter と verifier は保持されます。生成 CRUD を使う場合は対象モデルを plan/apply scaffold で再生成して guard も更新します。独自 API の verifier やルートはアプリ側で管理します。
+
+Azure 本番では、既存の許可済み検証環境で短命のテスト資格情報を使います。ブラウザー送信、managed BFF 受信、独立 Functions 受信の各境界でヘッダーの有無と検証分類だけを相関 ID で確認します。トークンやヘッダー値は採取しません。有効・欠落・不正・期限切れ・検証障害を試し、有効時だけ保護データが返ることを確認します。SWA CLI と machine verify の結果は、この本番検証の代わりにはなりません。

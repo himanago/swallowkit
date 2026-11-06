@@ -1812,6 +1812,10 @@ This starts:
 - Cosmos DB Emulator check (must be running separately)
 
 **Note**: You need to start Cosmos DB Emulator manually before running \`swallowkit dev\`.
+
+For a Durable Functions backend using the Azure Storage provider with
+\`UseDevelopmentStorage=true\`, start Azurite separately. Dev reports HTTP
+reachability. Check Durable storage by running a test orchestration.
 ${pythonLocalDevNote}
 
 ## ☁️ Deploy to Azure

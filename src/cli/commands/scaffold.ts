@@ -5,9 +5,10 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { writeReactAuthTransport } from "../../core/operations/react-auth-transport";
 import { spawnSync } from "child_process";
-import { getBackendLanguage, getFrontendFramework, getConnectorDefinition, getAuthConfig, getFullConfig, getNormalizedAuthConfig, ensureSwallowKitProject, normalizeAuthConfig, validateConfig } from "../../core/config";
-import { generateManagedFunctionConfig, generateReactBffHelper, generateReactBffRoute } from "../../core/scaffold/react-bff-generator";
+import { authSchemeSlug, getBackendLanguage, getFrontendFramework, getConnectorDefinition, getAuthConfig, getFullConfig, getNormalizedAuthConfig, ensureSwallowKitProject, normalizeAuthConfig, validateConfig } from "../../core/config";
+import { generateManagedFunctionConfig, generateReactBffRoute } from "../../core/scaffold/react-bff-generator";
 import { adaptReactPage, generateReactModelRoutes } from "../../core/scaffold/react-ui-generator";
 import { ModelInfo, parseModelFile, toKebabCase, toCamelCase } from "../../core/scaffold/model-parser";
 import { MachineCommandError } from "../../machine/errors";
@@ -497,7 +498,7 @@ async function generateCallFunctionHelper(session: FileOperationSession, apiDir:
   const cwd = process.cwd();
   if (getFrontendFramework() === "react") {
     const projectName = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")).name;
-    session.writeFile(path.join(cwd, apiDir, "src", "lib", "call-function.ts"), generateReactBffHelper(projectName, getAuthConfig()), {
+    writeReactAuthTransport(session, cwd, apiDir, projectName, getAuthConfig(), {
       ownership: "managed", generator: SCAFFOLD_GENERATOR,
     });
     return;
@@ -609,8 +610,8 @@ export function createUIAuthOptions(policy: ModelAuthPolicy, authConfig: AuthCon
   const writeRoles = named?.roles ?? (Array.isArray(policy.write) ? policy.write : policy.roles) ?? [];
   const externalScheme = [...(readNamed?.schemes ?? []), ...(named?.schemes ?? [])].find(name => normalized?.schemes[name]?.provider === 'external-token');
   const authScheme = readNamed?.schemes[0] ?? named?.schemes[0];
-  const authenticatedFetchImport = externalScheme ? `@/lib/auth/schemes/${toKebabCase(externalScheme)}/authenticated-fetch` : authConfig.provider === 'external-token' ? '@/lib/auth/authenticated-fetch' : undefined;
-  const authContextImport = authScheme ? `@/lib/auth/schemes/${toKebabCase(authScheme)}/auth-context` : '@/lib/auth/auth-context';
+  const authenticatedFetchImport = externalScheme ? `@/lib/auth/schemes/${authSchemeSlug(externalScheme)}/authenticated-fetch` : authConfig.provider === 'external-token' ? '@/lib/auth/authenticated-fetch' : undefined;
+  const authContextImport = authScheme ? `@/lib/auth/schemes/${authSchemeSlug(authScheme)}/auth-context` : '@/lib/auth/auth-context';
   return { authPolicy: policy, writeRoles, authenticatedFetchImport, authContextImport };
 }
 

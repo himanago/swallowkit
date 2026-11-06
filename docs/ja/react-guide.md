@@ -131,7 +131,7 @@ Cosmos DB Emulator は既存のものを使います。利用できなければ�
 React では Next.js の proxy/API Routes ではなく、マネージド BFF ハンドラーを生成します。
 
 - SWA 認証では、プラットフォームが注入した principal を検証・正規化して転送します。
-- external-token では bearer token を転送します。生成された verifier とクライアントアダプターの実装が必要です。
+- external-token は managed SWA 区間で `x-swallowkit-external-token` を使います。アダプターと独立 Functions の verifier を実装してください。
 - custom-jwt のログインでは HttpOnly・SameSite Cookie にトークンを保持し、本番では Secure を付けます。BFF が bearer token に変換し、バックエンドが検証します。
 - 認証情報はリクエストごとに処理します。モデルのポリシーとロールを強制するのはバックエンドです。UI の表示制御は認可の代わりになりません。
 

@@ -427,10 +427,12 @@ describe("external token auth generators", () => {
     expect(fetchCode).toContain("status: 401");
   });
 
-  it("handles non-JSON auth/me responses without parsing them", () => {
+  it("surfaces a non-JSON auth/me response separately from sign-out", () => {
     const code = generateExternalTokenAuthContext();
     expect(code).toContain("content-type");
-    expect(code).toContain(".catch(() => setUser(null))");
+    expect(code).toContain("throw new Error('Expected JSON for the current user')");
+    expect(code).toContain("error: current?.error ?? null");
+    expect(generateExternalTokenAuthContext(true)).not.toContain("/api/auth/me");
   });
 
   it.each([

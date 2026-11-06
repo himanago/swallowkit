@@ -1,5 +1,5 @@
 import * as http from "http";
-import { readFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import * as path from "path";
 import {
   buildFunctionsBaseUrl,
@@ -12,6 +12,7 @@ import {
   buildPythonFunctionsEnv,
   compareVersionNumbers,
   DevOptions,
+  getDurableAzuritePorts,
   getFunctionsReadinessTimeoutMs,
   getCSharpFunctionsBuildArtifactPaths,
   getPythonVirtualEnvPaths,
@@ -26,6 +27,29 @@ const packageVersion = JSON.parse(
 ).version as string;
 
 describe("dev command helpers", () => {
+  it("requires Azurite endpoints only for Durable Azure Storage with the development shortcut", () => {
+    const root = mkdtempSync(path.join(process.cwd(), ".tmp-durable-storage-"));
+    try {
+      writeFileSync(path.join(root, "local.settings.json"), JSON.stringify({
+        Values: { AzureWebJobsStorage: "UseDevelopmentStorage=true", TasksStorage: "UseDevelopmentStorage=true" },
+      }));
+      expect(getDurableAzuritePorts(root, {})).toEqual([]);
+      writeFileSync(path.join(root, "App.csproj"), '<PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask" />');
+      expect(getDurableAzuritePorts(root, {})).toEqual([10000, 10001, 10002]);
+      expect(getDurableAzuritePorts(root, { AzureWebJobsStorage: "AccountName=cloud" })).toEqual([]);
+      writeFileSync(path.join(root, "host.json"), JSON.stringify({
+        extensions: { durableTask: { storageProvider: { type: "Netherite" } } },
+      }));
+      expect(getDurableAzuritePorts(root, {})).toEqual([]);
+      writeFileSync(path.join(root, "host.json"), JSON.stringify({
+        extensions: { durableTask: { storageProvider: { connectionName: "TasksStorage" } } },
+      }));
+      expect(getDurableAzuritePorts(root, { AzureWebJobsStorage: "AccountName=cloud" })).toEqual([10000, 10001, 10002]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the CLI version in sync with package.json", () => {
     expect(CLI_VERSION).toBe(packageVersion);
   });

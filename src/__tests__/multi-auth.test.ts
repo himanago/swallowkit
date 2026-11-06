@@ -7,6 +7,7 @@ import { createUIAuthOptions } from "../cli/commands/scaffold";
 import {
   generateBFFCallFunctionWithMultipleAuth,
   generateNamedAuthRouterCSharp,
+  generateNamedExternalTokenVerifierCSharp,
   generateNamedAuthRouterPython,
   generateNamedAuthRouterTS,
 } from "../core/scaffold/auth-generator";
@@ -16,6 +17,120 @@ import { createBasicModelInfo } from "./fixtures";
 import { generateCSharpAzureFunctionsCRUD, generateCompactAzureFunctionsCRUD, generatePythonAzureFunctionsCRUD } from "../core/scaffold/functions-generator";
 import { generateAuthLayout, generateNewPage } from "../core/scaffold/ui-generator";
 import { AuthConfig, SwallowKitConfig } from "../types";
+
+const dotnetVersion = spawnSync("dotnet", ["--version"], { encoding: "utf8" });
+const canRunDotnet = dotnetVersion.status === 0 && parseInt(dotnetVersion.stdout, 10) >= 10;
+
+(canRunDotnet ? it : it.skip)("runs generated C# guards with scoped HTTP verification and cancellation", () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), ".tmp-csharp-auth-"));
+  try {
+    const config = normalizeAuthConfig({
+      schemes: { partner: { provider: "external-token" }, second: { provider: "external-token" } },
+      authorization: { defaultPolicy: "anonymous", policies: {
+        first: { schemes: ["partner"] }, second: { schemes: ["second"] },
+      } },
+    })!;
+    const write = (file: string, contents: string) => fs.writeFileSync(path.join(root, file), contents);
+    write("Probe.csproj", '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup><ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" /></ItemGroup></Project>');
+    write("AuthRouter.cs", generateNamedAuthRouterCSharp(config));
+    write("Partner.cs", generateNamedExternalTokenVerifierCSharp("partner"));
+    write("Second.cs", generateNamedExternalTokenVerifierCSharp("second"));
+    write("Worker.cs", `
+using System.Net;
+using System.Net.Http.Headers;
+namespace Microsoft.Azure.Functions.Worker.Http;
+public record Invocation(IServiceProvider InstanceServices, CancellationToken CancellationToken);
+public class HttpRequestData(Invocation context)
+{
+    public Invocation FunctionContext => context;
+    public HttpRequestHeaders Headers { get; } = new HttpRequestMessage().Headers;
+    public HttpResponseData CreateResponse(HttpStatusCode status) => new(status);
+}
+public class HttpResponseData(HttpStatusCode status)
+{
+    public HttpStatusCode Status { get; } = status;
+    public string Body { get; private set; } = "";
+    public Task WriteAsJsonAsync<T>(T value)
+    {
+        Body = System.Text.Json.JsonSerializer.Serialize(value);
+        return Task.CompletedTask;
+    }
+}
+`);
+    write("Program.cs", `
+using System.Net;
+using System.Net.Http.Headers;
+using Functions.Auth;
+using Functions.Auth.Schemes;
+using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.Extensions.DependencyInjection;
+
+using var cancelled = new CancellationTokenSource();
+using var services = new ServiceCollection()
+    .AddSingleton(new HttpClient(new Handler()))
+    .AddScoped<Func<string, CancellationToken, Task<ExternalPrincipal_partner>>>(sp => async (token, ct) =>
+    {
+        if (ct != cancelled.Token) throw new Exception("Invocation token was lost");
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://idp.example.test/verify");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var result = await sp.GetRequiredService<HttpClient>().SendAsync(request, ct);
+        if (result.StatusCode == HttpStatusCode.Unauthorized) throw new ExternalTokenVerificationException_partner("private");
+        if (result.StatusCode == HttpStatusCode.Gone) throw new ExternalTokenExpiredException();
+        result.EnsureSuccessStatusCode();
+        return new("subject", "issuer", [], new Dictionary<string, object?>());
+    })
+    .BuildServiceProvider();
+using var scope = services.CreateScope();
+HttpRequestData Request(string? token)
+{
+    var request = new HttpRequestData(new(scope.ServiceProvider, cancelled.Token));
+    if (token != null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+    return request;
+}
+var (principal, error) = await AuthRouter.Authorize(Request("valid"), "first");
+if (principal?.IdentityKey != "partner:subject" || error != null) throw new Exception("DI verifier was not called");
+foreach (var (token, policy, status, code) in new (string?, string, int, string)[] {
+    (null, "first", 401, "unauthenticated"), ("invalid", "first", 401, "invalid_token"),
+    ("expired", "first", 401, "expired_token"), ("outage", "first", 503, "identity_provider_unavailable"),
+    ("valid", "second", 500, "verifier_not_configured"),
+})
+{
+    var (denied, failure) = await AuthRouter.Authorize(Request(token), policy);
+    if (denied != null || failure == null || (int)failure.Status != status || !failure.Body.Contains(code) ||
+        failure.Body.Contains("private")) throw new Exception("Unexpected verification result for " + code);
+}
+cancelled.Cancel();
+try
+{
+    await AuthRouter.Authorize(Request("valid"), "first");
+    throw new Exception("Invocation cancellation was swallowed");
+}
+catch (OperationCanceledException) { }
+
+sealed class Handler : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        if (!ct.CanBeCanceled) throw new Exception("HTTP cancellation was lost");
+        return Task.FromResult(new HttpResponseMessage(request.Headers.Authorization?.Parameter switch {
+            "valid" => HttpStatusCode.OK,
+            "expired" => HttpStatusCode.Gone,
+            "invalid" => HttpStatusCode.Unauthorized,
+            _ => HttpStatusCode.ServiceUnavailable,
+        }));
+    }
+}
+`);
+    const result = spawnSync("dotnet", ["run", "--project", path.join(root, "Probe.csproj")], {
+      cwd: root, encoding: "utf8", timeout: 30_000,
+      env: { ...process.env, DOTNET_CLI_TELEMETRY_OPTOUT: "1", MSBUILDDISABLENODEREUSE: "1" },
+    });
+    expect({ status: result.status, error: result.status === 0 ? "" : result.stdout + result.stderr })
+      .toEqual({ status: 0, error: "" });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}, 35_000);
 
 const namedAuthConfig: AuthConfig = {
   schemes: {

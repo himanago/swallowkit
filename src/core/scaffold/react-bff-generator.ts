@@ -1,4 +1,5 @@
 import { AuthConfig } from "../../types";
+import { generateSafeBackendError, SWA_EXTERNAL_TOKEN_HEADER } from "./auth-transport-generator";
 import { normalizeAuthConfig } from "../config";
 import { ModelInfo, toCamelCase } from "./model-parser";
 
@@ -51,11 +52,12 @@ import { z } from 'zod/v4';
 
 // SwallowKit BFF Call Function Helper (SWA managed Functions)
 const forwardSwa = ${providers.has("swa")};
-const forwardBearer = ${providers.has("custom-jwt") || providers.has("external-token")};
+const forwardExternalToken = ${providers.has("external-token")};
+const forwardJwtCookie = ${providers.has("custom-jwt")};
 const authCookieName = '${getAuthCookieName(projectName)}';
 
 export class BffError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public code?: string) { super(message); }
 }
 
 export function json(body: unknown, status = 200): HttpResponse {
@@ -71,11 +73,14 @@ export function parseBody(request: HttpRequest): unknown {
 
 function credentialHeaders(request: HttpRequest): Record<string, string> {
   const result: Record<string, string> = {};
-  if (forwardBearer) {
-    const authorization = request.headers.authorization;
+  // The managed API proxy can replace Authorization. Only application credentials are forwarded.
+  const external = forwardExternalToken ? request.headers['${SWA_EXTERNAL_TOKEN_HEADER}'] : undefined;
+  if (external !== undefined) {
+    if (!external || /[\\s,]/.test(external)) throw new BffError(401, 'Invalid token', 'invalid_token');
+    result.Authorization = 'Bearer ' + external;
+  } else if (forwardJwtCookie) {
     const cookie = request.headers.cookie?.split(';').map(value => value.trim()).find(value => value.startsWith(authCookieName + '='));
-    if (authorization?.startsWith('Bearer ')) result.Authorization = authorization;
-    else if (cookie) {
+    if (cookie) {
       try { result.Authorization = 'Bearer ' + decodeURIComponent(cookie.slice(authCookieName.length + 1)); }
       catch { throw new BffError(401, 'Invalid authentication cookie'); }
     }
@@ -140,8 +145,7 @@ export async function callFunction(config: CallFunctionConfig): Promise<HttpResp
     const response = await backendRequest(config.request, config.method, config.path, body);
     if (response.status === 204) return { status: 204 };
     if (!response.ok) {
-      console.error('[BFF] Backend request failed:', response.status);
-      return json({ error: 'Backend request failed' }, response.status);
+      return backendError(response);
     }
     const data: unknown = await response.json();
     if (config.responseSchema) {
@@ -158,8 +162,15 @@ export async function callFunction(config: CallFunctionConfig): Promise<HttpResp
   }
 }
 
+// Forward only recognized status/code pairs. Backend error messages may contain sensitive details.
+export async function backendError(response: Response): Promise<HttpResponse> {
+  return json(await safeBackendError(response), response.status);
+}
+
+${generateSafeBackendError()}
+
 export function handleError(error: unknown): HttpResponse {
-  if (error instanceof BffError) return json({ error: error.message }, error.status);
+  if (error instanceof BffError) return json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
   console.error('[BFF] Request failed:', error instanceof Error ? error.name : 'UnknownError');
   return json({ error: 'Backend request failed' }, 502);
 }

@@ -1,5 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
+import { authSchemeSlug, normalizeAuthConfig } from "../config";
+import { SWA_EXTERNAL_TOKEN_HEADER } from "../scaffold/auth-transport-generator";
 import { loadProjectManifest, buildProjectManifest, ProjectManifest, ProjectManifestEntity, SWALLOWKIT_MANIFEST_PATH } from "./manifest";
 import { toCamelCase, toKebabCase } from "../scaffold/model-parser";
 import { inspectModelInfrastructure } from "./model-infrastructure";
@@ -256,7 +258,7 @@ function validateExternalTokenVerifierStubs(projectRoot: string, manifest: Proje
         code: "auth-verifier-stub",
         severity: "warning",
         message:
-          "External token verifier is still the generated stub; it fails closed, so external-token authentication cannot succeed at runtime.",
+          "The generated verifier fallback still fails closed. Verify checks project structure and builds; exercise your implemented verifier or C# DI registration at runtime.",
         location: { path: relativePath.replace(/\\/g, "/") },
         suggestedFix: "Implement the verifier against your identity provider. The file is yours to edit (generated-once).",
       });
@@ -304,6 +306,25 @@ export async function validateProject(projectRoot: string = process.cwd()): Prom
   validateGeneratedArtifacts(loaded.manifest, violations);
   validateLayeringViolations(projectRoot, loaded.manifest, violations);
   validateExternalTokenVerifierStubs(projectRoot, loaded.manifest, violations);
+  if (rebuilt.manifest.frontendFramework === "react") {
+    const auth = rebuilt.manifest.auth;
+    for (const [scheme, config] of Object.entries(normalizeAuthConfig(auth ?? undefined)?.schemes ?? {})) {
+      if (config.provider !== "external-token") continue;
+      const named = Object.prototype.hasOwnProperty.call(auth?.schemes ?? {}, scheme);
+      const client = path.posix.join("lib/auth", ...(named ? ["schemes", authSchemeSlug(scheme)] : []), "authenticated-fetch.ts");
+      for (const relativePath of [client, rebuilt.manifest.artifacts.callFunctionHelperPath]) {
+        const file = path.join(projectRoot, relativePath);
+        if (fs.existsSync(file) && fs.readFileSync(file, "utf8").includes(SWA_EXTERNAL_TOKEN_HEADER)) continue;
+        pushViolation(violations, {
+          code: "react-external-token-transport",
+          severity: "warning",
+          message: "Generated React external-token transport appears missing or outdated.",
+          location: { path: relativePath },
+          suggestedFix: `Run swallowkit machine plan auth --provider external-token${named ? ` --scheme ${scheme}` : ""} --refresh and review the plan.`,
+        });
+      }
+    }
+  }
 
   for (const finding of await inspectModelInfrastructure(projectRoot)) {
     pushViolation(violations, {
