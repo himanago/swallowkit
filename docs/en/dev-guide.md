@@ -224,3 +224,8 @@ The frontend and BFF layer behave identically regardless of whether real or mock
 - [Scaffold guide](/en/scaffold-guide) — CRUD generation and model configuration
 - [Deploy to Azure](/en/deployment-guide) — Move from local to cloud
 - [External connectors](/en/connector-guide) — Connect to MySQL, PostgreSQL, REST APIs
+
+
+### Durable Functions and Azurite
+
+Start Azurite before `swallowkit dev` when standalone Durable Functions uses the Azure Storage provider with `UseDevelopmentStorage=true`. Dev checks reachability of the default Blob, Queue and Table ports (10000–10002) for this shortcut and reports missing listeners. HTTP readiness only covers HTTP. Verify Durable storage separately by running a test orchestration. Azure Storage connections and other Durable providers follow their own configuration. Cosmos DB Emulator is separate.

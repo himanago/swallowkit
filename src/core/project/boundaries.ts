@@ -177,6 +177,8 @@ export const BOUNDARY_GUIDANCE: string[] = [
   "Author models and business logic freely (ai-authored zone), then let SwallowKit derive CRUD/BFF/UI/infra deterministically via plan/apply.",
   "Never hand-edit deterministic-zone files; change the model or configuration and regenerate instead.",
   "Use `swallowkit machine plan scaffold <model>` before applying; a plan with requiresApproval=true means a human (or explicit --approve) must confirm overwriting hand-edited files.",
+  "External-token adapter, verifier, and named current-user loader are developer-owned generated-once files. Transport, auth context and guards are managed.",
+  "React managed BFF converts x-swallowkit-external-token to backend Bearer and uses x-functions-key separately. The standalone Functions verifier owns identity validation.",
   "In shared-zone files, keep SwallowKit markers intact and edit outside them.",
   "Run `swallowkit machine verify project` after applying changes; use `explain failure` to get repair evidence.",
 ];

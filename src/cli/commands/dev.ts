@@ -515,6 +515,47 @@ async function checkCosmosDBEmulator(): Promise<boolean> {
   });
 }
 
+/** Standard Azurite endpoints for a Durable Azure Storage connection using the development shortcut. */
+export function getDurableAzuritePorts(functionsDir: string, env: NodeJS.ProcessEnv): number[] {
+  const read = (file: string) => {
+    try { return fs.readFileSync(path.join(functionsDir, file), 'utf-8'); }
+    catch { return ''; }
+  };
+  const readJson = (file: string) => {
+    try { return JSON.parse(read(file)); }
+    catch { return {}; } // Core Tools reports invalid local configuration itself.
+  };
+  const durable = readJson('host.json').extensions?.durableTask;
+  const projectFile = fs.readdirSync(functionsDir).find(file => file.endsWith('.csproj'));
+  const dependencies = [read('package.json'), read('requirements.txt'), projectFile ? read(projectFile) : ''];
+  if (!durable && !dependencies.some(value => /durable[-.]?functions|azure-functions-durable|extensions\.durabletask/i.test(value))) return [];
+  const values = readJson('local.settings.json').Values ?? {};
+  const setting = (name: string) => env[name] ?? values[name];
+  const storage = durable?.storageProvider;
+  const prefix = 'AzureFunctionsJobHost__extensions__durableTask__storageProvider__';
+  const provider = setting(prefix + 'type') ?? storage?.type ?? 'azureStorage';
+  if (typeof provider !== 'string' || provider.toLowerCase() !== 'azurestorage') return [];
+  const connection = setting(prefix + 'connectionName') ?? storage?.connectionName ??
+    storage?.connectionStringName ?? 'AzureWebJobsStorage';
+  const value = setting(connection);
+  return typeof value === 'string' && /^UseDevelopmentStorage=true;?$/i.test(value.trim()) ? [10000, 10001, 10002] : [];
+}
+
+async function warnIfDurableAzuriteUnavailable(functionsDir: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const ports = getDurableAzuritePorts(functionsDir, env);
+  const reachable = await Promise.all(ports.map(port => new Promise<boolean>(resolve => {
+    const socket = net.connect(port, '127.0.0.1');
+    const finish = (connected: boolean) => { socket.destroy(); resolve(connected); };
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    socket.setTimeout(500, () => finish(false));
+  })));
+  const missing = ports.filter((_, index) => !reachable[index]);
+  if (missing.length) {
+    console.warn(`⚠️  Durable Functions uses UseDevelopmentStorage=true. Start Azurite manually (unreachable ports: ${missing.join(', ')}).`);
+  }
+}
+
 export async function assertDevPortAvailable(port: number, host: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const server = net.createServer();
@@ -885,6 +926,7 @@ async function startDevEnvironment(options: DevOptions) {
     }
 
     if (hasFunctions && !options.noFunctions) {
+      await warnIfDurableAzuriteUnavailable(functionsDir, functionsEnv);
       // Build shared package before starting Functions
       const sharedDir = path.join(process.cwd(), 'shared');
       const sharedPkgPath = path.join(sharedDir, 'package.json');
@@ -1165,7 +1207,7 @@ async function startDevEnvironment(options: DevOptions) {
       functionsReady = await functionsReadinessPromise;
       console.log('');
       if (functionsReady) {
-        console.log(`✅ Azure Functions ready (port: ${functionsPort})`);
+        console.log(`✅ Azure Functions HTTP endpoint reachable (port: ${functionsPort})`);
       } else {
         console.log(`⚠️  Azure Functions is still starting: ${functionsBaseUrl}`);
       }

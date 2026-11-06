@@ -27,6 +27,7 @@ import {
 export interface PlanAuthOptions {
   provider: string;
   scheme?: string;
+  refresh?: boolean;
   /** SWA の許可 identity provider。未指定時は add-auth 側の既定 (['aad'])。 */
   allowedProviders?: string[];
 }
@@ -46,6 +47,7 @@ export interface AuthPlanData {
   planType: "auth";
   provider: string;
   scheme?: string;
+  refresh?: boolean;
   allowedProviders?: string[];
   createdAt: string;
   swallowkitVersion: string;
@@ -73,7 +75,7 @@ async function collectAuthOperations(options: PlanAuthOptions): Promise<FileOper
     const captured = await captureConsoleMessagesWithError(async () => {
       await interceptProcessExit(async () => {
         await runWithFileSession(session, async () => {
-          await addAuthCommand({ provider: options.provider, scheme: options.scheme, allowedProviders: options.allowedProviders });
+          await addAuthCommand({ provider: options.provider, scheme: options.scheme, refresh: options.refresh, allowedProviders: options.allowedProviders });
         });
       });
     });
@@ -104,7 +106,7 @@ export async function planAuthOperation(options: PlanAuthOptions): Promise<AuthP
   const ledger = loadArtifactLedger(projectRoot);
 
   const operations: AuthPlanOperation[] = [];
-  const fingerprints: Record<string, string | null> = {};
+  const fingerprints: Record<string, string | null> = { ...session.inputFingerprints };
   const warnings = [...session.warnings];
 
   for (const op of session.operations) {
@@ -169,8 +171,10 @@ export async function planAuthOperation(options: PlanAuthOptions): Promise<AuthP
       JSON.stringify({
         provider: options.provider,
         scheme: options.scheme,
-        allowedProviders: options.allowedProviders,
-        operations: operations.map((op) => ({ path: op.path, action: op.action })),
+        refresh: Boolean(options.refresh),
+        allowedProviders: options.allowedProviders?.length ? options.allowedProviders : undefined,
+        operations: session.operations.map((op) => ({ path: op.path, contentHash: op.newHash })),
+        conflicts,
         fingerprints,
       })
     )
@@ -182,6 +186,7 @@ export async function planAuthOperation(options: PlanAuthOptions): Promise<AuthP
     planType: "auth",
     provider: options.provider,
     ...(options.scheme ? { scheme: options.scheme } : {}),
+    ...(options.refresh ? { refresh: true } : {}),
     ...(options.allowedProviders && options.allowedProviders.length > 0 ? { allowedProviders: options.allowedProviders } : {}),
     createdAt: new Date().toISOString(),
     swallowkitVersion: getSwallowKitVersion(),
@@ -213,6 +218,7 @@ export function verifyAuthPlanFingerprints(
 export interface ApplyAuthOptions {
   provider?: string;
   scheme?: string;
+  refresh?: boolean;
   allowedProviders?: string[];
   planId?: string;
   approve?: boolean;
@@ -247,7 +253,7 @@ async function runCommitAuthOperation(options: PlanAuthOptions): Promise<{
     const tracked = await trackFileMutations(async () => {
       const captured = await captureConsoleMessagesWithError(async () => {
         await interceptProcessExit(async () => {
-          await addAuthCommand({ provider: options.provider, scheme: options.scheme, allowedProviders: options.allowedProviders });
+          await addAuthCommand({ provider: options.provider, scheme: options.scheme, refresh: options.refresh, allowedProviders: options.allowedProviders });
         });
       });
 
@@ -324,16 +330,26 @@ export async function applyAuthOperation(options: ApplyAuthOptions): Promise<App
   const effectiveOptions: PlanAuthOptions = {
     provider,
     scheme: options.scheme ?? basePlan?.scheme,
+    refresh: options.refresh ?? basePlan?.refresh,
     allowedProviders: options.allowedProviders ?? basePlan?.allowedProviders,
   };
 
   // 常に最新状態で collect し、競合を再確認する
   const currentPlan = await planAuthOperation(effectiveOptions);
 
+  if (basePlan && basePlan.planId !== currentPlan.planId) {
+    throw new MachineCommandError(
+      "stale-plan",
+      `Auth output or conflicts changed after plan "${basePlan.planId}". Review plan "${currentPlan.planId}" before applying.`,
+      { planId: basePlan.planId, replacementPlanId: currentPlan.planId },
+      "blocked"
+    );
+  }
+
   if (currentPlan.requiresApproval && !options.approve) {
     throw new MachineCommandError(
       "approval-required",
-      `${currentPlan.conflicts.length} file(s) were modified after generation and would be overwritten. Review the conflicts and re-run with --approve to proceed.`,
+      `${currentPlan.conflicts.length} file(s) have local changes or unknown provenance. Review the conflicts, then run swallowkit machine apply auth --plan ${currentPlan.planId} --approve if you want to overwrite them.`,
       {
         planId: currentPlan.planId,
         conflicts: currentPlan.conflicts,

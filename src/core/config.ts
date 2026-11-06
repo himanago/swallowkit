@@ -229,6 +229,10 @@ export function getValidatedFullConfig(configPath?: string): SwallowKitConfig {
 const VALID_AUTH_PROVIDERS: AuthProvider[] = ["custom-jwt", "swa", "external-token", "swa-custom", "none"];
 const AUTH_NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
+export function authSchemeSlug(name: string): string {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
+}
+
 /** Convert the legacy single-provider shape to the canonical named-scheme shape. */
 export function normalizeAuthConfig(auth?: AuthConfig): NormalizedAuthConfig | undefined {
   if (!auth) return undefined;
@@ -272,8 +276,13 @@ export function validateConfig(config: SwallowKitConfig): { valid: boolean; erro
 
   const auth = normalizeAuthConfig(config.auth);
   if (auth) {
+    const schemePaths = new Map<string, string>();
     for (const [name, scheme] of Object.entries(auth.schemes)) {
       const base = `auth.schemes.${name}`;
+      const slug = authSchemeSlug(name);
+      const existing = schemePaths.get(slug);
+      if (existing) errors.push(`${base}: generated path conflicts with '${existing}'; choose a distinct scheme name`);
+      schemePaths.set(slug, name);
       if (!AUTH_NAME.test(name)) errors.push(`${base}: scheme name must match ${AUTH_NAME}; rename the scheme`);
       if (!VALID_AUTH_PROVIDERS.includes(scheme.provider)) errors.push(`${base}.provider: unsupported provider '${scheme.provider}'; use ${VALID_AUTH_PROVIDERS.join(", ")}`);
       if (scheme.provider === "none" || scheme.provider === "swa-custom") errors.push(`${base}.provider: '${scheme.provider}' cannot be used as a named scheme; use swa, external-token, or custom-jwt`);

@@ -5,8 +5,9 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { ensureSwallowKitProject, getBackendLanguage, getFrontendFramework, getConnectorDefinition, getValidatedFullConfig } from "../../core/config";
-import { generateManagedFunctionConfig, generateReactAuthBff, generateReactBffHelper } from "../../core/scaffold/react-bff-generator";
+import { writeReactAuthTransport } from "../../core/operations/react-auth-transport";
+import { authSchemeSlug, ensureSwallowKitProject, getBackendLanguage, getFrontendFramework, getConnectorDefinition, getValidatedFullConfig, normalizeAuthConfig, validateConfig } from "../../core/config";
+import { generateManagedFunctionConfig, generateReactAuthBff } from "../../core/scaffold/react-bff-generator";
 import { adaptReactPage } from "../../core/scaffold/react-ui-generator";
 import { AuthConfig, AuthProvider, BackendLanguage, CustomJwtConfig, RdbConnectorConfig } from "../../types";
 import {
@@ -33,6 +34,7 @@ import {
   generateAuthenticatedFetch,
   generateExternalTokenBFFMeRoute,
   generateExternalTokenAuthContext,
+  generateNamedExternalTokenUserLoader,
   generateExternalTokenVerifierTS,
   generateExternalTokenHelperTS,
   generateExternalAuthMeTS,
@@ -55,6 +57,7 @@ interface AddAuthOptions {
   scheme?: string;
   /** SWA の許可する identity provider (例: ['github'])。未指定時は ['aad']。 */
   allowedProviders?: string[];
+  refresh?: boolean;
 }
 
 const SWA_PROVIDER_LABELS: Record<string, string> = {
@@ -102,8 +105,10 @@ function defaultCustomJwtConfig(): CustomJwtConfig {
 
 function writeCallFunction(cwd: string, session: FileOperationSession, nextSource: string, auth: AuthConfig): void {
   if (getFrontendFramework() === "react") {
-    const name = JSON.parse(session.readFile(path.join(cwd, "package.json"))).name;
-    session.writeFile(path.join(cwd, "bff", "src", "lib", "call-function.ts"), generateReactBffHelper(name, auth), managedMeta);
+    const packagePath = path.join(cwd, "package.json");
+    session.registerInput(packagePath);
+    const name = JSON.parse(session.readFile(packagePath)).name;
+    writeReactAuthTransport(session, cwd, "bff", name, auth, managedMeta);
   } else {
     session.writeFile(path.join(cwd, "lib", "api", "call-function.ts"), nextSource, managedMeta);
   }
@@ -149,12 +154,13 @@ function setupSwaAuth(cwd: string, backendLanguage: BackendLanguage, session: Fi
   updateSwaRouteConfig(cwd, session, providers);
 }
 
-function setupExternalTokenAuth(cwd: string, backendLanguage: BackendLanguage, session: FileOperationSession): void {
+function setupExternalTokenAuth(cwd: string, backendLanguage: BackendLanguage, session: FileOperationSession, auth: AuthConfig = { provider: "external-token" }): void {
   const authDir = path.join(cwd, "lib", "auth");
   writeIfMissing(session, path.join(authDir, "external-token-adapter.ts"), generateExternalTokenAdapter());
-  session.writeFile(path.join(authDir, "authenticated-fetch.ts"), generateAuthenticatedFetch(), managedMeta);
+  if (getFrontendFramework() !== "react") session.writeFile(path.join(authDir, "authenticated-fetch.ts"), generateAuthenticatedFetch(), managedMeta);
   writeAuthContext(cwd, session, generateExternalTokenAuthContext());
-  writeCallFunction(cwd, session, generateBFFCallFunctionWithAuth(), { provider: "external-token" });
+  writeCallFunction(cwd, session, Object.values(normalizeAuthConfig(auth)?.schemes ?? {}).some(scheme => scheme.provider === "swa")
+    ? generateBFFCallFunctionWithMultipleAuth() : generateBFFCallFunctionWithAuth(), auth);
   if (getFrontendFramework() === "react") writeManagedAuthRoute(cwd, session, false);
   else session.writeFile(path.join(cwd, "app", "api", "auth", "me", "route.ts"), generateExternalTokenBFFMeRoute(), managedMeta);
   updateRootLayoutWithAuthProvider(cwd, session);
@@ -319,10 +325,36 @@ export async function addAuthCommand(options: AddAuthOptions) {
     }
   };
 
+  if (options.refresh) {
+    session.registerInput(path.join(cwd, "swallowkit.config.json"));
+    session.registerInput(path.join(cwd, "swallowkit.config.js"));
+    const existing = options.scheme ? config.auth?.schemes?.[options.scheme]?.provider : config.auth?.provider;
+    if (provider !== "external-token" || existing !== provider) {
+      throw new Error("--refresh requires an existing external-token provider with the same scheme");
+    }
+    if (options.scheme) {
+      writeExternalTokenClient(cwd, session, options.scheme);
+      writeCallFunction(cwd, session, generateBFFCallFunctionWithMultipleAuth(), config.auth!);
+      await finalize();
+      return;
+    }
+    // Preserve the combined BFF configuration when refreshing a legacy provider.
+    setupExternalTokenAuth(cwd, backendLanguage, session, config.auth);
+    await finalize();
+    return;
+  }
+
   if (options.scheme) {
     if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(options.scheme)) throw new Error("--scheme must start with a letter and contain only letters, digits, '_' or '-'");
     if (provider === "none" || provider === "swa-custom") throw new Error(`Provider '${provider}' cannot be added as a named scheme`);
-    addNamedScheme(cwd, options.scheme, provider, backendLanguage, session, options.allowedProviders);
+    if (Object.prototype.hasOwnProperty.call(normalizeAuthConfig(config.auth)?.schemes ?? {}, options.scheme)) throw new Error(`auth.schemes.${options.scheme} already exists; no files were changed`);
+    const candidate = { ...config, auth: { ...config.auth, schemes: {
+      ...config.auth?.schemes, [options.scheme]: provider === "custom-jwt"
+        ? { provider, customJwt: defaultCustomJwtConfig() } : { provider },
+    }, authorization: config.auth?.authorization ?? { defaultPolicy: "anonymous", policies: {} } } };
+    const validation = validateConfig(candidate);
+    if (!validation.valid) throw new Error(validation.errors.join("\n"));
+    addNamedScheme(cwd, options.scheme, provider, backendLanguage, session, options.allowedProviders, config.auth);
     await finalize();
     console.log(`\n Named authentication scheme '${options.scheme}' added.`);
     return;
@@ -480,10 +512,10 @@ function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: Auth
   const authMatch = /\bauth\s*:\s*\{/.exec(content);
   const customJwt = defaultCustomJwtConfig();
   const entry = provider === "custom-jwt"
-    ? `\n      ${scheme}: { provider: 'custom-jwt', customJwt: ${JSON.stringify(customJwt)} },`
+    ? `\n      ${JSON.stringify(scheme)}: { provider: 'custom-jwt', customJwt: ${JSON.stringify(customJwt)} },`
     : swaProviders
-      ? `\n      ${scheme}: { provider: '${provider}', swa: { allowedProviders: [${swaProviders.map((p) => `'${p}'`).join(", ")}] } },`
-      : `\n      ${scheme}: { provider: '${provider}' },`;
+      ? `\n      ${JSON.stringify(scheme)}: { provider: '${provider}', swa: { allowedProviders: [${swaProviders.map((p) => `'${p}'`).join(", ")}] } },`
+      : `\n      ${JSON.stringify(scheme)}: { provider: '${provider}' },`;
   if (!authMatch) {
     const rootEnd = content.lastIndexOf("}");
     const beforeRootEnd = content.slice(0, rootEnd).trimEnd();
@@ -499,7 +531,9 @@ function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: Auth
       const schemesEnd = findObjectEnd(content, schemesOpen);
       const existing = content.slice(schemesOpen + 1, schemesEnd);
       if (new RegExp(`(^|[,\\s])${scheme}\\s*:`).test(existing)) throw new Error(`auth.schemes.${scheme} already exists; no files were changed`);
-      content = content.slice(0, schemesEnd) + entry + "\n    " + content.slice(schemesEnd);
+      const prefix = content.slice(0, schemesEnd).trimEnd();
+      const separator = /[,{]$/.test(prefix) ? "" : ",";
+      content = prefix + separator + entry + "\n    " + content.slice(schemesEnd);
     } else {
       content = content.slice(0, authOpen + 1) + `\n    schemes: {${entry}\n    },` + content.slice(authOpen + 1);
     }
@@ -507,10 +541,23 @@ function updateConfigWithNamedScheme(cwd: string, scheme: string, provider: Auth
   session.writeFile(configPath, content, extensionMeta);
 }
 
-function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, language: BackendLanguage, session: FileOperationSession, allowedProviders?: string[]): void {
+function writeExternalTokenClient(cwd: string, session: FileOperationSession, scheme: string): void {
+  const slug = authSchemeSlug(scheme);
+  const clientDir = path.join(cwd, "lib", "auth", "schemes", slug);
+  const react = getFrontendFramework() === "react";
+  writeIfMissing(session, path.join(clientDir, "token-adapter.ts"), generateExternalTokenAdapter());
+  if (!react) session.writeFile(path.join(clientDir, "authenticated-fetch.ts"), generateAuthenticatedFetch(false, true), managedMeta);
+  writeIfMissing(session, path.join(clientDir, "load-user.ts"), generateNamedExternalTokenUserLoader());
+  const context = generateExternalTokenAuthContext(true);
+  // Legacy named contexts were generated-once. Keep edited copies behind plan approval.
+  session.writeFile(path.join(clientDir, "auth-context.tsx"), react ? adaptReactPage(context) : context, managedMeta);
+  session.addWarning("External-token runtime verification requires an implemented adapter and verifier. Named AuthProvider requires an application load-user implementation or loadUser callback.");
+}
+
+function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, language: BackendLanguage, session: FileOperationSession, allowedProviders?: string[], existing?: AuthConfig): void {
   // Validate/update config before creating files, so duplicate names stop safely.
   updateConfigWithNamedScheme(cwd, scheme, provider, session, allowedProviders);
-  const slug = scheme.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
+  const slug = authSchemeSlug(scheme);
   if (provider === "custom-jwt") {
     // The scheme's JWT helper needs the same token/password/driver packages as single-provider custom-jwt.
     const connector = getConnectorDefinition(defaultCustomJwtConfig().userConnector) as RdbConnectorConfig | undefined;
@@ -534,17 +581,13 @@ function addNamedScheme(cwd: string, scheme: string, provider: AuthProvider, lan
   }
   const clientDir = path.join(cwd, "lib", "auth", "schemes", slug);
   if (provider === "external-token") {
-    writeIfMissing(session, path.join(clientDir, "token-adapter.ts"), generateExternalTokenAdapter());
-    writeIfMissing(session, path.join(clientDir, "authenticated-fetch.ts"), generateAuthenticatedFetch().replace("'./external-token-adapter'", "'./token-adapter'"));
-    const source = generateExternalTokenAuthContext().replace(/external-token-adapter/g, "token-adapter");
-    writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), getFrontendFramework() === "react" ? adaptReactPage(source) : source);
+    writeExternalTokenClient(cwd, session, scheme);
   } else if (provider === "swa") {
     writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), generateSwaAuthContext(allowedProviders));
   } else if (provider === "custom-jwt") {
     writeIfMissing(session, path.join(clientDir, "auth-context.tsx"), getFrontendFramework() === "react" ? adaptReactPage(generateAuthContext()) : generateAuthContext());
   }
   if (getFrontendFramework() === "react") {
-    const existing = getValidatedFullConfig().auth;
     writeCallFunction(cwd, session, "", {
       ...existing, schemes: { ...existing?.schemes, [scheme]: { provider } },
     });

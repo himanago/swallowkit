@@ -18,3 +18,8 @@ responsibility boundary before editing files in this layer.
   truth and use MCP-first plan/apply, with the machine interface as fallback.
 - Edit shared artifacts only outside managed markers.
 - Respect `requires-human` and run SwallowKit verification after changes.
+
+
+For React managed APIs, take external credentials from `x-swallowkit-external-token`
+and translate to backend Bearer. Keep the SWA principal and the server Functions key
+separate. Perform IdP validation and authorization in standalone Functions.

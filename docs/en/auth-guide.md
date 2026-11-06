@@ -1,7 +1,7 @@
 # Authentication
 
 All providers and named schemes also support React. The managed BFF forwards
-request-local SWA principals/bearer tokens; custom JWT login uses an HttpOnly
+request-local SWA principals and the dedicated external-token header; custom JWT login uses an HttpOnly
 cookie through `/api/auth/{action}`. Authorization stays in standalone Functions.
 React does not generate Next.js proxy/API route files. See
 [React authentication](./react-guide.md#authentication-and-connectors) for the
@@ -565,3 +565,35 @@ swallowkit add-auth --scheme lineUser --provider external-token
 Implement `functions/src/auth/schemes/line-user/verifier.ts`; the generated stub rejects every token until then. Scope the generated providers from `lib/auth/schemes/admin/auth-context` and `lib/auth/schemes/line-user/auth-context` in the relevant route-group layouts. The line-user UI imports its scheme-specific authenticated fetch. UI role checks only improve UX—Functions remain the security boundary.
 
 An admin SWA principal cannot select `lineUserOnly`, and a LINE Bearer token cannot select `adminOnly`. No provider fallback occurs after a failed verification. `swa-custom` remains reserved and is rejected for named schemes; combine `swa` with a separate custom or external scheme instead.
+
+
+### External-token transport and beta.1 migration
+
+| Path | Browser credential | Standalone Functions hop |
+|---|---|---|
+| React SPA → SWA managed BFF | Raw token in `x-swallowkit-external-token` on same-origin `/api/*` | `Authorization: Bearer …` and a server-side `x-functions-key` |
+| Next.js API routes | Standard `Authorization: Bearer …` where the host preserves it | `Authorization: Bearer …` and a server-side `x-functions-key` |
+| Direct standalone Functions access | Standard Bearer. Use server-side clients for tests requiring a Functions key | Functions verifies the token |
+
+SWA managed API users have reported replacement of Authorization and successful custom-header workarounds. Linked APIs also cross the SWA proxy, but their header behavior needs separate verification. SwallowKit deploys its standalone backend independently. [Azure SWA #34](https://github.com/Azure/static-web-apps/issues/34), [Azure SWA #275](https://github.com/Azure/static-web-apps/issues/275), [Linked Functions constraints](https://learn.microsoft.com/en-us/azure/static-web-apps/functions-bring-your-own)
+
+The React BFF reads the dedicated external header first. When it is absent and custom-jwt is enabled, the BFF uses the existing HttpOnly JWT cookie. The managed hop ignores incoming Authorization. SWA built-in auth uses a separate client principal. A named policy requires exactly one matching credential source. Configure separate policies for external IdPs that share the same Bearer source. Keep external-token routes accessible through SWA without requiring a SWA built-in session. The adapter should read the active SDK session on each request, returning the refreshed token or null after logout. Keep tokens out of URLs, logs, error bodies, and persistent browser storage.
+
+The verifier checks signature or uses the IdP verification service, checks issuer, audience, expiry and subject, and returns server-trusted roles. Named guards classify missing, invalid and expired credentials as 401, IdP outages as 503, and unconfigured verifiers as 500. Verifiers can explicitly report expiry using C# `ExternalTokenExpiredException`, the TS `ExternalTokenVerificationError` third argument `expired_token`, or Python `expired=True`. The BFF relays recognized status/code pairs using fixed messages. Custom endpoints can use the same codes.
+
+For named C#, register a scheme-specific `Func<string, CancellationToken, Task<ExternalPrincipal_<scheme>>>` in Program.cs to use DI-managed HttpClient, settings and test handlers. The generated guard resolves it from invocation services and passes cancellation. The existing static `VerifyAsync(string)` is the fallback. Legacy single-provider C# uses the `ExternalAuthPrincipal` delegate and `ExternalAuthVerificationException`.
+
+For named AuthProvider, implement `load-user.ts` or supply `loadUser`. If the UI needs a current-user endpoint, define and protect it in the application and call it through `authenticatedFetch`. Return a verified `{ id, loginId, name, email, roles: string[] }` or null for sign-out, and throw for HTTP 404, HTML or network failures. Change `identityVersion` or call `refresh()` on SDK session changes. Single-provider setup still generates `/api/auth/me`.
+
+From a beta.1 project's root, run the following. Omit `--scheme line` for a legacy single provider.
+
+```sh
+swallowkit machine plan auth --provider external-token --scheme line --refresh
+swallowkit machine apply auth --plan <plan-id>
+swallowkit machine inspect boundaries
+swallowkit machine verify project
+```
+
+Review `unknown-provenance` and `modified-after-generation` conflicts and save any custom transport or context changes before applying with `--approve`. The generated-once token adapter and verifier are preserved. Plan/apply scaffold for affected models to regenerate guards as needed. Custom routes and verifier integrations belong to the application.
+
+For production verification, use short-lived test credentials in an authorized Azure environment. Correlate header presence and verifier outcome across the browser, managed BFF and standalone Functions. Collect no header values or tokens. Exercise valid, absent, invalid and expired credentials and an IdP outage. Only the valid request should return protected data. SWA CLI and machine verify cover local behavior and project structure/builds.

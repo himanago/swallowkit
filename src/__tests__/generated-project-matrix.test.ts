@@ -708,6 +708,8 @@ export type LearningProfile = z.infer<typeof LearningProfile>;
 export const partitionKey = '/userId';
 `);
       const before = snapshotTree(root);
+      const ledgerPath = path.join(root, ".swallowkit", "artifacts.json");
+      const ledgerBefore = fs.readFileSync(ledgerPath, "utf8");
       const response = await runMachine(["plan", "scaffold", "learning-profile"]);
       const after = snapshotTree(root);
 
@@ -719,7 +721,11 @@ export const partitionKey = '/userId';
         reason: "ZodRecord",
       });
       expect(after).toEqual(before);
-      expect(fs.existsSync(path.join(root, ".swallowkit", "artifacts.json"))).toBe(false);
+      expect(fs.readFileSync(ledgerPath, "utf8")).toBe(ledgerBefore);
+      const ledger = JSON.parse(ledgerBefore);
+      expect(ledger.artifacts).toEqual([expect.objectContaining({
+        path: "bff/src/lib/call-function.ts", ownership: "managed", generator: "init",
+      })]);
     } finally {
       process.chdir(previousCwd);
     }

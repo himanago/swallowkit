@@ -1,5 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
+import { FileOperationSession } from "../operations/file-session";
+import { recordSessionOperations } from "./artifacts";
 import { BackendLanguage } from "../../types";
 import { buildReactDevWatchIgnoredSource } from "../../utils/react-dev";
 import { DEFAULT_AZURE_PYTHON_VERSION } from "../../utils/python-uv";
@@ -315,11 +317,12 @@ export function createReactBffProject(
     "bff\\.funcignore",
     "src/\nnode_modules/\nlocal.settings.json\ntsconfig.json\nbuild.cjs\n.gitignore\n"
   );
-  write(
-    projectDir,
-    "bff\\src\\lib\\call-function.ts",
-    generateReactBffHelper(projectName)
-  );
+  const session = new FileOperationSession("commit", projectDir);
+  session.writeFile(path.join(projectDir, "bff", "src", "lib", "call-function.ts"), generateReactBffHelper(projectName), {
+    ownership: "managed",
+    generator: "init",
+  });
+  recordSessionOperations(session.operations, {}, projectDir, session);
   write(projectDir, "bff\\src\\greet\\index.ts", generateReactGreetBff());
   write(
     projectDir,
@@ -371,6 +374,12 @@ Browser → React SPA → /api (SWA managed Functions BFF) → standalone ${back
 Only the BFF reads BACKEND_FUNCTIONS_BASE_URL and BACKEND_FUNCTIONS_KEY.
 Never put those values in VITE_* variables or client code.
 
+For external-token auth, the generated authenticatedFetch sends the current IdP token
+to the same-origin API in x-swallowkit-external-token. The BFF converts it to
+Authorization: Bearer for the standalone verifier. The adapter and verifier are
+application-owned. Named AuthProvider requires an application current-user loader.
+Machine verify checks structure and builds. Exercise authentication through the deployed SWA route separately.
+
 ## Develop
 
 \`\`\`sh
@@ -386,6 +395,9 @@ The BFF stays separate even with \`--no-functions\`; \`--no-swa\` starts only th
 direct Vite/BFF servers (no same-origin API routing or SWA authentication).
 Core Tools v4 must already be available. Start Cosmos DB Emulator manually if
 this application needs Cosmos; SwallowKit never starts it.
+For a standalone Durable Functions backend using Azure Storage with
+UseDevelopmentStorage=true, start Azurite separately. HTTP readiness does not
+validate Durable storage connectivity.
 ${backend === "python" ? `
 Python environments use normal uv discovery and user settings, including installed
 Python, \`.python-version\`, and \`UV_PYTHON\`. Local Python is not pinned to the Azure

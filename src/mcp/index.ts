@@ -468,15 +468,17 @@ export function buildSwallowKitToolDefinitions(
     },
     {
       name: "swallowkit_plan_auth",
-      description: "Compute the add-auth change plan (files to create/update/overwrite, conflicts, warnings) without writing any files. Returns a planId usable with swallowkit_apply_auth. Never hand-write auth.schemes in swallowkit.config; this operation owns them.",
+      description: "Compute the add-auth change plan (files to create/update/overwrite, conflicts, warnings) without writing any files. Set refresh=true to migrate an existing external-token transport while preserving the adapter and verifier. Returns a planId usable with swallowkit_apply_auth. Never hand-write auth.schemes in swallowkit.config; this operation owns them.",
       inputSchema: z.object({
         provider: z.enum(["custom-jwt", "swa", "external-token", "none"]),
         scheme: z.string().optional(),
+        refresh: z.boolean().optional(),
         allowedProviders: z.array(z.string()).optional(),
       }),
-      handler: async ({ provider, scheme, allowedProviders }: { provider: string; scheme?: string; allowedProviders?: string[] }) => {
+      handler: async ({ provider, scheme, refresh, allowedProviders }: { provider: string; scheme?: string; refresh?: boolean; allowedProviders?: string[] }) => {
         const args = ["plan", "auth", "--provider", provider];
         if (scheme) args.push("--scheme", scheme);
+        if (refresh) args.push("--refresh");
         if (allowedProviders && allowedProviders.length > 0) args.push("--allowed-providers", allowedProviders.join(","));
 
         const response = await executeMachineCommand(args, runMachineCli);

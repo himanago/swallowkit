@@ -462,8 +462,9 @@ function createMachineProgram(): Command {
     .description("Compute the add-auth change plan without writing any files")
     .requiredOption("--provider <provider>", "Auth provider: custom-jwt | swa | external-token | none")
     .option("--scheme <name>", "Add as a named authentication scheme")
+    .option("--refresh", "Regenerate an existing external-token provider and preserve its adapter and verifier")
     .option("--allowed-providers <list>", "Comma-separated SWA identity providers to allow (e.g. github,aad); defaults to aad")
-    .action(async (options: { provider: string; scheme?: string; allowedProviders?: string }) => {
+    .action(async (options: { provider: string; scheme?: string; refresh?: boolean; allowedProviders?: string }) => {
       await handleMachineAction(
         "plan-auth",
         async () => {
@@ -471,6 +472,7 @@ function createMachineProgram(): Command {
           return planAuthOperation({
             provider: options.provider,
             scheme: options.scheme,
+            refresh: options.refresh,
             allowedProviders: options.allowedProviders ? options.allowedProviders.split(",") : undefined,
           });
         },
@@ -679,7 +681,11 @@ function createMachineProgram(): Command {
             nextActions.push({
               command: "edit the generated external token verifier",
               description:
-                "Implement the verifier stub (it fails closed until implemented). typecheck and verify pass with the stub in place, so a passing verify does NOT mean external-token auth works.",
+                "Implement the fail-closed verifier or register the C# DI verifier. Verify checks structure and builds; test the deployed credential path separately.",
+            });
+            if (result.scheme) nextActions.push({
+              command: "edit the generated token adapter and current-user loader",
+              description: "Read the current IdP session for each request. If using AuthProvider, implement load-user.ts or supply loadUser.",
             });
           }
           nextActions.push({

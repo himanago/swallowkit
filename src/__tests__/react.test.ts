@@ -1,3 +1,7 @@
+import { SWA_EXTERNAL_TOKEN_HEADER } from "../core/scaffold/auth-transport-generator";
+import { generateAuthenticatedFetch, generateNamedAuthRouterTS } from "../core/scaffold/auth-generator";
+import { normalizeAuthConfig } from "../core/config";
+import { applyAuthOperation, planAuthOperation } from "../core/operations/auth-operations";
 import * as fs from "fs";
 import * as path from "path";
 import * as net from "net";
@@ -246,7 +250,8 @@ describe("React managed BFF runtime", () => {
     await helper.callFunction({
       request: request({
         headers: {
-          authorization: "Bearer token",
+          authorization: "Bearer platform-credential",
+          [SWA_EXTERNAL_TOKEN_HEADER]: "token",
           "x-ms-client-principal": Buffer.from(
             JSON.stringify(principal)
           ).toString("base64"),
@@ -284,6 +289,93 @@ describe("React managed BFF runtime", () => {
       ).status
     ).toBe(401);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("passes only fresh application tokens from browser through simulated SWA to the verifier", async () => {
+    const auth = normalizeAuthConfig({
+      schemes: { partner: { provider: "external-token" } },
+      authorization: { defaultPolicy: "anonymous", policies: { protected: { schemes: ["partner"] } } },
+    })!;
+    const helper = evaluate<Helper>(generateReactBffHelper("sample", auth));
+    class VerificationError extends Error {
+      constructor(public status: 401 | 503, public code?: string) { super("sensitive verifier details"); }
+    }
+    const verify = jest.fn(async (token: string) => {
+      if (token === "expired") throw new VerificationError(401, "expired_token");
+      if (token === "invalid") throw new VerificationError(401);
+      if (token === "outage") throw new VerificationError(503);
+      if (token === "unconfigured") throw new Error("External token verifier is not configured");
+      return { userId: token, roles: [] };
+    });
+    const router = evaluate<{
+      requireAuth(req: { headers: Headers }, policy: string): Promise<{ subject: string }>;
+      handleAuthError(error: unknown): { status: number; jsonBody: unknown };
+    }>(generateNamedAuthRouterTS(auth), {
+      "./schemes/partner/verifier": { verifyExternalToken: verify, ExternalTokenVerificationError: VerificationError },
+    });
+    let token: string | null = "initial";
+    const { authenticatedFetch } = evaluate<{ authenticatedFetch(path: string): Promise<Response> }>(
+      generateAuthenticatedFetch(true, true),
+      { "./token-adapter": { getToken: async () => token } }
+    );
+    let replaceAuthorization = true;
+    const browser = async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(input).toBe("/api/protected");
+      const headers = new Headers(init?.headers);
+      expect(headers.has("authorization")).toBe(false);
+      if (replaceAuthorization) headers.set("authorization", "Bearer swa-platform-credential");
+      const incoming: Record<string, string> = {};
+      headers.forEach((value, name) => { incoming[name] = value; });
+      const response = await helper.callFunction({
+        request: request({ headers: incoming }),
+        method: "GET", path: "/api/protected",
+      });
+      return new Response(JSON.stringify(response.body), { status: response.status });
+    };
+    fetchMock.mockImplementation(async (input, init) => {
+      if (input === "/api/protected") return browser(input, init);
+      const headers = new Headers(init?.headers);
+      expect(headers.get("x-functions-key")).toBe("server-only-key");
+      expect(headers.has(SWA_EXTERNAL_TOKEN_HEADER)).toBe(false);
+      try {
+        const principal = await router.requireAuth({ headers }, "protected");
+        return Response.json({ id: principal.subject });
+      } catch (error) {
+        const response = router.handleAuthError(error);
+        return Response.json(response.jsonBody, { status: response.status });
+      }
+    });
+    Object.defineProperty(global, "window", { configurable: true, value: { location: new URL("https://spa.example.test/") } });
+    try {
+      expect(await (await authenticatedFetch("/api/protected")).json()).toEqual({ id: "initial" });
+      token = "refreshed";
+      replaceAuthorization = false;
+      expect(await (await authenticatedFetch("/api/protected")).json()).toEqual({ id: "refreshed" });
+      for (const [value, status, code] of [
+        ["invalid", 401, "invalid_token"], ["expired", 401, "expired_token"],
+        ["outage", 503, "identity_provider_unavailable"], ["unconfigured", 500, "verifier_not_configured"],
+        [null, 401, "unauthenticated"],
+      ] as const) {
+        token = value;
+        const response = await authenticatedFetch("/api/protected");
+        expect(response.status).toBe(status);
+        const body = await response.json();
+        expect(body).toEqual({ code, error: expect.any(String) });
+        expect(body.error).not.toContain("sensitive");
+      }
+      replaceAuthorization = true;
+      const missing = await browser("/api/protected");
+      expect(missing.status).toBe(401);
+      expect(await missing.json()).toMatchObject({ code: "unauthenticated" });
+      expect(verify.mock.calls.map(([value]) => value)).toEqual(["initial", "refreshed", "invalid", "expired", "outage", "unconfigured"]);
+      await expect(authenticatedFetch("https://other.example.test/api/protected")).rejects.toThrow("same-origin");
+      token = "signed-in-again";
+      expect(await (await authenticatedFetch("/api/protected")).json()).toEqual({ id: "signed-in-again" });
+      fetchMock.mockRejectedValueOnce(new TypeError("network unavailable"));
+      await expect(authenticatedFetch("/api/protected")).rejects.toThrow("network unavailable");
+    } finally {
+      Reflect.deleteProperty(global, "window");
+    }
   });
 
   it("converts the HttpOnly JWT cookie to a backend bearer token, without forwarding cookies", async () => {
@@ -668,7 +760,7 @@ describe("React project integration", () => {
       expect(helper).toContain(
         provider === "swa"
           ? "const forwardSwa = true"
-          : "const forwardBearer = true"
+          : provider === "external-token" ? "const forwardExternalToken = true" : "const forwardJwtCookie = true"
       );
       const context = fs.readFileSync(
         path.join(project, "lib", "auth", "auth-context.tsx"),
@@ -704,6 +796,49 @@ describe("React project integration", () => {
     }
   );
 
+  it("plans init helper updates and refreshes beta transports while preserving user adapters", async () => {
+    // Jest caches CJS config modules across the plan and apply calls.
+    const config = loadConfig(undefined, true, true);
+    fs.unlinkSync("swallowkit.config.js");
+    fs.writeFileSync("swallowkit.config.json", JSON.stringify(config));
+    const options = { provider: "external-token", scheme: "line" };
+    const helper = "bff/src/lib/call-function.ts";
+    const client = "lib/auth/schemes/line/authenticated-fetch.ts";
+    const adapter = "lib/auth/schemes/line/token-adapter.ts";
+    const first = await planAuthOperation(options);
+    expect(first.operations).toContainEqual(expect.objectContaining({ path: helper, action: "update", conflict: false }));
+    await applyAuthOperation({ planId: first.planId });
+    const verifier = "functions/src/auth/schemes/line/verifier.ts";
+    fs.appendFileSync(verifier, "\n// user verifier");
+    fs.appendFileSync(adapter, "\n// user adapter");
+    fs.appendFileSync(client, "\n// user transport edit");
+    const refresh = await planAuthOperation({ ...options, refresh: true });
+    expect(refresh.conflicts).toContainEqual(expect.objectContaining({ path: client, conflictReason: "modified-after-generation" }));
+    await expect(applyAuthOperation({ planId: refresh.planId })).rejects.toThrow();
+    await applyAuthOperation({ planId: refresh.planId, approve: true });
+    expect(fs.readFileSync(adapter, "utf8")).toContain("// user adapter");
+    expect(fs.readFileSync(verifier, "utf8")).toContain("// user verifier");
+    expect(fs.readFileSync("lib/auth/schemes/line/auth-context.tsx", "utf8")).not.toContain("/api/auth/me");
+    const staff = await planAuthOperation({ provider: "swa", scheme: "staff" });
+    await applyAuthOperation({ planId: staff.planId });
+    expect(fs.readFileSync(helper, "utf8")).toContain("const forwardSwa = true");
+    expect(fs.readFileSync(helper, "utf8")).toContain("const forwardExternalToken = true");
+    const validation = await validateProject(project);
+    expect(validation.violations.map(item => item.code)).toContain("auth-verifier-stub");
+    expect(validation.violations.map(item => item.code)).not.toContain("react-external-token-transport");
+    expect(fs.readFileSync(client, "utf8")).toContain(SWA_EXTERNAL_TOKEN_HEADER);
+  });
+
+  it.each([true, false])("detects changed or untracked init helpers (tracked=%s)", async (tracked) => {
+    const helper = "bff/src/lib/call-function.ts";
+    if (tracked) fs.appendFileSync(helper, "\n// user implementation");
+    else fs.unlinkSync(".swallowkit/artifacts.json");
+    const plan = await planAuthOperation({ provider: "external-token", scheme: "line" });
+    expect(plan.conflicts).toContainEqual(expect.objectContaining({
+      path: helper, conflictReason: tracked ? "modified-after-generation" : "unknown-provenance",
+    }));
+  });
+
   it("adds multiple named credential transports and model-scoped providers", async () => {
     fs.rmSync(path.join(project, "swallowkit.config.js"));
     fs.writeFileSync(
@@ -731,7 +866,7 @@ describe("React project integration", () => {
       "utf8"
     );
     expect(helper).toContain("const forwardSwa = true");
-    expect(helper).toContain("const forwardBearer = true");
+    expect(helper).toContain("const forwardExternalToken = true");
     expect(
       fs.existsSync(
         path.join(

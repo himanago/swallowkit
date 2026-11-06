@@ -173,7 +173,10 @@ export function inspectCapabilities(): CapabilitiesContract {
           description: "Bearer tokens issued by an external IdP (LINE, Auth0, ...). SwallowKit generates a fail-closed verifier stub.",
           postApplySteps: [
             "Implement the generated verifier (extension point / generated-once; edit freely).",
-            "Implement the frontend token adapter (lib/auth/**/token-adapter.ts).",
+            "Implement the frontend token adapter (lib/auth/**/token-adapter.ts). Resolve the active IdP token for every request.",
+            "React SWA managed BFF uses x-swallowkit-external-token on the same-origin browser hop and Authorization: Bearer on the standalone Functions hop. Next.js uses standard Bearer where the host preserves it.",
+            "Named AuthProvider requires an application current-user loader; the named scheme does not provision a shared /api/auth/me.",
+            "Use plan auth --provider external-token --scheme <name> --refresh to review and regenerate beta.1 transports. Omit --scheme for legacy single-provider setup.",
           ],
         },
         {

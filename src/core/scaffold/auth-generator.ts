@@ -5,25 +5,32 @@
 
 import { AuthProvider, CustomJwtConfig, ModelAuthPolicy, NormalizedAuthConfig, RdbConnectorConfig } from "../../types";
 
+import { authSchemeSlug } from "../config";
+import { generateSafeBackendError, SWA_EXTERNAL_TOKEN_HEADER } from "./auth-transport-generator";
+
 type RdbProvider = RdbConnectorConfig["provider"]; // "mysql" | "postgres" | "sqlserver"
 
 export function generateNamedAuthRouterTS(config: NormalizedAuthConfig): string {
   const external = Object.entries(config.schemes).filter(([, s]) => s.provider === "external-token");
   const custom = Object.entries(config.schemes).filter(([, s]) => s.provider === "custom-jwt");
   const imports = external.map(([name]) => {
-    const slug = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
+    const slug = authSchemeSlug(name);
     const id = safeIdentifier(name);
     return `import { verifyExternalToken as verify_${id}, ExternalTokenVerificationError as Error_${id} } from './schemes/${slug}/verifier';`;
   }).concat(custom.map(([name]) => {
-    const slug = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
+    const slug = authSchemeSlug(name);
     return `import { requireAuth as verify_${safeIdentifier(name)} } from './schemes/${slug}/jwt-helper';`;
   })).join("\n");
-  const verifiers = external.map(([name]) => { const id = safeIdentifier(name); return `${JSON.stringify(name)}: async (token: string) => { try { return await verify_${id}(token); } catch (e) { if (e instanceof Error_${id}) throw new AuthError(e.status, e.message); throw e; } }`; }).join(",\n  ");
+  const verifiers = external.map(([name]) => { const id = safeIdentifier(name); return `${JSON.stringify(name)}: async (token: string) => { try { return await verify_${id}(token); } catch (e) { if (e instanceof Error_${id}) throw e.status === 503
+      ? new AuthError(503, 'Identity provider unavailable', 'identity_provider_unavailable')
+      : (e as { code?: string }).code === 'expired_token'
+        ? new AuthError(401, 'Token expired', 'expired_token')
+        : new AuthError(401, 'Invalid token', 'invalid_token'); throw e; } }`; }).join(",\n  ");
   return `import type { HttpRequest, HttpResponseInit } from '@azure/functions';
 /* eslint-disable @typescript-eslint/no-explicit-any -- generated multi-scheme router works with dynamically shaped principals */
 ${imports}
 export type AuthPrincipal = { subject: string; scheme: string; issuer: string; roles: string[]; claims: Record<string, unknown>; /** @deprecated */ userId?: string; /** @deprecated */ userDetails?: string };
-export class AuthError extends Error { constructor(public status: 401 | 403 | 503, message: string) { super(message); } }
+export class AuthError extends Error { constructor(public status: 401 | 403 | 500 | 503, message: string, public code?: string) { super(message); } }
 const schemes = ${JSON.stringify(Object.fromEntries(Object.entries(config.schemes).map(([n,s]) => [n,{provider:s.provider,allowedProviders:s.swa?.allowedProviders??[]}])))} as const;
 const policies = ${JSON.stringify(config.authorization.policies)} as Record<string, { schemes: string[]; roles?: string[] }>;
 const externalVerifiers: Record<string, (token: string) => Promise<any>> = { ${verifiers} };
@@ -42,18 +49,42 @@ function swa(request: HttpRequest, scheme: string): AuthPrincipal {
 export async function requireAuth(request: HttpRequest, policyName: string): Promise<AuthPrincipal> {
   const policy = policies[policyName]; if (!policy) throw new AuthError(401, 'Undefined authorization policy');
   const bearer = request.headers.get('authorization'); const hasSwa = Boolean(request.headers.get('x-ms-client-principal'));
-  const candidates = policy.schemes.filter(name => { const p=(schemes as any)[name]?.provider; return p === 'swa' ? hasSwa : (p === 'external-token' || p === 'custom-jwt') ? Boolean(bearer?.startsWith('Bearer ')) : false; });
-  if (candidates.length !== 1) throw new AuthError(401, candidates.length ? 'Ambiguous credentials' : 'Authentication required');
+  const candidates = policy.schemes.filter(name => { const p=(schemes as any)[name]?.provider; return p === 'swa' ? hasSwa : (p === 'external-token' || p === 'custom-jwt') ? Boolean(bearer && /^Bearer /i.test(bearer)) : false; });
+  if (!candidates.length && bearer && policy.schemes.some(name => (schemes as any)[name]?.provider === 'external-token')) {
+    throw new AuthError(401, 'Invalid token', 'invalid_token');
+  }
+  if (candidates.length !== 1) throw new AuthError(401, candidates.length ? 'Ambiguous credentials' : 'Authentication required', candidates.length ? 'invalid_token' : 'unauthenticated');
   const scheme = candidates[0]; const provider = (schemes as any)[scheme]?.provider; let principal: AuthPrincipal;
   if (provider === 'swa') principal = swa(request, scheme);
-  else if (provider === 'external-token') { const token=bearer!.slice(7); try { const p=await externalVerifiers[scheme](token); const subject=p?.subject ?? p?.userId; if (typeof subject !== 'string' || !subject || !Array.isArray(p.roles)) throw new AuthError(401,'Invalid external principal'); principal={subject,scheme,issuer:typeof p.issuer==='string'?p.issuer:scheme,roles:p.roles,claims:p.claims && typeof p.claims==='object'?p.claims:p,userId:subject,userDetails:p.userDetails}; } catch(e) { if(e instanceof AuthError) throw e; throw new AuthError(503,'Identity provider unavailable'); } }
+  else if (provider === 'external-token') {
+    const token = bearer!.slice(7);
+    if (!token || /[\\s,]/.test(token)) throw new AuthError(401, 'Invalid token', 'invalid_token');
+    try {
+      const verified = await externalVerifiers[scheme](token);
+      const subject = verified?.subject ?? verified?.userId;
+      if (typeof subject !== 'string' || !subject || !Array.isArray(verified.roles)) {
+        throw new AuthError(401, 'Invalid token', 'invalid_token');
+      }
+      principal = {
+        subject, scheme, userId: subject, userDetails: verified.userDetails, roles: verified.roles,
+        issuer: typeof verified.issuer === 'string' ? verified.issuer : scheme,
+        claims: verified.claims && typeof verified.claims === 'object' ? verified.claims : verified,
+      };
+    } catch (error) {
+      if (error instanceof AuthError) throw error;
+      if (error instanceof Error && error.message === 'External token verifier is not configured') {
+        throw new AuthError(500, 'External token verifier is not configured', 'verifier_not_configured');
+      }
+      throw new AuthError(503, 'External token verifier unavailable', 'verifier_unavailable');
+    }
+  }
   else if (provider === 'custom-jwt') { try { const p=customVerifiers[scheme](request); const subject=p?.sub ?? p?.userId; if(typeof subject !== 'string' || !subject || !Array.isArray(p.roles)) throw new Error(); principal={subject,scheme,issuer:scheme,roles:p.roles,claims:p,userId:subject,userDetails:p.loginId}; } catch { throw new AuthError(401,'Invalid or expired token'); } }
   else throw new AuthError(401, 'Authentication adapter is not configured');
   requireRoles(principal, policy.roles || []); return principal;
 }
 export function requireRoles(principal: AuthPrincipal, roles: string[]): void { if (roles.length && !roles.some(r => principal.roles.includes(r))) throw new AuthError(403, 'Insufficient permissions'); }
 export function identityKey(principal: AuthPrincipal): string { return principal.scheme + ':' + principal.subject; }
-export function handleAuthError(error: unknown): HttpResponseInit | null { return error instanceof AuthError ? { status:error.status, jsonBody:{error:error.message} } : null; }
+export function handleAuthError(error: unknown): HttpResponseInit | null { return error instanceof AuthError ? { status:error.status, jsonBody:{error:error.message, code:error.code} } : null; }
 `;
 }
 
@@ -64,10 +95,6 @@ function safeIdentifier(name: string): string {
 /** C# の string[] リテラル。空のときは型推論不能な `new[] { }` (CS0826) を避けて Array.Empty<string>() を出力する。 */
 function csharpStringArray(items: string[]): string {
   return items.length > 0 ? `new[] { ${items.map((item) => `"${item}"`).join(", ")} }` : "Array.Empty<string>()";
-}
-
-function schemeSlug(name: string): string {
-  return name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
 }
 
 export function generateNamedExternalTokenVerifierCSharp(scheme: string): string {
@@ -82,6 +109,7 @@ public sealed class ExternalTokenVerificationException_${id} : Exception
 public static class ExternalTokenVerifier_${id}
 {
     // Validate signature, issuer, audience and expiry. This stub deliberately fails closed.
+    // Register Func<string, CancellationToken, Task<ExternalPrincipal_${id}>> in Program.cs to use DI.
     public static Task<ExternalPrincipal_${id}> VerifyAsync(string token) => throw new InvalidOperationException("External token verifier for ${scheme} is not configured");
 }
 `;
@@ -89,9 +117,10 @@ public static class ExternalTokenVerifier_${id}
 
 export function generateNamedExternalTokenVerifierPython(scheme: string): string {
   return `class ExternalTokenVerificationError(Exception):
-    def __init__(self, message: str, identity_provider_unavailable: bool = False):
+    def __init__(self, message: str, identity_provider_unavailable: bool = False, *, expired: bool = False):
         super().__init__(message)
         self.identity_provider_unavailable = identity_provider_unavailable
+        self.expired = expired
 
 def verify_external_token(token: str) -> dict:
     # Validate signature, issuer, audience and expiry. This stub deliberately fails closed.
@@ -105,12 +134,28 @@ export function generateNamedAuthRouterCSharp(config: NormalizedAuthConfig): str
     return `            case "${name}":
                 try
                 {
-                    var external = await ExternalTokenVerifier_${id}.VerifyAsync(bearer!);
+                    var context = request.FunctionContext;
+                    var verify = context.InstanceServices.GetService(typeof(Func<string, CancellationToken, Task<ExternalPrincipal_${id}>>))
+                        as Func<string, CancellationToken, Task<ExternalPrincipal_${id}>>;
+                    context.CancellationToken.ThrowIfCancellationRequested();
+                    var external = verify != null
+                        ? await verify(bearer!, context.CancellationToken)
+                        : await ExternalTokenVerifier_${id}.VerifyAsync(bearer!);
+                    context.CancellationToken.ThrowIfCancellationRequested();
+                    if (external == null || string.IsNullOrWhiteSpace(external.Subject) ||
+                        string.IsNullOrWhiteSpace(external.Issuer) || external.Roles == null || external.Claims == null)
+                        return (null, await Error(request, HttpStatusCode.Unauthorized, "Invalid token", "invalid_token"));
                     principal = new AuthPrincipal(external.Subject, "${name}", external.Issuer, external.Roles, external.Claims);
                 }
-                catch (ExternalTokenVerificationException_${id} ex) when (ex.IsIdentityProviderUnavailable) { return (null, await Error(request, HttpStatusCode.ServiceUnavailable, "Identity provider unavailable")); }
-                catch (ExternalTokenVerificationException_${id}) { return (null, await Error(request, HttpStatusCode.Unauthorized, "Invalid token")); }
-                catch { return (null, await Error(request, HttpStatusCode.ServiceUnavailable, "External token verifier unavailable")); }
+                catch (OperationCanceledException) when (request.FunctionContext.CancellationToken.IsCancellationRequested) { throw; }
+                catch (ExternalTokenExpiredException) { return (null, await Error(request, HttpStatusCode.Unauthorized, "Token expired", "expired_token")); }
+                catch (ExternalTokenVerificationException_${id} ex) when (ex.IsIdentityProviderUnavailable) { return (null, await Error(request, HttpStatusCode.ServiceUnavailable, "Identity provider unavailable", "identity_provider_unavailable")); }
+                catch (ExternalTokenVerificationException_${id}) { return (null, await Error(request, HttpStatusCode.Unauthorized, "Invalid token", "invalid_token")); }
+                catch (HttpRequestException) { return (null, await Error(request, HttpStatusCode.ServiceUnavailable, "Identity provider unavailable", "identity_provider_unavailable")); }
+                catch (TimeoutException) { return (null, await Error(request, HttpStatusCode.ServiceUnavailable, "Identity provider unavailable", "identity_provider_unavailable")); }
+                catch (OperationCanceledException) { return (null, await Error(request, HttpStatusCode.ServiceUnavailable, "Identity provider unavailable", "identity_provider_unavailable")); }
+                catch (InvalidOperationException ex) when (ex is ExternalTokenConfigurationException || ex.Message == "External token verifier for ${name} is not configured") { return (null, await Error(request, HttpStatusCode.InternalServerError, "External token verifier is not configured", "verifier_not_configured")); }
+                catch { return (null, await Error(request, HttpStatusCode.ServiceUnavailable, "External token verifier unavailable", "verifier_unavailable")); }
                 break;`;
   }).join("\n");
   return `using System.Net;
@@ -118,7 +163,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Azure.Functions.Worker.Http;
 ${externalCases ? "using Functions.Auth.Schemes;\n" : ""}namespace Functions.Auth;
-public record AuthPrincipal(string Subject, string Scheme, string Issuer, string[] Roles, IReadOnlyDictionary<string, object?> Claims)
+${externalCases ? "public sealed class ExternalTokenExpiredException : Exception { }\npublic sealed class ExternalTokenConfigurationException : InvalidOperationException { }\n" : ""}public record AuthPrincipal(string Subject, string Scheme, string Issuer, string[] Roles, IReadOnlyDictionary<string, object?> Claims)
 {
     [Obsolete("Use Subject")] public string UserId => Subject;
     public string IdentityKey => $"{Scheme}:{Subject}";
@@ -138,8 +183,12 @@ ${Object.entries(config.authorization.policies).map(([n,p]) => `        ["${n}"]
         var bearer = bearerHeader?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true ? bearerHeader[7..] : null;
         var swa = request.Headers.TryGetValues("x-ms-client-principal", out var swaValues) ? swaValues.FirstOrDefault() : null;
         var candidates = policy.Schemes.Where(s => Providers[s] == "swa" ? swa != null : Providers[s] is "external-token" or "custom-jwt" ? bearer != null : false).ToArray();
-        if (candidates.Length != 1) return (null, await Error(request, HttpStatusCode.Unauthorized, candidates.Length == 0 ? "Authentication required" : "Ambiguous credentials"));
+        if (candidates.Length == 0 && bearerHeader != null && policy.Schemes.Any(s => Providers[s] == "external-token"))
+            return (null, await Error(request, HttpStatusCode.Unauthorized, "Invalid token", "invalid_token"));
+        if (candidates.Length != 1) return (null, await Error(request, HttpStatusCode.Unauthorized, candidates.Length == 0 ? "Authentication required" : "Ambiguous credentials", candidates.Length == 0 ? "unauthenticated" : "invalid_token"));
         var scheme = candidates[0]; AuthPrincipal principal;
+        if (Providers[scheme] == "external-token" && (string.IsNullOrWhiteSpace(bearer) || bearer.Any(char.IsWhiteSpace) || bearer.Contains(',')))
+            return (null, await Error(request, HttpStatusCode.Unauthorized, "Invalid token", "invalid_token"));
         switch (scheme)
         {
 ${externalCases}
@@ -162,22 +211,26 @@ ${externalCases}
         if (policy.Roles.Length > 0 && !policy.Roles.Any(principal.Roles.Contains)) return (null, await Error(request, HttpStatusCode.Forbidden, "Insufficient permissions"));
         return (principal, null);
     }
-    private static async Task<HttpResponseData> Error(HttpRequestData request, HttpStatusCode status, string message) { var response=request.CreateResponse(status); await response.WriteAsJsonAsync(new { error=message }); return response; }
+    private static async Task<HttpResponseData> Error(HttpRequestData request, HttpStatusCode status, string message, string? code = null) { var response=request.CreateResponse(status); await response.WriteAsJsonAsync(new { error=message, code }); return response; }
 }
 `;
 }
 
 export function generateNamedAuthRouterPython(config: NormalizedAuthConfig): string {
   const external = Object.entries(config.schemes).filter(([,s])=>s.provider === "external-token");
-  const imports = external.map(([n])=>`from auth.schemes.${schemeSlug(n).replace(/-/g,"_")}.verifier import verify_external_token as verify_${safeIdentifier(n)}, ExternalTokenVerificationError as Error_${safeIdentifier(n)}`).join("\n");
+  const imports = external.map(([n])=>`from auth.schemes.${authSchemeSlug(n).replace(/-/g,"_")}.verifier import verify_external_token as verify_${safeIdentifier(n)}, ExternalTokenVerificationError as Error_${safeIdentifier(n)}`).join("\n");
   const cases = external.map(([n], index)=>`    ${index === 0 ? "if" : "elif"} scheme == ${JSON.stringify(n)}:
         try:
             value = verify_${safeIdentifier(n)}(bearer)
         except Error_${safeIdentifier(n)} as exc:
-            raise AuthError(503 if exc.identity_provider_unavailable else 401, "Identity provider unavailable" if exc.identity_provider_unavailable else "Invalid token")
-        except Exception:
-            raise AuthError(503, "External token verifier unavailable")
-        if not value.get("subject") or not isinstance(value.get("roles"), list): raise AuthError(401, "Invalid external principal")
+            if exc.identity_provider_unavailable: raise AuthError(503, "Identity provider unavailable", "identity_provider_unavailable")
+            if getattr(exc, "expired", False): raise AuthError(401, "Token expired", "expired_token")
+            raise AuthError(401, "Invalid token", "invalid_token")
+        except Exception as exc:
+            if str(exc) == "External token verifier for ${n} is not configured":
+                raise AuthError(500, "External token verifier is not configured", "verifier_not_configured")
+            raise AuthError(503, "External token verifier unavailable", "verifier_unavailable")
+        if not isinstance(value, dict) or not value.get("subject") or not isinstance(value.get("roles"), list): raise AuthError(401, "Invalid token", "invalid_token")
         principal = {"subject": value["subject"], "scheme": scheme, "issuer": value.get("issuer", scheme), "roles": value["roles"], "claims": value.get("claims", {}), "userId": value["subject"]}`).join("\n");
   return `import base64
 import json
@@ -187,7 +240,7 @@ POLICIES = ${JSON.stringify(config.authorization.policies)}
 PROVIDERS = ${JSON.stringify(Object.fromEntries(Object.entries(config.schemes).map(([n,s])=>[n,s.provider])))}
 ALLOWED_PROVIDERS = ${JSON.stringify(Object.fromEntries(Object.entries(config.schemes).map(([n,s])=>[n,s.swa?.allowedProviders??[]])))}
 class AuthError(Exception):
-    def __init__(self, status, message): self.status, self.message = status, message
+    def __init__(self, status, message, code=None): self.status, self.message, self.code = status, message, code
 def require_auth(req: func.HttpRequest, policy_name: str):
     policy = POLICIES.get(policy_name)
     if not policy: raise AuthError(401, "Undefined authorization policy")
@@ -195,8 +248,12 @@ def require_auth(req: func.HttpRequest, policy_name: str):
     bearer = header[7:] if header.lower().startswith("bearer ") else None
     swa = req.headers.get("x-ms-client-principal")
     candidates = [s for s in policy["schemes"] if (PROVIDERS[s] == "swa" and swa) or (PROVIDERS[s] in ("external-token", "custom-jwt") and bearer)]
-    if len(candidates) != 1: raise AuthError(401, "Authentication required" if not candidates else "Ambiguous credentials")
+    if not candidates and header and any(PROVIDERS[s] == "external-token" for s in policy["schemes"]):
+        raise AuthError(401, "Invalid token", "invalid_token")
+    if len(candidates) != 1: raise AuthError(401, "Authentication required" if not candidates else "Ambiguous credentials", "unauthenticated" if not candidates else "invalid_token")
     scheme = candidates[0]
+    if PROVIDERS[scheme] == "external-token" and (not bearer or "," in bearer or any(char.isspace() for char in bearer)):
+        raise AuthError(401, "Invalid token", "invalid_token")
 ${cases}
     ${external.length ? "elif" : "if"} PROVIDERS[scheme] == "swa":
         try:
@@ -210,7 +267,7 @@ ${cases}
 def require_roles(principal, roles):
     if roles and not any(role in principal.get("roles",[]) for role in roles): raise AuthError(403,"Insufficient permissions")
 def identity_key(principal): return principal["scheme"] + ":" + principal["subject"]
-def handle_auth_error(error): return func.HttpResponse(json.dumps({"error":error.message}),status_code=error.status,mimetype="application/json") if isinstance(error,AuthError) else None
+def handle_auth_error(error): return func.HttpResponse(json.dumps({"error":error.message, "code":error.code}),status_code=error.status,mimetype="application/json") if isinstance(error,AuthError) else None
 `;
 }
 
@@ -1336,6 +1393,7 @@ function getFunctionsKeyHeaders(functionsBaseUrl: string): Record<string, string
   throw new Error('BACKEND_FUNCTIONS_KEY is required for non-local Functions calls');
 }
 
+${generateSafeBackendError()}
 interface CallFunctionConfig<TInput = unknown, TOutput = unknown> {
   /** HTTP メソッド */
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -1395,24 +1453,14 @@ export async function callFunction<TInput = unknown, TOutput = unknown>(
     const response = await fetch(url, {
       method,
       headers: fetchHeaders,
+      redirect: 'error',
       body: validatedBody !== undefined ? JSON.stringify(validatedBody) : undefined,
     });
 
     console.log('[BFF] Functions response status:', response.status);
 
-    // エラーレスポンスの転送
     if (!response.ok) {
-      const text = await response.text();
-      console.error('[BFF] Functions error:', { status: response.status, body: text });
-
-      let errorMessage = 'Request failed';
-      try {
-        const error = JSON.parse(text);
-        errorMessage = error.error || errorMessage;
-      } catch {
-        errorMessage = text || errorMessage;
-      }
-      return NextResponse.json({ error: errorMessage }, { status: response.status });
+      return NextResponse.json(await safeBackendError(response), { status: response.status });
     }
 
     // DELETE 204 の場合はボディなし
@@ -1429,12 +1477,9 @@ export async function callFunction<TInput = unknown, TOutput = unknown>(
     }
 
     return NextResponse.json(data, { status: successStatus });
-  } catch (error) {
-    console.error(\`[BFF] Error:\`, error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Internal server error' },
-      { status: 500 }
-    );
+  } catch {
+    console.error('[BFF] Backend request failed');
+    return NextResponse.json({ error: 'Backend request failed' }, { status: 502 });
   }
 }
 `;
@@ -1595,15 +1640,20 @@ export async function logout(): Promise<void> { throw new Error('External token 
 `;
 }
 
-export function generateAuthenticatedFetch(): string {
-  return `import { getToken } from './external-token-adapter';
+export function generateAuthenticatedFetch(managedSwa = false, named = false): string {
+  return `import { getToken } from './${named ? "token-adapter" : "external-token-adapter"}';
 
 export async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  const token = await getToken();
-  if (!token) return new Response(JSON.stringify({ error: 'Authentication required' }), { status: 401, headers: { 'content-type': 'application/json' } });
-  const headers = new Headers(init.headers);
-  headers.set('Authorization', \`Bearer \${token}\`);
-  return fetch(input, { ...init, headers });
+${managedSwa ? `  const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+  if (url.origin !== window.location.origin || !url.pathname.startsWith('/api/')) {
+    throw new Error('External tokens can only be sent to the same-origin API');
+  }
+` : ""}  const token = await getToken();
+  if (!token) return new Response(JSON.stringify({ code: 'unauthenticated', error: 'Authentication required' }), { status: 401, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+  const headers = new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined));
+${managedSwa ? `  headers.delete('Authorization');
+  headers.set('${SWA_EXTERNAL_TOKEN_HEADER}', token);` : `  headers.set('Authorization', \`Bearer \${token}\`);`}
+  return fetch(input, { ...init, headers, cache: 'no-store', redirect: 'error' });
 }
 `;
 }
@@ -1614,31 +1664,71 @@ export async function GET() { return callFunction({ method: 'GET', path: '/api/a
 `;
 }
 
-export function generateExternalTokenAuthContext(): string {
+export function generateExternalTokenAuthContext(named = false): string {
   return `'use client';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { authenticatedFetch } from './authenticated-fetch';
-import * as adapter from './external-token-adapter';
+${named ? "import { loadCurrentUser } from './load-user';\n" : "import { authenticatedFetch } from './authenticated-fetch';\n"}import * as adapter from './${named ? "token-adapter" : "external-token-adapter"}';
 export interface AuthUser { id: string; loginId: string; name: string; email: string; roles: string[]; }
-interface Value { user: AuthUser | null; loading: boolean; login: () => Promise<void>; logout: () => Promise<void>; hasRole: (role: string) => boolean; hasAnyRole: (roles: string[]) => boolean; }
+type LoadUser = (signal: AbortSignal) => Promise<AuthUser | null>;
+interface Value { user: AuthUser | null; loading: boolean; error: Error | null; refresh: () => void; login: () => Promise<void>; logout: () => Promise<void>; hasRole: (role: string) => boolean; hasAnyRole: (roles: string[]) => boolean; }
 const Context = createContext<Value | null>(null);
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null); const [loading, setLoading] = useState(true);
-  useEffect(() => { authenticatedFetch('/api/auth/me').then(async r => {
-    if (!r.ok || !(r.headers.get('content-type') || '').includes('application/json')) return null;
-    return r.json() as Promise<AuthUser>;
-  }).then(setUser).catch(() => setUser(null)).finally(() => setLoading(false)); }, []);
+${named ? "" : `async function loadCurrentUser(signal: AbortSignal): Promise<AuthUser | null> {
+  const response = await authenticatedFetch('/api/auth/me', { signal });
+  if (response.status === 401) return null;
+  if (!response.ok) throw new Error('Unable to load the current user (HTTP ' + response.status + ')');
+  if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('Expected JSON for the current user');
+  const user = await response.json();
+  if (!user || typeof user.id !== 'string' || typeof user.loginId !== 'string' ||
+      typeof user.name !== 'string' || typeof user.email !== 'string' ||
+      !Array.isArray(user.roles) || !user.roles.every((role: unknown) => typeof role === 'string')) {
+    throw new Error('Invalid current user response');
+  }
+  return user;
+}
+`}export function AuthProvider({ children, loadUser = loadCurrentUser, identityVersion }: {
+  children: ReactNode;
+  /** Return null for a signed-out session. Throw for endpoint or transport failures. */
+  loadUser?: LoadUser;
+  /** Change when the IdP SDK reports a session or identity change. */
+  identityVersion?: string | number;
+}) {
+  const [revision, setRevision] = useState(0);
+  const [result, setResult] = useState<{ revision: number; identityVersion?: string | number; loader: LoadUser; user: AuthUser | null; error: Error | null } | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    setResult(null);
+    const save = (user: AuthUser | null, error: Error | null) => {
+      if (!controller.signal.aborted) setResult({ revision, identityVersion, loader: loadUser, user, error });
+    };
+    Promise.resolve().then(() => loadUser(controller.signal)).then(user => save(user, null), () => save(null, new Error('Unable to load the current user')));
+    return () => controller.abort();
+  }, [revision, identityVersion, loadUser]);
+  const current = result?.revision === revision && result.identityVersion === identityVersion && result.loader === loadUser ? result : null;
+  const user = current?.user ?? null;
+  const refresh = () => setRevision(value => value + 1);
+  const login = async () => { await adapter.login(); refresh(); };
+  const logout = async () => { await adapter.logout(); refresh(); };
   const hasRole = (role: string) => user?.roles.includes(role) ?? false;
-  const logout = async () => { await adapter.logout(); setUser(null); };
-  return <Context.Provider value={{ user, loading, login: adapter.login, logout, hasRole, hasAnyRole: roles => roles.some(hasRole) }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ user, loading: !current, error: current?.error ?? null, refresh, login, logout, hasRole, hasAnyRole: roles => roles.some(hasRole) }}>{children}</Context.Provider>;
 }
 export function useAuth() { const value = useContext(Context); if (!value) throw new Error('useAuth must be used within an AuthProvider'); return value; }
 `;
 }
 
+export function generateNamedExternalTokenUserLoader(): string {
+  return `import type { AuthUser } from './auth-context';
+
+// If you use AuthProvider, call an application-owned endpoint with authenticatedFetch.
+// Return the server-verified user, null for signed out, or throw for request/endpoint failures.
+export async function loadCurrentUser(_signal: AbortSignal): Promise<AuthUser | null> {
+  throw new Error('Named external-token AuthProvider requires a current-user loader');
+}
+`;
+}
+
 export function generateExternalTokenVerifierTS(): string {
   return `export interface ExternalAuthPrincipal { userId: string; userDetails: string; roles: string[]; }
-export class ExternalTokenVerificationError extends Error { constructor(public status: 401 | 503, message: string) { super(message); } }
+export class ExternalTokenVerificationError extends Error { constructor(public status: 401 | 503, message: string, public code?: "expired_token") { super(message); } }
 /** Implement IdP verification here. Never decode and trust a token without verification. */
 export async function verifyExternalToken(_token: string): Promise<ExternalAuthPrincipal> {
   throw new Error('External token verifier is not configured');
@@ -1649,17 +1739,29 @@ export async function verifyExternalToken(_token: string): Promise<ExternalAuthP
 export function generateExternalTokenHelperTS(): string {
   return `import { HttpRequest, HttpResponseInit } from '@azure/functions';
 import { verifyExternalToken, ExternalTokenVerificationError, type ExternalAuthPrincipal } from './external-token-verifier';
-export class AuthError extends Error { constructor(public status: number, message: string) { super(message); } }
+export class AuthError extends Error { constructor(public status: number, message: string, public code?: string) { super(message); } }
 export async function requireAuth(request: HttpRequest): Promise<ExternalAuthPrincipal> {
   const header = request.headers.get('authorization') || '';
-  if (!header.startsWith('Bearer ') || !header.slice(7)) throw new AuthError(401, 'Missing or invalid Authorization header');
+  if (!header) throw new AuthError(401, 'Authentication required', 'unauthenticated');
+  if (!/^Bearer [^\\s,]+$/i.test(header)) throw new AuthError(401, 'Invalid token', 'invalid_token');
   try { const principal = await verifyExternalToken(header.slice(7));
-    if (!principal?.userId || !Array.isArray(principal.roles)) throw new AuthError(401, 'Invalid external principal');
+    if (!principal?.userId || !Array.isArray(principal.roles)) throw new AuthError(401, 'Invalid token', 'invalid_token');
     return principal;
-  } catch (error) { if (error instanceof AuthError) throw error; if (error instanceof ExternalTokenVerificationError) throw new AuthError(error.status, error.message); throw new AuthError(500, 'External token verifier is not configured'); }
+  } catch (error) {
+    if (error instanceof AuthError) throw error;
+    if (error instanceof ExternalTokenVerificationError) {
+      if (error.status === 503) throw new AuthError(503, 'Identity provider unavailable', 'identity_provider_unavailable');
+      if ((error as { code?: string }).code === 'expired_token') throw new AuthError(401, 'Token expired', 'expired_token');
+      throw new AuthError(401, 'Invalid token', 'invalid_token');
+    }
+    if (error instanceof Error && error.message === 'External token verifier is not configured') {
+      throw new AuthError(500, 'External token verifier is not configured', 'verifier_not_configured');
+    }
+    throw new AuthError(503, 'External token verifier unavailable', 'verifier_unavailable');
+  }
 }
 export function requireRoles(user: ExternalAuthPrincipal, roles: string[]) { if (!roles.some(role => user.roles.includes(role))) throw new AuthError(403, 'Insufficient permissions'); }
-export function handleAuthError(error: unknown): HttpResponseInit | null { return error instanceof AuthError ? { status: error.status, jsonBody: { error: error.message } } : null; }
+export function handleAuthError(error: unknown): HttpResponseInit | null { return error instanceof AuthError ? { status: error.status, jsonBody: { error: error.message, code: error.code } } : null; }
 `;
 }
 
@@ -1674,10 +1776,112 @@ app.http('external-auth-me', { methods: ['GET'], route: 'auth/me', authLevel: 'f
 }
 
 export function generateExternalTokenVerifierCSharp(): string { return `namespace Functions.Auth;\npublic record ExternalAuthPrincipal(string UserId, string UserDetails, string[] Roles);\npublic static class ExternalTokenVerifier { public static Task<ExternalAuthPrincipal> VerifyExternalToken(string token) => throw new InvalidOperationException("External token verifier is not configured"); }\n`; }
-export function generateExternalTokenHelperCSharp(): string { return `using Microsoft.Azure.Functions.Worker.Http;\nnamespace Functions.Auth;\npublic static class JwtHelper { public static async Task<(ExternalAuthPrincipal? Principal, HttpResponseData? ErrorResponse)> Authorize(HttpRequestData request, params string[] roles) { if (!request.Headers.TryGetValues("Authorization", out var values) || !values.FirstOrDefault()!.StartsWith("Bearer ")) { var r=request.CreateResponse(System.Net.HttpStatusCode.Unauthorized); await r.WriteAsJsonAsync(new { error="Authentication required" }); return (null,r); } try { var p=await ExternalTokenVerifier.VerifyExternalToken(values.First()[7..]); if (roles.Length>0 && !roles.Any(p.Roles.Contains)) { var r=request.CreateResponse(System.Net.HttpStatusCode.Forbidden); await r.WriteAsJsonAsync(new { error="Insufficient permissions" }); return (null,r); } return (p,null); } catch (HttpRequestException) { var r=request.CreateResponse(System.Net.HttpStatusCode.ServiceUnavailable); await r.WriteAsJsonAsync(new { error="Identity provider unavailable" }); return (null,r); } catch { var r=request.CreateResponse(System.Net.HttpStatusCode.Unauthorized); await r.WriteAsJsonAsync(new { error="Authentication failed" }); return (null,r); } } }\n`; }
+export function generateExternalTokenHelperCSharp(): string {
+  return `using System.Net;
+using Microsoft.Azure.Functions.Worker.Http;
+
+namespace Functions.Auth;
+public sealed class ExternalAuthVerificationException(string code) : Exception
+{
+    public string Code { get; } = code;
+}
+public static class JwtHelper
+{
+    public static async Task<(ExternalAuthPrincipal? Principal, HttpResponseData? ErrorResponse)> Authorize(HttpRequestData request, params string[] roles)
+    {
+        var header = request.Headers.TryGetValues("Authorization", out var values) ? values.FirstOrDefault() : null;
+        if (header == null) return (null, await Error(request, HttpStatusCode.Unauthorized, "Authentication required", "unauthenticated"));
+        if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) || header.Length == 7 ||
+            header[7..].Any(char.IsWhiteSpace) || header.Contains(','))
+            return (null, await Error(request, HttpStatusCode.Unauthorized, "Invalid token", "invalid_token"));
+        try
+        {
+            var context = request.FunctionContext;
+            var verify = context.InstanceServices.GetService(typeof(Func<string, CancellationToken, Task<ExternalAuthPrincipal>>))
+                as Func<string, CancellationToken, Task<ExternalAuthPrincipal>>;
+            context.CancellationToken.ThrowIfCancellationRequested();
+            var principal = verify != null ? await verify(header[7..], context.CancellationToken)
+                : await ExternalTokenVerifier.VerifyExternalToken(header[7..]);
+            context.CancellationToken.ThrowIfCancellationRequested();
+            if (principal == null || string.IsNullOrWhiteSpace(principal.UserId) || principal.Roles == null)
+                return (null, await Error(request, HttpStatusCode.Unauthorized, "Invalid token", "invalid_token"));
+            if (roles.Length > 0 && !roles.Any(principal.Roles.Contains))
+                return (null, await Error(request, HttpStatusCode.Forbidden, "Insufficient permissions", "forbidden"));
+            return (principal, null);
+        }
+        catch (OperationCanceledException) when (request.FunctionContext.CancellationToken.IsCancellationRequested) { throw; }
+        catch (ExternalAuthVerificationException ex) when (ex.Code == "expired_token")
+        { return (null, await Error(request, HttpStatusCode.Unauthorized, "Token expired", "expired_token")); }
+        catch (ExternalAuthVerificationException ex) when (ex.Code == "invalid_token")
+        { return (null, await Error(request, HttpStatusCode.Unauthorized, "Invalid token", "invalid_token")); }
+        catch (Exception ex) when (ex is HttpRequestException or TimeoutException or OperationCanceledException ||
+            ex is ExternalAuthVerificationException { Code: "identity_provider_unavailable" })
+        { return (null, await Error(request, HttpStatusCode.ServiceUnavailable, "Identity provider unavailable", "identity_provider_unavailable")); }
+        catch (Exception ex) when (ex is ExternalAuthVerificationException { Code: "verifier_not_configured" } ||
+            ex is InvalidOperationException && ex.Message == "External token verifier is not configured")
+        { return (null, await Error(request, HttpStatusCode.InternalServerError, "External token verifier is not configured", "verifier_not_configured")); }
+        catch
+        { return (null, await Error(request, HttpStatusCode.ServiceUnavailable, "External token verifier unavailable", "verifier_unavailable")); }
+    }
+    private static async Task<HttpResponseData> Error(HttpRequestData request, HttpStatusCode status, string error, string code)
+    {
+        var response = request.CreateResponse(status);
+        await response.WriteAsJsonAsync(new { error, code });
+        return response;
+    }
+}
+`;
+}
 export function generateExternalAuthMeCSharp(): string { return `using Microsoft.Azure.Functions.Worker;\nusing Microsoft.Azure.Functions.Worker.Http;\nnamespace Functions.Auth;\npublic class ExternalAuthMe { [Function("external-auth-me")] public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Function,"get",Route="auth/me")] HttpRequestData req) { var (p,e)=await JwtHelper.Authorize(req); if(e!=null)return e; var r=req.CreateResponse(System.Net.HttpStatusCode.OK); await r.WriteAsJsonAsync(new { id=p!.UserId, loginId=p.UserDetails, name=p.UserDetails, email="", roles=p.Roles }); return r; } }\n`; }
-export function generateExternalTokenVerifierPython(): string { return `class ExternalTokenVerificationError(Exception):\n    def __init__(self, status: int, message: str): self.status, self.message = status, message\n\ndef verify_external_token(token: str) -> dict:\n    raise RuntimeError("External token verifier is not configured")\n`; }
-export function generateExternalTokenHelperPython(): string { return `import azure.functions as func\nfrom .external_token_verifier import verify_external_token, ExternalTokenVerificationError\nclass AuthError(Exception):\n    def __init__(self,status,message): self.status,self.message=status,message\ndef require_auth(req: func.HttpRequest):\n    header=req.headers.get("authorization","")\n    if not header.startswith("Bearer "): raise AuthError(401,"Authentication required")\n    try:\n        p=verify_external_token(header[7:])\n        if not p.get("userId") or not isinstance(p.get("roles"),list): raise AuthError(401,"Invalid external principal")\n        return p\n    except ExternalTokenVerificationError as e: raise AuthError(e.status,e.message)\n    except AuthError: raise\n    except RuntimeError: raise AuthError(500,"External token verifier is not configured")\ndef require_roles(user,roles):\n    if not any(r in user.get("roles",[]) for r in roles): raise AuthError(403,"Insufficient permissions")\ndef handle_auth_error(error):\n    return func.HttpResponse('{"error":"%s"}' % error.message,status_code=error.status,mimetype="application/json") if isinstance(error,AuthError) else None\n`; }
+export function generateExternalTokenVerifierPython(): string {
+  return `class ExternalTokenVerificationError(Exception):
+    def __init__(self, status: int, message: str, *, expired: bool = False):
+        super().__init__(message)
+        self.status = status
+        self.expired = expired
+
+def verify_external_token(token: str) -> dict:
+    raise RuntimeError("External token verifier is not configured")
+`;
+}
+
+export function generateExternalTokenHelperPython(): string {
+  return `import json
+import re
+import azure.functions as func
+from .external_token_verifier import verify_external_token, ExternalTokenVerificationError
+
+class AuthError(Exception):
+    def __init__(self, status, message, code=None):
+        self.status, self.message, self.code = status, message, code
+
+def require_auth(req: func.HttpRequest):
+    header = req.headers.get("authorization")
+    if header is None: raise AuthError(401, "Authentication required", "unauthenticated")
+    if not re.fullmatch(r"Bearer [^\\s,]+", header, re.IGNORECASE): raise AuthError(401, "Invalid token", "invalid_token")
+    try:
+        principal = verify_external_token(header[7:])
+        if not isinstance(principal, dict) or not principal.get("userId") or not isinstance(principal.get("roles"), list):
+            raise AuthError(401, "Invalid token", "invalid_token")
+        return principal
+    except ExternalTokenVerificationError as exc:
+        if exc.status == 503: raise AuthError(503, "Identity provider unavailable", "identity_provider_unavailable")
+        if getattr(exc, "expired", False): raise AuthError(401, "Token expired", "expired_token")
+        raise AuthError(401, "Invalid token", "invalid_token")
+    except AuthError: raise
+    except Exception as exc:
+        if str(exc) == "External token verifier is not configured":
+            raise AuthError(500, "External token verifier is not configured", "verifier_not_configured")
+        raise AuthError(503, "External token verifier unavailable", "verifier_unavailable")
+
+def require_roles(user, roles):
+    if not any(role in user.get("roles", []) for role in roles):
+        raise AuthError(403, "Insufficient permissions")
+
+def handle_auth_error(error):
+    return func.HttpResponse(json.dumps({"error": error.message, "code": error.code}), status_code=error.status, mimetype="application/json") if isinstance(error, AuthError) else None
+`;
+}
 export function generateExternalAuthMePython(): string { return `import json\nimport azure.functions as func\nfrom auth.jwt_helper import require_auth, handle_auth_error\nbp=func.Blueprint()\n@bp.route(route="auth/me",methods=["GET"],auth_level=func.AuthLevel.FUNCTION)\ndef auth_me(req: func.HttpRequest):\n    try:\n        p=require_auth(req); return func.HttpResponse(json.dumps({"id":p["userId"],"loginId":p.get("userDetails",""),"name":p.get("userDetails",""),"email":"","roles":p["roles"]}),mimetype="application/json")\n    except Exception as e:\n        return handle_auth_error(e) or func.HttpResponse('{"error":"Authentication failed"}',status_code=500,mimetype="application/json")\n`; }
 export function generateSwaAuthHelperPython(): string {
   return `import base64

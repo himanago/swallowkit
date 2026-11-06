@@ -135,8 +135,7 @@ The existing auth plan/apply workflow supports `swa`, `external-token`,
 Next.js proxy or API route files.
 
 - SWA authentication forwards the platform-injected, normalized principal.
-- External-token forwards a bearer token; implement the generated verifier and
-  client adapter before expecting successful authentication.
+- External-token uses `x-swallowkit-external-token` on the managed SWA hop. Implement the client adapter and standalone verifier.
 - Custom JWT login stores the token in an HttpOnly, SameSite cookie (Secure in
   production); the BFF converts it to a bearer token for backend verification.
 - Credentials remain request-local. Backend Functions enforce model policies
