@@ -16,6 +16,8 @@ export type SchemaParserMode = "static-ast" | "dynamic";
 
 export interface ModelParserOptions {
   executeNode?: typeof execFileSync;
+  schemaName?: string;
+  modelName?: string;
 }
 
 export interface ModelInfo {
@@ -98,11 +100,12 @@ async function parseModelFileInternal(
   }
 
   const resolvedModelPath = path.resolve(modelPath);
-  if (dependencyStack.has(resolvedModelPath)) {
+  const dependencyKey = `${resolvedModelPath}#${options.schemaName ?? ""}`;
+  if (dependencyStack.has(dependencyKey)) {
     throw new Error(`Circular model schema dependency detected: ${modelPath}`);
   }
   const nextDependencyStack = new Set(dependencyStack);
-  nextDependencyStack.add(resolvedModelPath);
+  nextDependencyStack.add(dependencyKey);
   const activeSession = getActiveFileSession();
   const projectRelativePath = activeSession && path.relative(activeSession.rootDirectory, resolvedModelPath);
   if (
@@ -116,8 +119,8 @@ async function parseModelFileInternal(
 
   const content = fs.readFileSync(modelPath, "utf-8");
   const fileName = path.basename(modelPath, ".ts");
-  const modelName = toPascalCase(fileName);
-  const schemaName = resolveModelSchemaName(modelPath, content, modelName);
+  const modelName = options.modelName ?? toPascalCase(fileName);
+  const schemaName = options.schemaName ?? resolveModelSchemaName(modelPath, content, modelName);
   
   // displayName を抽出（例: export const displayName = 'Task'）
   const displayNameMatch = content.match(/export\s+const\s+displayName\s*=\s*['"]([^'"]+)['"]/);  
@@ -136,6 +139,12 @@ async function parseModelFileInternal(
   const nestedSchemaRefs = detectNestedSchemaRefs(modelPath, content, schemaName);
   
   // フィールド情報を抽出（動的インポートを使用）
+  for (const reference of nestedSchemaRefs) {
+    const dependencyPath = resolveModelImportPath(modelPath, reference.importPath);
+    if (dependencyPath && !nextDependencyStack.has(`${dependencyPath}#${reference.schemaName}`)) {
+      await parseModelFileInternal(dependencyPath, { ...options, schemaName: reference.schemaName, modelName: reference.modelName }, nextDependencyStack);
+    }
+  }
   const parsedSchema = await extractFieldsFromSchema(modelPath, schemaName, options.executeNode ?? execFileSync);
   const fields = parsedSchema.fields;
   const parserWarnings = [...parsedSchema.warnings];
@@ -180,12 +189,6 @@ async function parseModelFileInternal(
     semanticFingerprint: "",
   };
   modelInfo.semanticFingerprint = createModelSemanticFingerprint(modelInfo);
-  for (const reference of nestedSchemaRefs) {
-    const dependencyPath = resolveModelImportPath(modelPath, reference.importPath);
-    if (dependencyPath && !nextDependencyStack.has(dependencyPath)) {
-      await parseModelFileInternal(dependencyPath, options, nextDependencyStack);
-    }
-  }
   return modelInfo;
 }
 
@@ -258,118 +261,75 @@ function detectNestedSchemaRefs(
   content: string,
   schemaName: string
 ): NestedSchemaRef[] {
-  const refs: NestedSchemaRef[] = [];
-  
-  // 1. import文を解析して外部スキーマ変数を収集
-  //    パターン: import { categorySchema } from './category'
-  //             import { tagSchema, Tag } from './tag'
-  const importMap = new Map<string, string>(); // schemaVarName -> importPath
-  const importRegex = /import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g;
-  let importMatch;
-  while ((importMatch = importRegex.exec(content)) !== null) {
-    const imports = importMatch[1].split(',').map(s => s.trim());
-    const importPath = importMatch[2];
-    for (const imp of imports) {
-      // 'as' エイリアスに対応
-      const name = imp.split(/\s+as\s+/).pop()!.trim();
-      if (name.endsWith('Schema')) {
-        importMap.set(name, importPath);
-      } else {
-        // Zod公式パターン: インポート先ファイルで z.object として定義されているか確認
-        const targetPath = resolveModelImportPath(modelPath, importPath);
-        if (targetPath) {
-          const targetContent = fs.readFileSync(targetPath, 'utf-8');
-          const isZodSchema = new RegExp(`(?:export\\s+)?const\\s+${name}\\s*=\\s*z\\.object\\s*\\(`).test(targetContent);
-          if (isZodSchema) {
-            importMap.set(name, importPath);
-          }
-        }
-      }
-    }
-  }
-  
-  if (importMap.size === 0) {
-    return refs;
-  }
-  
-  // 2. z.object({ ... }) の中身を取得
-  const objectContent = extractObjectContent(content, schemaName);
-  if (!objectContent) {
-    return refs;
-  }
-  
-  // 3. 各フィールドでインポートしたスキーマ変数が使われているか検出
-  for (const [schemaVarName, importPath] of importMap) {
-    const dependencyPath = resolveModelImportPath(modelPath, importPath);
-    const sourceHash = dependencyPath ? hashContent(fs.readFileSync(dependencyPath, "utf-8")) : undefined;
-    if (dependencyPath) getActiveFileSession()?.registerInput(dependencyPath);
-    // スキーマ名からモデル名を推定: categorySchema -> Category
-    const modelName = schemaVarName.replace(/Schema$/, '');
-    const pascalModelName = modelName.charAt(0).toUpperCase() + modelName.slice(1);
-    
-    // フィールド定義内でこのスキーマが使われているパターンを検出
-    // パターン1: fieldName: schemaVarName
-    // パターン2: fieldName: schemaVarName.optional()
-    // パターン3: fieldName: z.array(schemaVarName)
-    // パターン4: fieldName: z.array(schemaVarName).optional()
-    const patterns = [
-      // 単一オブジェクト参照
-      new RegExp(`(\\w+)\\s*:\\s*${schemaVarName}(?:\\.optional\\(\\))?`, 'g'),
-      // 配列参照
-      new RegExp(`(\\w+)\\s*:\\s*z\\.array\\(\\s*${schemaVarName}\\s*\\)(?:\\.optional\\(\\))?`, 'g'),
-    ];
-    
-    for (let patIdx = 0; patIdx < patterns.length; patIdx++) {
-      const pattern = patterns[patIdx];
-      let fieldMatch;
-      while ((fieldMatch = pattern.exec(objectContent)) !== null) {
-        const fieldName = fieldMatch[1];
-        const fullMatch = fieldMatch[0];
-        const isArray = patIdx === 1;
-        const isOptional = fullMatch.includes('.optional()');
-        
-        // 参照先スキーマの表示用フィールドを推定
-        const displayField = detectDisplayField(modelPath, importPath);
-        
-        refs.push({
-          fieldName,
-          schemaName: schemaVarName,
-          modelName: pascalModelName,
-          importPath,
-          isArray,
-          isOptional,
-          displayField,
-          ...(sourceHash ? { sourceHash } : {}),
+  const source = ts.createSourceFile(modelPath, content, ts.ScriptTarget.Latest, true);
+  const imports = new Map<string, { schemaName: string; importPath: string }>();
+  let shape: ts.ObjectLiteralExpression | undefined;
+  for (const statement of source.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier) &&
+        statement.moduleSpecifier.text.startsWith(".") && statement.importClause?.namedBindings &&
+        ts.isNamedImports(statement.importClause.namedBindings)) {
+      for (const element of statement.importClause.namedBindings.elements) {
+        imports.set(element.name.text, {
+          schemaName: element.propertyName?.text ?? element.name.text,
+          importPath: statement.moduleSpecifier.text,
         });
       }
     }
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === schemaName && declaration.initializer &&
+          ts.isCallExpression(declaration.initializer) && declaration.initializer.arguments[0] &&
+          ts.isObjectLiteralExpression(declaration.initializer.arguments[0])) shape = declaration.initializer.arguments[0];
+    }
   }
-  
+  const refs: NestedSchemaRef[] = [];
+  // Inspect only immediate properties. Walking descendants here promotes embedded fields to the root.
+  for (const property of shape?.properties ?? []) {
+    if (!ts.isPropertyAssignment(property) ||
+        !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) continue;
+    let expression = property.initializer;
+    let isArray = false;
+    let isOptional = false;
+    while (ts.isCallExpression(expression) && ts.isPropertyAccessExpression(expression.expression)) {
+      const method = expression.expression.name.text;
+      const receiver = expression.expression.expression;
+      if (method === "array" && ts.isIdentifier(receiver) &&
+          receiver.text === "z" && expression.arguments[0]) {
+        isArray = true;
+        expression = expression.arguments[0];
+      } else if (method === "array" && expression.arguments.length === 0) {
+        isArray = true;
+        expression = receiver;
+      } else if (["optional", "nullable", "nullish", "default", "describe", "min", "max", "length", "nonempty", "readonly", "brand", "refine", "superRefine", "catch"].includes(method)) {
+        if (["optional", "nullish", "default"].includes(method)) isOptional = true;
+        expression = receiver;
+      } else break;
+    }
+    if (!ts.isIdentifier(expression)) continue;
+    const imported = imports.get(expression.text);
+    if (!imported) continue;
+    const dependencyPath = resolveModelImportPath(modelPath, imported.importPath);
+    if (!dependencyPath) continue;
+    const dependencySource = ts.createSourceFile(dependencyPath, fs.readFileSync(dependencyPath, "utf-8"), ts.ScriptTarget.Latest, true);
+    const declaration = dependencySource.statements.filter(ts.isVariableStatement)
+      .flatMap(statement => statement.declarationList.declarations)
+      .find(candidate => ts.isIdentifier(candidate.name) && candidate.name.text === imported.schemaName);
+    if (!declaration?.initializer || !ts.isCallExpression(declaration.initializer) ||
+        !ts.isPropertyAccessExpression(declaration.initializer.expression) ||
+        declaration.initializer.expression.name.text !== "object") continue;
+    getActiveFileSession()?.registerInput(dependencyPath);
+    refs.push({
+      fieldName: property.name.text,
+      schemaName: imported.schemaName,
+      modelName: toPascalCase(imported.schemaName.replace(/Schema$/, "")),
+      importPath: imported.importPath,
+      isArray,
+      isOptional,
+      displayField: detectDisplayField(modelPath, imported.importPath),
+      sourceHash: hashContent(fs.readFileSync(dependencyPath, "utf-8")),
+    });
+  }
   return refs;
-}
-
-/**
- * z.object({ ... }) の内容部分を抽出
- */
-function extractObjectContent(content: string, schemaName: string): string | null {
-  const objectRegex = new RegExp(`${schemaName}\\s*=\\s*z\\.object\\(\\{`, "s");
-  const objectStart = content.search(objectRegex);
-  
-  if (objectStart === -1) {
-    return null;
-  }
-  
-  const braceStart = content.indexOf('{', objectStart);
-  let braceCount = 1;
-  let objectEnd = braceStart + 1;
-  
-  while (braceCount > 0 && objectEnd < content.length) {
-    if (content[objectEnd] === '{') braceCount++;
-    if (content[objectEnd] === '}') braceCount--;
-    objectEnd++;
-  }
-  
-  return content.substring(braceStart + 1, objectEnd - 1);
 }
 
 /**
@@ -423,24 +383,13 @@ function mergeNestedSchemaInfo(fields: FieldInfo[], nestedRefs: NestedSchemaRef[
       field.nestedModelName = ref.modelName;
       field.nestedDisplayField = ref.displayField;
       // object/array 型のままにする（動的解析が 'object' を返す）
-    } else {
-      // 動的解析で検出されなかったフィールドを追加
-      fields.push({
-        name: ref.fieldName,
-        type: ref.isArray ? 'array' : 'object',
-        isOptional: ref.isOptional,
-        isArray: ref.isArray,
-        isNestedSchema: true,
-        nestedSchemaName: ref.schemaName,
-        nestedModelName: ref.modelName,
-        nestedDisplayField: ref.displayField,
-      });
     }
   }
 }
 
 function compileModelModule(modelPath: string, directory: string, modules = new Map<string, string>()): string {
   const sourcePath = path.resolve(modelPath);
+  getActiveFileSession()?.registerInput(sourcePath);
   const existing = modules.get(sourcePath);
   if (existing) return existing;
   const outputPath = path.join(directory, `model-${modules.size}.mjs`);
@@ -490,10 +439,13 @@ const STRING_FORMATS: Record<string, FieldFormat> = {
   time: "time",
 };
 
-function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] | null {
+function staticParseFields(modelPath: string, schemaName: string, stack = new Set<string>()): FieldInfo[] | null {
+  const key = `${path.resolve(modelPath)}#${schemaName}`;
+  if (stack.has(key)) return null;
+  const nextStack = new Set(stack).add(key);
   const source = ts.createSourceFile(modelPath, fs.readFileSync(modelPath, "utf-8"), ts.ScriptTarget.Latest, true);
   const constants = new Map<string, ts.Expression>();
-  const importedObjectSchemas = new Map<string, boolean>();
+  const importedObjectSchemas = new Map<string, FieldInfo[]>();
   const objectHasId = (expression: ts.Expression | undefined): boolean | undefined => {
     if (!expression || !ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression) ||
         expression.expression.name.text !== "object" || !expression.arguments[0] ||
@@ -528,7 +480,9 @@ function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] |
             .find((candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === importedName);
           const hasId = declaration && objectHasId(declaration.initializer);
           if (hasId !== undefined) {
-            importedObjectSchemas.set(element.name.text, hasId);
+            getActiveFileSession()?.registerInput(targetPath);
+            const importedFields = staticParseFields(targetPath, importedName, nextStack);
+            if (importedFields) importedObjectSchemas.set(element.name.text, importedFields);
           }
         }
       }
@@ -701,7 +655,8 @@ function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] |
             isOptional: false,
             isNullable: false,
             isArray: false,
-            ...(!importedObjectSchemas.get(expression.text) ? { isNestedSchema: false } : {}),
+            objectFields: importedObjectSchemas.get(expression.text),
+            ...(!importedObjectSchemas.get(expression.text)!.some(field => field.name === "id") ? { isNestedSchema: false } : {}),
           }
         : null;
     }
@@ -725,12 +680,12 @@ function staticParseFields(modelPath: string, schemaName: string): FieldInfo[] |
     if (method === "object") {
       const literal = expression.arguments[0];
       if (!literal || !ts.isObjectLiteralExpression(literal)) return null;
-      // Unsupported members keep the previous untyped-object behavior instead of failing the whole model.
+      // Fall back to runtime evaluation if a child expression is not statically supported.
       const objectFields = parseObjectFields(literal);
       const hasId = objectHasId(expression);
       return objectFields
         ? base("object", { objectFields, ...(hasId === false ? { isNestedSchema: false } : {}) })
-        : base("object", hasId === false ? { isNestedSchema: false } : {});
+        : null;
     }
     if (method === "array" && expression.arguments[0]) {
       const element = parseExpression(expression.arguments[0]);
@@ -1383,4 +1338,9 @@ export async function getAllModels(modelsDir: string = "shared/models"): Promise
   }
 
   return models.filter((model) => entities.has(path.resolve(model.filePath)));
+}
+
+/** The existing camelCase CRUD route, shared by producers and clients. UI page slugs are independent. */
+export function getModelApiRoute(modelName: string): string {
+  return toCamelCase(modelName);
 }

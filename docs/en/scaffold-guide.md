@@ -1072,6 +1072,29 @@ The partition key field **must** exist in the Zod schema. When `scaffold` detect
 
 If `partitionKey` is not exported, the default `/id` is used — **existing projects work without any changes**.
 
+## Nested contracts and reference URLs
+
+Inline objects and local `z.object()` constants preserve the same hierarchy, including imported
+schemas, optional/nullable objects, and object arrays. Embedded fields stay under their parent;
+they do not become root fields or separate entity selectors. Forms edit embedded objects as JSON.
+OpenAPI and the generated C#/Python classes retain the child fields. Imports select the named
+export, so a contracts file may contain several schemas with names different from its filename.
+
+Reference selectors use the same API route resolver as the BFF and all three backend generators.
+For example, `GrammarTopic` uses `/api/grammarTopic`; its UI page remains `/grammar-topic`.
+Existing API URLs and the referenced model's authorization policy are preserved.
+
+To regenerate an existing project, plan and apply the referenced model first, then the referencing
+model. Review each plan through the normal ownership/conflict workflow. Regeneration updates
+affected managed forms, OpenAPI documents and native model files, and may add classes for embedded
+objects. Unchanged routes remain unchanged; generated-once files and user edits retain their
+existing protection. An imported contracts file is still a plan input: changing it requires a new plan.
+
+After regeneration, the local-constant workaround can be kept or replaced with the equivalent
+inline object. A `/api/grammar-topic` to `/api/grammarTopic` application rewrite can be removed once
+the regenerated form is in use and no other client depends on that alias. Old unused native files
+are not automatically deleted by this fix. No generated files need hand editing.
+
 ## Next Steps
 
 - Learn about [Connector Guide](./connector-guide.md) - Integrate external data sources with the same Zod workflow

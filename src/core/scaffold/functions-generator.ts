@@ -4,7 +4,7 @@
  * インラインハンドラー方式（ファクトリー不使用）
  */
 
-import { ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
+import { getModelApiRoute, ModelInfo, toKebabCase } from "./model-parser";
 import { AuthProvider, ModelAuthPolicy } from "../../types";
 import { generateAuthImportTS, generateAuthGuardTS, generateAuthGuardCSharp, generateAuthGuardPython } from "./auth-generator";
 
@@ -14,7 +14,7 @@ import { generateAuthImportTS, generateAuthGuardTS, generateAuthGuardCSharp, gen
  */
 export function generateCompactAzureFunctionsCRUD(model: ModelInfo, sharedPackageName: string, authPolicy?: ModelAuthPolicy, authProvider?: AuthProvider): string {
   const modelName = model.name;
-  const modelCamel = toCamelCase(modelName);
+  const modelCamel = getModelApiRoute(modelName);
   const schemaName = model.schemaName;
 
   const partitionKeyPath = model.partitionKey; // e.g. "/tenantId"
@@ -418,7 +418,7 @@ ${authCatchBlock}      context.error(\`Error deleting item from \${containerName
 
 export function generateCSharpAzureFunctionsCRUD(model: ModelInfo, authPolicy?: ModelAuthPolicy): string {
   const modelName = model.name;
-  const modelCamel = toCamelCase(modelName);
+  const modelCamel = getModelApiRoute(modelName);
   const className = `${modelName}CrudFunctions`;
   const containerName = modelName.endsWith('s') ? modelName : `${modelName}s`;
 
@@ -771,7 +771,7 @@ export function generatePythonAzureFunctionsCRUD(model: ModelInfo, authPolicy?: 
   registration: string;
 } {
   const modelName = model.name;
-  const modelCamel = toCamelCase(modelName);
+  const modelCamel = getModelApiRoute(modelName);
   const modelSnake = toKebabCase(modelName).replace(/-/g, "_");
   const containerName = modelName.endsWith('s') ? modelName : `${modelName}s`;
 

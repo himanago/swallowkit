@@ -1,7 +1,7 @@
 import { AuthConfig } from "../../types";
 import { generateSafeBackendError, SWA_EXTERNAL_TOKEN_HEADER } from "./auth-transport-generator";
 import { normalizeAuthConfig } from "../config";
-import { ModelInfo, toCamelCase } from "./model-parser";
+import { getModelApiRoute, ModelInfo } from "./model-parser";
 
 export function generateManagedFunctionConfig(
   route: string,
@@ -181,7 +181,7 @@ export function generateReactBffRoute(
   model: ModelInfo,
   sharedPackageName: string
 ): string {
-  const modelCamel = toCamelCase(model.name);
+  const modelCamel = getModelApiRoute(model.name);
   const operations = new Set(
     model.connectorConfig?.operations ?? [
       "getAll",

@@ -1,6 +1,5 @@
 import { spawnSync } from "child_process";
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
 import * as z from "zod/v4";
 import { FileOperationSession } from "../core/operations/file-session";
@@ -17,6 +16,8 @@ export const ProbeItem = z.object({
   tags: z.array(z.string().min(2)).max(3),
   score: z.number().min(0).max(1),
   count: z.number().int().nonnegative(),
+  checked: z.boolean().optional(),
+  event: z.string().optional(),
   kind: z.enum(['a', 'b']),
   nested: z.object({ x: z.string(), depth: z.object({ level: z.number().int() }).optional() }).optional(),
   publishedAt: z.iso.datetime().optional(),
@@ -42,6 +43,8 @@ const ProbeItem = z.object({
   tags: z.array(z.string().min(2)).max(3),
   score: z.number().min(0).max(1),
   count: z.number().int().nonnegative(),
+  checked: z.boolean().optional(),
+  event: z.string().optional(),
   kind: z.enum(["a", "b"]),
   nested: z.object({ x: z.string(), depth: z.object({ level: z.number().int() }).optional() }).optional(),
   publishedAt: z.iso.datetime().optional(),
@@ -63,6 +66,8 @@ const VALID_INPUTS = [
     tags: ["aa", "bb"],
     score: 0.25,
     count: 3,
+    checked: true,
+    event: "existing event value",
     kind: "b",
     nested: { x: "value", depth: { level: 2 } },
     publishedAt: "2024-05-06T07:08:09.123Z",
@@ -92,7 +97,7 @@ const INVALID_INPUTS: Array<{ input: Record<string, unknown>; members: string[] 
 ];
 
 function createModel(): { root: string; modelPath: string } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-csharp-schema-"));
+  const root = fs.mkdtempSync(path.join(process.cwd(), ".tmp-csharp-schema-"));
   const modelPath = path.join(root, "shared", "models", "probe-item.ts");
   fs.mkdirSync(path.dirname(modelPath), { recursive: true });
   fs.writeFileSync(modelPath, MODEL_SOURCE);

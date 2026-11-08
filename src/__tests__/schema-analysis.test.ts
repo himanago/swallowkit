@@ -207,7 +207,7 @@ describe("Python schema assets", () => {
     expect(source).toContain("count: StrictInt");
     expect(source).toContain("nested: Optional[ProbeItemNested] = Field(default=None)");
     expect(source).toContain('re.search("^a\\\\d$", item, re.IGNORECASE)');
-    expect(source).toContain("return self.model_dump_json(by_alias=True, exclude_none=True)");
+    expect(source).toContain("return self.model_dump_json(by_alias=True, exclude_unset=True)");
     expect(fs.readFileSync(path.join(modelsDir, "probe_item_nested.py"), "utf8")).toContain("class ProbeItemNested(BaseModel):");
   });
 });
@@ -260,10 +260,59 @@ describe("Python regex translation", () => {
   });
 });
 
-const pydanticPython = ["python", "python3"].find((command) => spawnSync(command, ["-c", "import pydantic"], { stdio: "ignore" }).status === 0);
+const pydanticPython = [process.env.SWALLOWKIT_TEST_PYTHON, "python", "python3"]
+  .filter((command): command is string => Boolean(command))
+  .find((command) => spawnSync(command, ["-c", "import pydantic"], { stdio: "ignore" }).status === 0);
 const itWithPydantic = pydanticPython ? it : it.skip;
 
 describe("generated Python model runtime", () => {
+  itWithPydantic("preserves scalar values, aliases and optional field updates through existing conversion methods", async () => {
+    const root = fs.mkdtempSync(path.join(process.cwd(), ".tmp-python-compat-"));
+    const originalCwd = process.cwd();
+    try {
+      const file = path.join(root, "shared/models/existing-record.ts");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, model("existing-record", `
+  displayName: z.string(), enabled: z.boolean(), count: z.number().int(), score: z.number(),
+  state: z.enum(['draft', 'active']), tags: z.array(z.string()), createdAt: z.string().optional(),
+  note: z.string().nullable(), optionalCount: z.number().optional(),`));
+      const info = await parseModelFile(file);
+      process.chdir(root);
+      await generateLanguageSchemaArtifacts([info], info, "functions", "python", new FileOperationSession("commit", root));
+      process.chdir(originalCwd);
+      const script = `import sys, json
+sys.path.insert(0, 'generated/python-models')
+from backend_models.models.existing_record import ExistingRecord
+from pydantic import ValidationError
+base = {'id': '1', 'displayName': 'Existing', 'enabled': False, 'count': 0, 'score': 1.25, 'state': 'draft', 'tags': [], 'note': None}
+full = {**base, 'enabled': True, 'tags': ['one', 'two'], 'createdAt': 'arbitrary existing string', 'optionalCount': 0, 'note': 'text'}
+for value in [base, full]:
+    record = ExistingRecord.from_dict(value)
+    assert record.to_dict() == value
+    assert json.loads(record.to_json()) == value
+    assert ExistingRecord.from_json(record.to_json()).to_dict() == value
+    snake = {**value, 'display_name': value['displayName']}
+    del snake['displayName']
+    assert ExistingRecord.from_dict(snake).to_dict() == value
+record = ExistingRecord.from_dict(base)
+record.optional_count = 5
+assert record.to_dict() == {**base, 'optionalCount': 5}
+for invalid in [{key: value for key, value in base.items() if key != 'note'}, {**base, 'optionalCount': None}, {**base, 'enabled': 'false'}, {**base, 'count': 1.5}, {**base, 'state': 'unknown'}, {**base, 'tags': [1]}]:
+    try:
+        ExistingRecord.from_dict(invalid)
+    except ValidationError:
+        continue
+    raise AssertionError('accepted invalid existing data: ' + repr(invalid))
+print('ok')`;
+      const run = spawnSync(pydanticPython!, ["-c", script], { cwd: path.join(root, "functions"), encoding: "utf8" });
+      if (run.status !== 0) throw new Error(`${run.stdout}\n${run.stderr}`);
+      expect(run.stdout.trim()).toBe("ok");
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 60000);
+
   itWithPydantic("accepts valid regex and timestamp values and rejects invalid ones", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "swallowkit-python-runtime-"));
     const originalCwd = process.cwd();

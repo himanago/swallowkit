@@ -3,7 +3,7 @@
  * CRUD 画面（一覧、詳細、新規作成、編集）を生成する
  */
 
-import { FieldInfo, ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
+import { getModelApiRoute, FieldInfo, ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
 import { ModelAuthPolicy } from "../../types";
 
 /** auth が有効かつ authPolicy が存在する場合に渡されるオプション */
@@ -56,7 +56,7 @@ export default function ${model.name}Layout({
  */
 export function generateListPage(model: ModelInfo, sharedPackageName: string, authOptions?: UIAuthOptions): string {
   const modelName = model.name;
-  const modelCamel = toCamelCase(modelName);
+  const modelCamel = getModelApiRoute(modelName);
   const modelKebab = toKebabCase(modelName);
   
   const hasAuth = !!authOptions;
@@ -76,14 +76,14 @@ export function generateListPage(model: ModelInfo, sharedPackageName: string, au
   // 外部キー用のstate定義を生成
   const foreignKeyStates = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
-    const refModelCamel = toCamelCase(refModel);
+    const refModelCamel = getModelApiRoute(refModel);
     return `  const [${refModelCamel}Map, set${refModel}Map] = useState<Record<string, string>>({});`;
   }).join('\n');
   
   // 外部キーデータのフェッチロジックを生成
   const foreignKeyFetches = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
-    const refModelCamel = toCamelCase(refModel);
+    const refModelCamel = getModelApiRoute(refModel);
     return `    fetch('/api/${refModelCamel}')
       .then(res => res.json())
       .then((data: Array<{ id: string; name?: string; title?: string }>) => {
@@ -240,7 +240,7 @@ ${displayFields.map(f => {
     }
   } else if (f.isForeignKey && f.referencedModel) {
     const refModel = f.referencedModel;
-    const refModelCamel = toCamelCase(refModel);
+    const refModelCamel = getModelApiRoute(refModel);
     if (f.isOptional || f.isNullable) {
       return `                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
                     {item.${f.name} ? ${refModelCamel}Map[item.${f.name}] || item.${f.name} : '-'}
@@ -311,7 +311,7 @@ ${hasAuth ? `                    {canWrite && (
  */
 export function generateDetailPage(model: ModelInfo, sharedPackageName: string, authOptions?: UIAuthOptions): string {
   const modelName = model.name;
-  const modelCamel = toCamelCase(modelName);
+  const modelCamel = getModelApiRoute(modelName);
   const modelKebab = toKebabCase(modelName);
   
   const hasAuth = !!authOptions;
@@ -326,14 +326,14 @@ export function generateDetailPage(model: ModelInfo, sharedPackageName: string, 
   // 外部キー用のstate定義を生成
   const foreignKeyStates = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
-    const refModelCamel = toCamelCase(refModel);
+    const refModelCamel = getModelApiRoute(refModel);
     return `  const [${refModelCamel}Map, set${refModel}Map] = useState<Record<string, string>>({});`;
   }).join('\n');
   
   // 外部キーデータのフェッチロジックを生成
   const foreignKeyFetches = uniqueByReferencedModel(foreignKeyFields).map(f => {
     const refModel = f.referencedModel!;
-    const refModelCamel = toCamelCase(refModel);
+    const refModelCamel = getModelApiRoute(refModel);
     return `    fetch('/api/${refModelCamel}')
       .then(res => res.json())
       .then((data: Array<{ id: string; name?: string; title?: string }>) => {
@@ -484,7 +484,7 @@ ${model.fields.map(f => {
     }
   } else if (f.isForeignKey && f.referencedModel) {
     const refModel = f.referencedModel;
-    const refModelCamel = toCamelCase(refModel);
+    const refModelCamel = getModelApiRoute(refModel);
     if (f.isOptional || f.isNullable) {
       return `            <div>
               <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">${refModel}</dt>
@@ -530,8 +530,11 @@ ${model.fields.map(f => {
  */
 export function generateFormComponent(model: ModelInfo, sharedPackageName: string): string {
   const modelName = model.name;
-  const modelCamel = toCamelCase(modelName);
+  const modelCamel = getModelApiRoute(modelName);
   const schemaName = model.schemaName;
+  const managedFields = model.fields
+    .filter(field => ['id', 'createdAt', 'updatedAt'].includes(field.name))
+    .map(field => `${field.name}: true`).join(', ');
   // Zod公式パターン対応: schemaNameとmodelNameが同じ場合はimportエイリアスで名前衝突を回避
   const needsAlias = schemaName === modelName;
   const localSchemaName = needsAlias ? `${toCamelCase(modelName)}Schema` : schemaName;
@@ -558,14 +561,14 @@ export function generateFormComponent(model: ModelInfo, sharedPackageName: strin
   
   // ネストスキーマ用のstate定義を生成
   const nestedSchemaStates = nestedSchemaFields.map(f => {
-    const refModelCamel = toCamelCase(f.nestedModelName!);
+    const refModelCamel = getModelApiRoute(f.nestedModelName!);
     const refModelPascal = f.nestedModelName!;
     return `  const [${refModelCamel}Options, set${refModelPascal}Options] = useState<Array<{ id: string; name: string }>>([]);`;
   }).join('\n');
   
   // ネストスキーマデータのフェッチロジック
   const nestedSchemaFetches = nestedSchemaFields.map(f => {
-    const refModelCamel = toCamelCase(f.nestedModelName!);
+    const refModelCamel = getModelApiRoute(f.nestedModelName!);
     const refModelPascal = f.nestedModelName!;
     const displayField = f.nestedDisplayField || 'name';
     return `    // ${refModelPascal} の一覧を取得
@@ -584,7 +587,7 @@ ${schemaImportLine}
 
 // Input schema: SwallowKit-managed fields (id, createdAt, updatedAt) are optional
 // These fields are ignored by the backend and auto-managed
-const ${modelName}InputSchema = ${localSchemaName}.partial({ id: true, createdAt: true, updatedAt: true });
+const ${modelName}InputSchema = ${localSchemaName}.partial({ ${managedFields} });
 
 type ${modelName} = z.infer<typeof ${localSchemaName}>;
 
@@ -642,7 +645,7 @@ ${needsUseEffect ? `
   // 参照データの選択肢を取得
   useEffect(() => {
 ${hasForignKeys ? uniqueByReferencedModel(foreignKeyFields).map(f => `    // ${f.referencedModel} の一覧を取得
-    fetch('/api/${toKebabCase(f.referencedModel!)}')
+    fetch('/api/${getModelApiRoute(f.referencedModel!)}')
       .then(res => res.json())
       .then(data => set${f.referencedModel}Options(data.map((item: Record<string, string>) => ({ id: item.id, name: item.name || item.title || item.id }))))
       .catch(err => console.error('Failed to load ${f.referencedModel} options:', err));`).join('\n') : ''}
@@ -687,7 +690,7 @@ ${formFields.filter(f => f.type === 'number').map(f => `      if (submitData.${f
 ${hasNestedSchemas ? `
       // ネストスキーマ参照をIDからオブジェクトに変換
 ${nestedSchemaFields.map(f => {
-  const refModelCamel = toCamelCase(f.nestedModelName!);
+  const refModelCamel = getModelApiRoute(f.nestedModelName!);
   const refModelPascal = f.nestedModelName!;
   if (f.isArray) {
     return `      // ${refModelPascal} 配列参照の変換
@@ -1075,7 +1078,7 @@ ${hasWriteRoles ? `  const { hasAnyRole, loading } = useAuth();
  */
 export function generateEditPage(model: ModelInfo, sharedPackageName: string, authOptions?: UIAuthOptions): string {
   const modelName = model.name;
-  const modelCamel = toCamelCase(modelName);
+  const modelCamel = getModelApiRoute(modelName);
   const modelKebab = toKebabCase(modelName);
   
   const hasAuth = !!authOptions;

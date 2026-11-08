@@ -433,15 +433,16 @@ function buildCSharpValidationBody(model: ModelInfo): string {
 function generateLegacyCompatibleCSharpModelSource(model: ModelInfo): string {
   const requiredFields = model.fields.filter((field) => !field.isOptional);
   const optionalFields = model.fields.filter((field) => field.isOptional);
+  const parameterName = (name: string) => CSHARP_RESERVED_IDENTIFIERS.has(name) ? `@${name}` : name;
 
   const constructorParams = [
-    ...requiredFields.map((field) => `${getCSharpPropertyType(field)} ${field.name}`),
-    ...optionalFields.map((field) => `${getCSharpOptionType(field)} ${field.name} = default`),
+    ...requiredFields.map((field) => `${getCSharpPropertyType(field)} ${parameterName(field.name)}`),
+    ...optionalFields.map((field) => `${getCSharpOptionType(field)} ${parameterName(field.name)} = default`),
   ].join(", ");
 
   const constructorAssignments = [
-    ...requiredFields.map((field) => `            ${toPascalIdentifier(field.name)} = ${field.name};`),
-    ...optionalFields.map((field) => `            ${toPascalIdentifier(field.name)}Option = ${field.name};`),
+    ...requiredFields.map((field) => `            ${toPascalIdentifier(field.name)} = ${parameterName(field.name)};`),
+    ...optionalFields.map((field) => `            ${toPascalIdentifier(field.name)}Option = ${parameterName(field.name)};`),
     "            OnCreated();",
   ].join("\n");
 
@@ -652,7 +653,7 @@ function getPythonTypeName(field: ModelInfo["fields"][number]): string {
 
 function buildPythonFieldDeclaration(field: ModelInfo["fields"][number]): string {
   const pythonName = toSnakeCase(field.name);
-  const typeName = field.isOptional ? `Optional[${getPythonTypeName(field)}]` : getPythonTypeName(field);
+  const typeName = field.isOptional || field.isNullable ? `Optional[${getPythonTypeName(field)}]` : getPythonTypeName(field);
   const fieldArgs = [
     ...(field.isOptional ? ["default=None"] : []),
     ...(pythonName !== field.name ? [`alias="${field.name}"`] : []),
@@ -779,10 +780,13 @@ function buildPythonModelImports(model: ModelInfo): string {
 function generateLegacyCompatiblePythonModelSource(model: ModelInfo): string {
   const fieldDeclarations = model.fields.map((field) => `    ${buildPythonFieldDeclaration(field)}`).join("\n");
   const propertyNames = model.fields.map((field) => `"${field.name}"`).join(", ");
-  const validators = [buildPythonEnumValidators(model), buildPythonPatternValidators(model)].filter(Boolean).join("\n\n");
-  const dictAssignments = model.fields
-    .map((field) => `            "${field.name}": obj.get("${field.name}")`)
-    .join(",\n");
+  const nonNullableOptional = model.fields.filter(field => field.isOptional && !field.isNullable);
+  const optionalValidator = nonNullableOptional.length === 0 ? "" : `    @field_validator(${nonNullableOptional.map(field => JSON.stringify(toSnakeCase(field.name))).join(", ")}, mode='before')
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("Field may be omitted but must not be null")
+        return value`;
+  const validators = [optionalValidator, buildPythonEnumValidators(model), buildPythonPatternValidators(model)].filter(Boolean).join("\n\n");
 
   return `# coding: utf-8
 
@@ -829,7 +833,7 @@ ${validators ? `\n\n${validators}` : ""}
 
     def to_json(self) -> str:
         """Returns the JSON representation of the model using alias"""
-        return self.model_dump_json(by_alias=True, exclude_none=True)
+        return self.model_dump_json(by_alias=True, exclude_unset=True)
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
@@ -844,7 +848,7 @@ ${validators ? `\n\n${validators}` : ""}
         _dict = self.model_dump(
             by_alias=True,
             exclude=excluded_fields,
-            exclude_none=True,
+            exclude_unset=True,
         )
         return _dict
 
@@ -857,10 +861,7 @@ ${validators ? `\n\n${validators}` : ""}
         if not isinstance(obj, dict):
             return cls.model_validate(obj)
 
-        _obj = cls.model_validate({
-${dictAssignments}
-        })
-        return _obj
+        return cls.model_validate(obj)
 
 
 `;

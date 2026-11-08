@@ -3,7 +3,7 @@
  * RDB（MySQL/PostgreSQL/SQL Server）および 外部 REST API コネクタ向けのハンドラーを生成
  */
 
-import { ModelInfo, toCamelCase, toKebabCase } from "./model-parser";
+import { getModelApiRoute, ModelInfo, toKebabCase } from "./model-parser";
 import {
   RdbConnectorConfig,
   ApiConnectorConfig,
@@ -28,7 +28,7 @@ export function generateRdbConnectorFunctionTS(
   authPolicy?: ModelAuthPolicy,
   authProvider?: AuthProvider
 ): string {
-  const modelCamel = toCamelCase(model.name);
+  const modelCamel = getModelApiRoute(model.name);
   const schemaName = model.schemaName;
   const ops = new Set(modelConnector.operations);
   const table = modelConnector.table;
@@ -196,7 +196,7 @@ export function generateApiConnectorFunctionTS(
   authPolicy?: ModelAuthPolicy,
   authProvider?: AuthProvider
 ): string {
-  const modelCamel = toCamelCase(model.name);
+  const modelCamel = getModelApiRoute(model.name);
   const schemaName = model.schemaName;
   const ops = new Set(modelConnector.operations);
   const baseUrlEnv = connectorDef.baseUrlEnvVar;
@@ -467,7 +467,7 @@ export function generateRdbConnectorFunctionCSharp(
   modelConnector: RdbModelConnectorConfig
 ): string {
   const modelName = model.name;
-  const modelCamel = toCamelCase(modelName);
+  const modelCamel = getModelApiRoute(modelName);
   const className = `${modelName}ConnectorFunctions`;
   const ops = new Set(modelConnector.operations);
   const table = modelConnector.table;
@@ -607,7 +607,7 @@ export function generateApiConnectorFunctionCSharp(
   modelConnector: ApiModelConnectorConfig
 ): string {
   const modelName = model.name;
-  const modelCamel = toCamelCase(modelName);
+  const modelCamel = getModelApiRoute(modelName);
   const className = `${modelName}ConnectorFunctions`;
   const ops = new Set(modelConnector.operations);
   const baseUrlEnv = connectorDef.baseUrlEnvVar;
@@ -865,7 +865,7 @@ export function generateRdbConnectorFunctionPython(
   modelConnector: RdbModelConnectorConfig
 ): { blueprint: string; registration: string } {
   const modelName = model.name;
-  const modelCamel = toCamelCase(modelName);
+  const modelCamel = getModelApiRoute(modelName);
   const modelSnake = toKebabCase(modelName).replace(/-/g, "_");
   const ops = new Set(modelConnector.operations);
   const table = modelConnector.table;
@@ -958,7 +958,7 @@ export function generateApiConnectorFunctionPython(
   modelConnector: ApiModelConnectorConfig
 ): { blueprint: string; registration: string } {
   const modelName = model.name;
-  const modelCamel = toCamelCase(modelName);
+  const modelCamel = getModelApiRoute(modelName);
   const modelSnake = toKebabCase(modelName).replace(/-/g, "_");
   const ops = new Set(modelConnector.operations);
   const baseUrlEnv = connectorDef.baseUrlEnvVar;

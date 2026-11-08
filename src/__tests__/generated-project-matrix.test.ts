@@ -27,6 +27,7 @@ import { buildGeneratedProjectDependencies, buildGeneratedProjectDevDependencies
 import { createReactBffProject, createReactProject } from "../core/project/react-project";
 import { buildBootstrapSeedPreparationScript } from "../core/project/bootstrap";
 import { BackendLanguage, FrontendFramework } from "../types";
+import { exerciseGeneratedReferenceFlow } from "./generated-reference-flow";
 
 jest.mock("child_process", () => {
   const actual = jest.requireActual<typeof import("child_process")>("child_process");
@@ -1038,4 +1039,176 @@ Console.WriteLine(JsonSerializer.Serialize(errors.Select(error => describe.Invok
       });
     }
   });
+});
+
+describe.each([
+  ['react', 'typescript'], ['react', 'csharp'], ['react', 'python'],
+  ['nextjs', 'typescript'], ['nextjs', 'csharp'], ['nextjs', 'python'],
+] as Array<[FrontendFramework, BackendLanguage]>)('scaffold nested imports and references: %s / %s', (frontend, backend) => {
+  it('preserves existing constrained entity-array selectors and native references', async () => {
+    const previousCwd = process.cwd();
+    const directory = fs.mkdtempSync(path.join(repoRoot, '.tmp-reference-compat-'));
+    const root = path.join(directory, PROJECT);
+    const quiet = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await createSkeleton(root, frontend, backend, 'js');
+      process.chdir(root);
+      mockNativeToolchainValidation();
+      write(path.join(root, 'shared/models/grammar-topic.ts'), `import { z } from 'zod/v4';
+export const GrammarTopic = z.object({ id: z.string(), name: z.string() });`);
+      write(path.join(root, 'shared/models/reference-record.ts'), `import { z } from 'zod/v4';
+import { GrammarTopic as Topic } from './grammar-topic';
+export const ReferenceRecord = z.object({ id: z.string(), links: z.array(Topic).min(1).max(3).optional() });`);
+      fs.appendFileSync(path.join(root, 'shared/index.ts'), "\nexport * from './models/grammar-topic';\nexport * from './models/reference-record';\n");
+      for (const name of ['grammar-topic', 'reference-record']) {
+        const plan = await runMachine(['plan', 'scaffold', name, '--skip-infra']);
+        expect(plan.status).toBe('complete');
+        expect((await runMachine(['apply', 'scaffold', '--plan', plan.data.planId])).status).toBe('complete');
+      }
+      const form = fs.readFileSync(path.join(root, frontend === 'react' ? 'src/pages' : 'app', 'reference-record/_components/ReferenceRecordForm.tsx'), 'utf-8');
+      expect(form).toContain("fetch('/api/grammarTopic')");
+      expect(form).toContain('value={formData.linksIds}');
+      expect(form).not.toContain('JSON.parse(submitData.links)');
+      if (backend !== 'typescript') {
+        const document = JSON.parse(fs.readFileSync(path.join(root, 'functions/openapi/reference-record.openapi.json'), 'utf-8'));
+        expect(document.components.schemas.ReferenceRecord.properties.links)
+          .toMatchObject({ type: 'array', minItems: 1, maxItems: 3, items: { $ref: '#/components/schemas/GrammarTopic' } });
+        expect(document.components.schemas.GrammarTopic.properties).toHaveProperty('id');
+      }
+      const sharedIndex = path.join(root, 'shared/index.ts');
+      expect(typecheck(path.join(root, 'tsconfig.json'), sharedIndex)).toEqual([]);
+      if (frontend === 'react') expect(typecheck(path.join(root, 'bff/tsconfig.json'), sharedIndex, {
+        '@azure/functions': path.join(repoRoot, 'node_modules/azure-functions-v3'),
+      })).toEqual([]);
+      if (backend === 'typescript') expect(typecheck(path.join(root, 'functions/tsconfig.json'), sharedIndex)).toEqual([]);
+      if (backend === 'python' && PYTHON) expect(checkPython(path.join(root, 'functions'))).toEqual([]);
+      if (backend === 'csharp' && DOTNET && process.env.SWALLOWKIT_TEST_SKIP_DOTNET !== '1') {
+        expect(await dotnetBuild(path.join(root, 'functions'))).toEqual([]);
+      }
+      const replan = await runMachine(['plan', 'scaffold', 'reference-record', '--skip-infra']);
+      expect(replan.status).toBe('complete');
+      expect(replan.data.operations.filter((operation: any) => !['skip', 'append'].includes(operation.action))).toEqual([]);
+    } finally {
+      process.chdir(previousCwd);
+      quiet.mockRestore();
+      if (!process.env.SWALLOWKIT_KEEP_MATRIX) fs.rmSync(directory, { recursive: true, force: true });
+    }
+  }, 5 * 60 * 1000);
+
+  it('plans/applies inline contracts, preserves authorization and compiles both models', async () => {
+    const previousCwd = process.cwd();
+    const directory = fs.mkdtempSync(path.join(repoRoot, '.tmp-scaffold-regression-'));
+    const root = path.join(directory, PROJECT);
+    const quiet = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await createSkeleton(root, frontend, backend, 'js');
+      process.chdir(root);
+      mockNativeToolchainValidation();
+      await applyAuth(root, AUTH_SETUPS.find(auth => auth.id === 'legacy-swa')!);
+      if (backend === 'csharp' && process.env.SWALLOWKIT_TEST_REAL_CODEGEN === '1') {
+        (childProcess.spawnSync as unknown as ReturnType<typeof jest.fn>).mockImplementation(real.spawnSync);
+        (childProcess.spawn as unknown as ReturnType<typeof jest.fn>).mockImplementation(real.spawn);
+      }
+      write(path.join(root, 'shared', 'contracts', 'common.ts'), `import { z } from 'zod/v4';
+export const Unrelated = z.object({ ignored: z.string() });
+export const ProviderInfo = z.object({ name: z.string().min(1) });
+export const QuestionValidation = z.object({ checked: z.boolean() });
+`);
+      write(path.join(root, 'shared', 'models', 'grammar-topic.ts'), `import { z } from 'zod/v4';
+export const GrammarTopic = z.object({ id: z.string(), name: z.string().min(1) });
+export const authPolicy = { roles: ['admin'] };
+`);
+      write(path.join(root, 'shared', 'models', 'sample-question.ts'), `import { z } from 'zod/v4';
+import { ProviderInfo, QuestionValidation } from '../contracts/common';
+export const SampleQuestion = z.object({
+  id: z.string(), grammarTopicId: z.string(), language: z.enum(['it', 'en']), prompt: z.string().min(1),
+  publication: z.object({
+    instructionJa: z.string().min(1), sourceIds: z.array(z.string()).min(1),
+    provider: ProviderInfo, validation: QuestionValidation,
+  }).optional(),
+  publications: z.array(z.object({ provider: ProviderInfo, validation: QuestionValidation.nullable() })).optional().nullable(),
+});
+export const partitionKey = '/language';
+`);
+      fs.appendFileSync(path.join(root, 'shared', 'index.ts'), "\nexport * from './models/grammar-topic';\nexport * from './models/sample-question';\n");
+      for (const model of ['grammar-topic', 'sample-question']) {
+        const plan = await runMachine(['plan', 'scaffold', model, '--skip-infra']);
+        expect(plan.status).toBe('complete');
+        if (model === 'sample-question') {
+          expect(plan.data.schemaAnalysis.canonicalModel.fields.map((field: any) => field.name))
+            .toEqual(['id', 'grammarTopicId', 'language', 'prompt', 'publication', 'publications']);
+        }
+        const apply = await runMachine(['apply', 'scaffold', '--plan', plan.data.planId]);
+        expect(apply.status).toBe('complete');
+      }
+      const formPath = path.join(root, frontend === 'react' ? 'src/pages' : 'app', 'sample-question', '_components', 'SampleQuestionForm.tsx');
+      const form = fs.readFileSync(formPath, 'utf-8');
+      expect(form).toContain("fetch('/api/grammarTopic')");
+      expect(form).not.toContain("fetch('/api/grammar-topic')");
+      expect(form).toContain('JSON.parse(submitData.publication)');
+      for (const model of ['grammar-topic', 'sample-question']) {
+        const replan = await runMachine(['plan', 'scaffold', model, '--skip-infra']);
+        expect(replan.status).toBe('complete');
+        expect(replan.data.operations.filter((operation: any) => !['skip', 'append'].includes(operation.action))).toEqual([]);
+      }
+      if (backend !== 'typescript') {
+        const document = JSON.parse(fs.readFileSync(path.join(root, 'functions', 'openapi', 'sample-question.openapi.json'), 'utf-8'));
+        const checkRefs = (value: any): void => {
+          if (!value || typeof value !== 'object') return;
+          if (value.$ref) expect(document.components.schemas[value.$ref.split('/').pop()]).toBeDefined();
+          Object.values(value).forEach(checkRefs);
+        };
+        checkRefs(document);
+        expect(document.components.schemas.SampleQuestionPublication.properties.provider.$ref)
+          .toBe('#/components/schemas/SampleQuestionPublicationProvider');
+      }
+      const sharedIndex = path.join(root, 'shared', 'index.ts');
+      expect(typecheck(path.join(root, 'tsconfig.json'), sharedIndex)).toEqual([]);
+      if (frontend === 'react') expect(typecheck(path.join(root, 'bff', 'tsconfig.json'), sharedIndex, {
+        '@azure/functions': path.join(repoRoot, 'node_modules', 'azure-functions-v3'),
+      })).toEqual([]);
+      if (backend === 'typescript') {
+        expect(typecheck(path.join(root, 'functions', 'tsconfig.json'), sharedIndex)).toEqual([]);
+        if (frontend === 'react') await exerciseGeneratedReferenceFlow(root, SHARED);
+      } else if (backend === 'csharp' && DOTNET && process.env.SWALLOWKIT_TEST_SKIP_DOTNET !== '1') {
+        expect(await dotnetBuild(path.join(root, 'functions'))).toEqual([]);
+      } else if (backend === 'python' && PYTHON) {
+        expect(checkPython(path.join(root, 'functions'))).toEqual([]);
+        const interpreter = process.env.SWALLOWKIT_TEST_PYTHON ?? PYTHON;
+        if (real.spawnSync(interpreter, ['-c', 'import pydantic'], { stdio: 'ignore' }).status === 0) {
+          const script = `import sys, json
+sys.path.insert(0, 'generated/python-models')
+from backend_models.models.sample_question import SampleQuestion
+from pydantic import ValidationError
+base = {'id': '1', 'grammarTopicId': 'topic-1', 'language': 'it', 'prompt': 'Question'}
+child = {'provider': {'name': 'Provider'}, 'validation': None}
+for item in [base, {**base, 'publications': None}, {**base, 'publications': [child]}]:
+    model = SampleQuestion.from_dict(item)
+    assert json.loads(model.to_json()) == item
+    assert model.to_dict() == item
+    assert json.loads(SampleQuestion.from_json(model.to_json()).to_json()) == item
+for invalid in [{**base, 'publications': [{'provider': {'name': 'Provider'}}]}, {**base, 'publication': None}]:
+    try:
+        SampleQuestion.from_dict(invalid)
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError('accepted absent required nullable child or explicit non-nullable null')
+print('ok')`;
+          const result = real.spawnSync(interpreter, ['-c', script], { cwd: path.join(root, 'functions'), encoding: 'utf-8' });
+          if (result.status !== 0) throw new Error(`${result.stdout}\n${result.stderr}`);
+          expect(result.stdout.trim()).toBe('ok');
+        }
+      }
+      // Imported child contracts remain plan inputs even though they are no longer root references.
+      const before = await runMachine(['plan', 'scaffold', 'sample-question', '--skip-infra']);
+      fs.appendFileSync(path.join(root, 'shared', 'contracts', 'common.ts'), '\n// stale-plan regression\n');
+      const stale = await runMachine(['apply', 'scaffold', '--plan', before.data.planId]);
+      expect(stale.status).toBe('blocked');
+    } finally {
+      process.chdir(previousCwd);
+      quiet.mockRestore();
+      if (!process.env.SWALLOWKIT_KEEP_MATRIX) fs.rmSync(directory, { recursive: true, force: true });
+    }
+  }, 5 * 60 * 1000);
 });

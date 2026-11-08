@@ -10,7 +10,7 @@ import { spawnSync } from "child_process";
 import { authSchemeSlug, getBackendLanguage, getFrontendFramework, getConnectorDefinition, getAuthConfig, getFullConfig, getNormalizedAuthConfig, ensureSwallowKitProject, normalizeAuthConfig, validateConfig } from "../../core/config";
 import { generateManagedFunctionConfig, generateReactBffRoute } from "../../core/scaffold/react-bff-generator";
 import { adaptReactPage, generateReactModelRoutes } from "../../core/scaffold/react-ui-generator";
-import { ModelInfo, parseModelFile, toKebabCase, toCamelCase } from "../../core/scaffold/model-parser";
+import { getModelApiRoute, ModelInfo, parseModelFile, toKebabCase } from "../../core/scaffold/model-parser";
 import { MachineCommandError } from "../../machine/errors";
 import {
   generateCSharpAzureFunctionsCRUD,
@@ -836,7 +836,7 @@ async function generateConnectorBFFRoutesFiles(
 ): Promise<void> {
   console.log("\n🔌 Generating Connector BFF API routes...");
 
-  const modelCamel = toCamelCase(modelInfo.name);
+  const modelCamel = getModelApiRoute(modelInfo.name);
   const operations = modelInfo.connectorConfig!.operations;
 
   const listRoutePath = path.join(process.cwd(), apiDir, modelCamel, "route.ts");
@@ -852,18 +852,16 @@ async function generateConnectorBFFRoutesFiles(
   console.log(`✅ Created: ${detailRoutePath}`);
 }
 
-async function collectModelGraph(modelPath: string, seen = new Map<string, ModelInfo>()): Promise<ModelInfo[]> {
+async function collectModelGraph(modelPath: string, seen = new Map<string, ModelInfo>(), selection?: { schemaName: string; modelName: string }): Promise<ModelInfo[]> {
   const resolvedPath = path.resolve(modelPath);
-  if (seen.has(resolvedPath)) {
-    return Array.from(seen.values());
-  }
-
-  const modelInfo = await parseModelFile(resolvedPath);
-  seen.set(resolvedPath, modelInfo);
+  const key = `${resolvedPath}#${selection?.schemaName ?? ""}`;
+  if (seen.has(key)) return Array.from(seen.values());
+  const modelInfo = await parseModelFile(resolvedPath, selection);
+  seen.set(key, modelInfo);
 
   for (const ref of modelInfo.nestedSchemaRefs) {
     const nestedPath = resolveNestedModelPath(resolvedPath, ref.importPath);
-    await collectModelGraph(nestedPath, seen);
+    await collectModelGraph(nestedPath, seen, { schemaName: ref.schemaName, modelName: ref.modelName });
   }
 
   return Array.from(seen.values());
@@ -916,7 +914,7 @@ function updatePythonFunctionRegistrations(functionAppPath: string, registration
  * Next.js BFF API Routes を生成
  */
 function generateManagedBffRoutes(modelInfo: ModelInfo, apiDir: string, sharedPackageName: string, session: FileOperationSession): void {
-  const name = toCamelCase(modelInfo.name);
+  const name = getModelApiRoute(modelInfo.name);
   const meta = { ownership: "managed" as const, generator: SCAFFOLD_GENERATOR, sourceModel: modelInfo.name };
   session.writeFile(path.join(process.cwd(), apiDir, "src", name, "index.ts"), generateReactBffRoute(modelInfo, sharedPackageName), meta);
   session.writeFile(path.join(process.cwd(), apiDir, name, "function.json"), generateManagedFunctionConfig(`${name}/{id?}`, ["GET", "POST", "PUT", "DELETE"], name), meta);
@@ -930,7 +928,7 @@ async function generateBFFRoutes(
 ): Promise<void> {
   console.log("\n🔨 Generating Next.js BFF API routes...");
 
-  const modelCamel = modelInfo.name.charAt(0).toLowerCase() + modelInfo.name.slice(1);
+  const modelCamel = getModelApiRoute(modelInfo.name);
 
   // List route: app/api/[model]/route.ts
   const listRoutePath = path.join(

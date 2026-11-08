@@ -1,4 +1,4 @@
-import { FieldInfo, ModelInfo, toCamelCase, toPascalCase } from "./model-parser";
+import { getModelApiRoute, FieldInfo, ModelInfo, toPascalCase } from "./model-parser";
 
 type OpenApiSchema =
   | {
@@ -10,6 +10,7 @@ type OpenApiSchema =
       required?: string[];
       additionalProperties?: boolean;
       nullable?: boolean;
+      allOf?: OpenApiSchema[];
       $ref?: string;
       minLength?: number;
       maxLength?: number;
@@ -116,11 +117,17 @@ function toFieldSchema(field: FieldInfo): OpenApiSchema {
     return {
       type: "array",
       items: schema,
+      ...(field.isNullable ? { nullable: true } : {}),
       ...(field.constraints?.minItems !== undefined ? { minItems: field.constraints.minItems } : {}),
       ...(field.constraints?.maxItems !== undefined ? { maxItems: field.constraints.maxItems } : {}),
     };
   }
 
+  if (field.isNullable) {
+    return schema.$ref
+      ? { type: "object", nullable: true, allOf: [schema] }
+      : { ...schema, nullable: true };
+  }
   return schema;
 }
 
@@ -142,7 +149,7 @@ function createComponentSchema(model: ModelInfo): OpenApiSchema {
   };
 }
 export function generateOpenApiDocument(models: ModelInfo[], rootModel: ModelInfo): string {
-  const rootModelRoute = toCamelCase(rootModel.name);
+  const rootModelRoute = getModelApiRoute(rootModel.name);
   const components = Object.fromEntries(
     expandInlineObjectModels(models).map((model) => [model.name, createComponentSchema(model)])
   );
