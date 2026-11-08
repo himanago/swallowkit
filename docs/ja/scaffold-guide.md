@@ -6,7 +6,7 @@ React Router のページは `src/pages/{model}/` に生成します。
 バックエンドとスキーマは従来と同じです。[React ガイド](./react-guide.md)も参照してください。
 以下の `app/` パスは Next.js の例です。
 
-Zod スキーマから CRUD 操作を生成します。このコマンドは Azure Functions バックエンドハンドラー、Next.js BFF API ルート、React UI ページ、Cosmos DB インフラを、1 つのスキーマファイルから型付きで生成します。
+Zod スキーマから、一覧・詳細・作成・更新・削除（CRUD）の画面と API を生成します。バックエンドは独立 Azure Functions、BFF は Next.js API ルートまたは SWA マネージド Functions、保存先のインフラは Bicep マイグレーションとして生成します。
 
 C# または Python バックエンドでは、OpenAPI ドキュメントの出力とネイティブスキーマ資産の生成も行います。
 
@@ -17,7 +17,7 @@ C# または Python バックエンドでは、OpenAPI ドキュメントの出�
 ### 1. モデルの雛形を作成
 
 `create-model` コマンドで、`id`、`createdAt`、`updatedAt` を含むモデルの雛形と
-Cosmos コンテナー用 migration を登録します。Azure リソースのデプロイや CRUD 生成は行いません：
+Cosmos コンテナー用マイグレーションを登録します。Azure リソースのデプロイや CRUD 生成は行いません：
 
 ::: code-group
 ```bash [npm]
@@ -31,7 +31,7 @@ pnpm exec swallowkit create-model product
 これにより `shared/models/product.ts` が生成されます：
 
 ```typescript
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 // Product model
 export const product = z.object({
@@ -44,7 +44,7 @@ export const product = z.object({
 export type Product = z.infer<typeof product>;
 ```
 
-💡 **複数のモデルを一度に作成**することもできます：
+**複数のモデルを一度に作成**することもできます。
 
 ::: code-group
 ```bash [npm]
@@ -57,11 +57,11 @@ pnpm exec swallowkit create-model user post comment
 
 ### 2. モデルをカスタマイズ
 
-生成されたファイルを編集して、必要なフィールドを追加します：
+生成されたファイルを編集して、必要なフィールドを追加します。
 
 ```typescript
 // shared/models/product.ts
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 export const product = z.object({
   id: z.string(),
@@ -78,25 +78,13 @@ export const product = z.object({
 export type Product = z.infer<typeof product>;
 ```
 
-⚠️ **重要**: `id`、`createdAt`、`updatedAt` フィールドは必ず含めてください。これらはバックエンドで自動管理されます。
+永続化するモデルには、必須の `id: z.string()` を定義してください。`createdAt` と `updatedAt` は、必要な場合に `optional()` で追加します。
 
 #### SwallowKit 管理フィールドの仕様
 
-これらのフィールドは以下のように動作します：
-
-- **モデル定義**: `optional()` として定義（必須ではない）
-- **フロントエンド**: フォームから送信されず、バックエンドで自動設定される
-- **バックエンド（作成時）**: 
-  - クライアントから送られた値は無視される
-  - `id`: UUID が自動生成される（クライアントから送られた場合はそれを使用）
-  - `createdAt`: 現在時刻が自動設定される
-  - `updatedAt`: 現在時刻が自動設定される
-- **バックエンド（更新時）**:
-  - クライアントから送られた値は無視される
-  - `createdAt`: 既存の値が保持される（変更されない）
-  - `updatedAt`: 現在時刻に更新される
-
-これにより、タイムスタンプの整合性が保証され、クライアント側で誤った値を設定する心配がありません。
+標準フォームは `id`、`createdAt`、`updatedAt` を入力項目に含めず、BFF はリクエストの検証時にこれらを除外します。
+作成時はバックエンドが ID と作成・更新日時を設定します。更新時は URL の ID を使い、既存の作成日時を保持して更新日時を変更します。
+独立 Functions を BFF 経由でなく直接呼ぶ場合は、使用する言語の生成ハンドラーも確認してください。たとえば TypeScript の作成ハンドラーは、本文に ID があればその値を使用します。
 
 ### 3. Scaffold コマンドを実行
 
@@ -111,7 +99,7 @@ pnpm exec swallowkit scaffold shared/models/product.ts
 
 ### 4. 生成されるファイル
 
-scaffold コマンドは以下のファイルを生成します：
+scaffold コマンドは以下のファイルを生成します。
 
 **Azure Functions（バックエンド）:**
 - TypeScript バックエンド: `functions/src/product.ts` - CRUD Azure Functions
@@ -133,7 +121,7 @@ scaffold コマンドは以下のファイルを生成します：
 - `lib/scaffold-config.ts` - ナビゲーションメニュー設定
 
 **インフラストラクチャ（Cosmos DB）:**
-- `infra/containers/product-container.bicep` - モデルスキーマから生成される Cosmos DB コンテナ定義
+- `infra/migrations/<version>-create-product-container/main.bicep` - モデルスキーマから生成される Cosmos DB コンテナ定義
 
 **C#/Python バックエンド向け OpenAPI 出力:**
 - `functions/openapi/product.openapi.json` - Zod モデルグラフから出力された OpenAPI
@@ -142,12 +130,12 @@ scaffold コマンドは以下のファイルを生成します：
 ### バックエンド言語ごとの動作
 
 - `typescript`: 生成された Functions ハンドラーは共有 Zod パッケージを直接 import します。
-- `csharp` / `python`: フロントエンドと BFF は引き続き `shared/models/` の Zod を使い、バックエンドは OpenAPI からネイティブ生成された資産を利用します。
+- `csharp` / `python`: フロントエンドと BFF は引き続き `shared/models/` の Zod を使い、OpenAPI とネイティブ型を生成します。C# CRUD は生成型で入力を検証します。Python CRUD は辞書を処理し、生成した Pydantic 型による検証は自動では呼び出しません。BFF は両方で Zod を使って検証します。
 - スキーマを変更したら、`functions/openapi/` と `functions/generated/` を同期させるために `swallowkit scaffold shared/models/<name>.ts` を再実行してください。
 
 ### 4. アプリケーションにアクセス
 
-開発サーバーを起動します：
+開発サーバーを起動します。
 
 ::: code-group
 ```bash [npm]
@@ -158,9 +146,9 @@ pnpm exec swallowkit dev
 ```
 :::
 
-http://localhost:3000 を開いてアプリケーションを確認できます。
+Next.js は http://localhost:3000、React は SWA CLI の http://localhost:4280 を開いて確認します。SWA 認証を使う Next.js も SWA CLI のポートからアクセスしてください。
 
-Cosmos DB Emulator をデバッグ用の決まったデータで起動したい場合は、seed 環境を生成して `dev` に渡します：
+Cosmos DB Emulator をデバッグ用の決まったデータで起動したい場合は、シード環境を生成して `dev` に渡します。
 
 ::: code-group
 ```bash [npm]
@@ -181,7 +169,7 @@ SwallowKit は `{schema}.json` を対応する Cosmos コンテナへマッピ�
 
 ## 型に応じた UI 生成
 
-SwallowKit は、Zod スキーマの型に基づいて適切な UI コントロールを自動生成します：
+SwallowKit はZod スキーマの型に基づいて適切な UI コントロールを自動生成します。
 
 ### サポートされているフィールドタイプ
 
@@ -254,7 +242,7 @@ tags: z.array(z.string()).optional()
 
 ## ネストスキーマ参照
 
-SwallowKit は、他のスキーマを直接参照するフィールドを自動検出し、適切な UI を生成します。`categoryId: z.string()` のような外部キーパターンとは異なり、Zod スキーマオブジェクトを直接埋め込むパターンに対応しています。
+SwallowKit は他のスキーマを直接参照するフィールドを自動検出し、適切な UI を生成します。`categoryId: z.string()` のような外部キーパターンとは異なり、Zod スキーマオブジェクトを直接埋め込むパターンに対応しています。
 
 > **推奨**: 親子関係を表現する場合は、ID による外部キー参照ではなく、ネスト型のスキーマ参照を使用してください。ネストにより型安全性が保たれ、関連データがドキュメント内にまとまるため、Cosmos DB のドキュメントモデルに自然に適合します。
 
@@ -324,7 +312,7 @@ export const product = z.object({
 
 ### 表示フィールドの自動検出
 
-SwallowKit は参照先スキーマのファイルを自動的に読み取り、表示用フィールドを以下の優先順位で検出します：
+SwallowKit は参照先スキーマのファイルを自動的に読み取り、表示用フィールドを以下の優先順位で検出します。
 
 1. `name` フィールド
 2. `title` フィールド
@@ -340,7 +328,7 @@ npx swallowkit machine plan scaffold probe-item --skip-infra
 npx swallowkit machine apply scaffold --plan <planId>
 ```
 
-この scaffold plan では `infra/` 配下を変更しません。plan には `infra-skipped` の警告と `nextActions` が含まれます。`create-model` で登録済みのコンテナー migration はプロジェクト内に残ります。手書きまたはスキップされたモデルでは `swallowkit machine plan model-infrastructure probe-item` で preview し、返された plan を `swallowkit machine apply model --plan <planId>` で適用してください。`verify project` は各永続モデルに現在の Cosmos コンテナー migration（または一致する baseline 管理コンテナー）が登録されているかを確認し、不足・不一致があれば `machine plan provision` はローカルで停止します。これはローカルのインフラ定義の検証であり、Azure へのプロビジョニング済みであることは証明しません。
+この scaffold plan では `infra/` 配下を変更しません。plan には `infra-skipped` の警告と `nextActions` が含まれます。`create-model` で登録済みのコンテナーマイグレーションはプロジェクト内に残ります。手書きまたはスキップされたモデルでは `swallowkit machine plan model-infrastructure probe-item` で変更予定を確認し、返された plan を `swallowkit machine apply model --plan <planId>` で適用してください。`verify project` は各永続モデルに現在の Cosmos コンテナーマイグレーション（または一致する初期インフラ管理コンテナー）が登録されているかを確認し、不足・不一致があれば `machine plan provision` はローカルで停止します。これはローカルのインフラ定義の検証であり、Azure へのプロビジョニング済みであることは証明しません。
 
 ## ユーザー単位のデータに関する警告
 
@@ -391,8 +379,8 @@ categoryId: z.string().min(1, "カテゴリは必須です")
 ### 例: Category 参照を持つ Todo
 
 ```typescript
-// lib/models/category.ts
-import { z } from 'zod';
+// shared/models/category.ts
+import { z } from 'zod/v4';
 
 export const category = z.object({
   id: z.string(),
@@ -402,8 +390,8 @@ export const category = z.object({
 
 export type Category = z.infer<typeof category>;
 
-// lib/models/todo.ts
-import { z } from 'zod';
+// shared/models/todo.ts
+import { z } from 'zod/v4';
 
 export const todo = z.object({
   id: z.string(),
@@ -418,7 +406,7 @@ export type Todo = z.infer<typeof todo>;
 
 ### 生成される外部キー UI
 
-外部キーが検出されると、SwallowKit は以下を生成します：
+外部キーが検出されると、SwallowKit は以下を生成します。
 
 1. **フォーム内のドロップダウンセレクト:**
 
@@ -462,7 +450,7 @@ useEffect(() => {
 
 3. **一覧ビューでの表示名:**
 
-`"abc123"` のような生の ID を表示する代わりに、一覧ビューでは参照先アイテムの名前を表示します：
+`"abc123"` のような生の ID を表示する代わりに、一覧ビューでは参照先アイテムの名前を表示します。
 
 | title | Category | completed |
 |-------|----------|-----------|
@@ -484,7 +472,7 @@ useEffect(() => {
 
 ### ToString 規約
 
-外部キーの表示には、SwallowKit は以下の優先順位で表示文字列を決定します：
+外部キーの表示には、SwallowKit は以下の優先順位で表示文字列を決定します。
 
 1. `item.name`（存在する場合）
 2. `item.title`（存在する場合）
@@ -494,6 +482,8 @@ useEffect(() => {
 
 ## 生成されるコード例
 
+以下は Next.js の一覧・フォーム処理の抜粋です。共有パッケージ名の `@my-app/shared` は、実際の `shared/package.json` の `name` に合わせてください。React では同じ処理を使い、画面遷移を React Router に置き換えます。
+
 ### 一覧ページ（page.tsx）
 
 ```tsx
@@ -501,7 +491,7 @@ useEffect(() => {
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Todo } from '@/lib/models/todo';
+import { Todo } from '@my-app/shared';
 
 export default function TodoListPage() {
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -654,8 +644,8 @@ export default function TodoListPage() {
 
 import { useState, FormEvent, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { todo } from '@/lib/models/todo';
-import { z } from 'zod';
+import { todo } from '@my-app/shared';
+import { z } from 'zod/v4';
 
 interface TodoFormProps {
   initialData?: any;
@@ -695,10 +685,8 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 
     try {
       // Zod で検証
-      const validatedData = todo.parse({
-        ...formData,
-        id: initialData?.id || crypto.randomUUID(),
-      });
+      const submitData = { ...formData };
+      todo.omit({ id: true }).parse(submitData);
 
       const url = isEdit ? `/api/todo/${initialData.id}` : '/api/todo';
       const method = isEdit ? 'PUT' : 'POST';
@@ -706,12 +694,12 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(validatedData),
+        body: JSON.stringify(submitData),
       });
 
       if (!res.ok) {
         const error = await res.json();
-        throw new Error(error.message || '保存に失敗しました');
+        throw new Error(error.error || '保存に失敗しました');
       }
 
       router.push('/todo');
@@ -719,9 +707,9 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         const fieldErrors: Record<string, string> = {};
-        err.errors.forEach((error) => {
+        err.issues.forEach((error) => {
           if (error.path) {
-            fieldErrors[error.path[0]] = error.message;
+            fieldErrors[String(error.path[0])] = error.message;
           }
         });
         setErrors(fieldErrors);
@@ -895,13 +883,13 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 
 ### スキーマ解析エラー
 
-"Failed to parse model file" が表示される場合、以下を確認してください：
+"Failed to parse モデルファイル" が表示される場合、以下を確認してください。
 - ファイルに Zod オブジェクトスキーマの有効なエクスポートがある
 - ルートスキーマとして `z.object()` を使用している
 
 ### 外部キーが検出されない
 
-以下を確認してください：
+以下を確認してください。
 - フィールド名が `Id` で終わる（大文字小文字を区別）か、`references` で宣言されている
 - フィールド型が `z.string()`
 - 参照先モデルのファイルが `shared/models` に存在し、scaffold されている
@@ -913,54 +901,11 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 - 参照先モデルが scaffold されていることを確認
 - API エンドポイント `/api/<model>` がデータを返すことを確認
 
-## ファクトリーパターン（CRUD コード重複の削減）
+## 生成される CRUD ハンドラー
 
-SwallowKit は**ファクトリーパターン**を使用して CRUD コードを生成します。これにより、エンティティごとのコード重複（約 94%）を排除し、保守性を大幅に向上させます。
-
-### 仕組み
-
-`scaffold` コマンドは以下のファクトリーファイルを生成します：
-
-- `lib/api/crud-factory.ts` - Next.js BFF 用の汎用 CRUD ハンドラー
-- `functions/src/lib/crud-factory.ts` - Azure Functions 用の汎用 CRUD ハンドラー
-
-各エンティティのルートファイルは、ファクトリーを呼び出すだけの簡潔なコードになります：
-
-**Next.js BFF ルート:**
-
-```typescript
-// app/api/todo/route.ts
-import { createCrudHandlers } from '@/lib/api/crud-factory';
-import { todo } from '@/lib/models/todo';
-
-const handlers = createCrudHandlers({
-  entityName: 'todo',
-  schema: todo,
-});
-
-export const GET = handlers.GET;
-export const POST = handlers.POST;
-```
-
-**Azure Functions:**
-
-```typescript
-// functions/src/todo.ts
-import { app } from '@azure/functions';
-import { createCrudFunctions } from './lib/crud-factory';
-import { todo } from './models/todo';
-
-const crud = createCrudFunctions({
-  schema: todo,
-  containerName: 'Todos',
-});
-
-app.http('getTodos', { methods: ['GET'], route: 'todo', handler: crud.getAll });
-app.http('getTodoById', { methods: ['GET'], route: 'todo/{id}', handler: crud.getById });
-app.http('createTodo', { methods: ['POST'], route: 'todo', handler: crud.create });
-app.http('updateTodo', { methods: ['PUT'], route: 'todo/{id}', handler: crud.update });
-app.http('deleteTodo', { methods: ['DELETE'], route: 'todo/{id}', handler: crud.delete });
-```
+現在の Scaffold は、モデルごとの Functions ハンドラーと BFF ルートを生成します。共通の `crud-factory.ts` は生成しません。
+Next.js の BFF は `lib/api/call-function.ts`、React のマネージド BFF は `bff/src/lib/call-function.ts` で、入力・応答の検証と独立 Functions への通信を共通化します。
+業務ロジックとデータアクセスは `functions/` に置きます。変更時はモデルや設定を編集し、plan/apply で再生成してください。管理対象ファイルを直接編集した場合は、再生成の plan で競合を確認します。
 
 ## コネクタモデル
 
@@ -980,8 +925,8 @@ Cosmos DB モデルに加えて、SwallowKit はリレーショナルデータ�
 | 観点 | 標準モデル (Cosmos DB) | コネクタモデル |
 |------|----------------------|--------------|
 | Functions コード | Cosmos DB バインディング | SQL クエリ (RDB) または HTTP クライアント (API) |
-| Functions 配置先 | `functions/src/functions/` (TS) | `functions/Connectors/` (C#) または同ディレクトリ (TS/Python) |
-| BFF ルート | 標準 `callFunction()` | 同一 — 透過的 |
+| Functions 配置先 | `functions/src/` (TS) | `functions/Connectors/` (C#) または同ディレクトリ (TS/Python) |
+| BFF ルート | 標準 `callFunction()` | 同一。透過的 |
 | UI コンポーネント | フル CRUD | 同一（`operations` を尊重） |
 | Cosmos Bicep | 生成される | スキップ |
 | 操作 | 全 CRUD | 設定可能（例: 読み取り専用） |
@@ -992,15 +937,15 @@ Cosmos DB モデルに加えて、SwallowKit はリレーショナルデータ�
 
 ### ローカル開発
 
-`swallowkit dev --mock-connectors` を使うと、コネクタモデル向けに Zod 生成のモックデータを提供するプロキシサーバーが起動します。開発時に実際のデータベースや API 接続は不要です。詳しくは [Connector ガイド](./connector-guide) を参照してください。
+`swallowkit dev --mock-connectors` を使うと、コネクタモデル向けに Zod 生成のモックデータを提供するプロキシサーバーが起動します。開発時に実際のデータベースや API 接続は不要です。詳しくは [コネクタガイド](./connector-guide) を参照してください。
 
 ## 認証連携
 
-`swallowkit add-auth` で認証がセットアップされている場合、モデルから `authPolicy` をエクスポートすることで、scaffold 生成された Functions にロールベースのアクセス制御を追加できます：
+`swallowkit add-auth` で認証がセットアップされている場合、モデルから `authPolicy` をエクスポートすることで、scaffold 生成された Functions にロールベースのアクセス制御を追加できます。
 
 ```typescript
 // shared/models/estimate.ts
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 export const estimate = z.object({
   id: z.string(),
@@ -1030,11 +975,11 @@ export const authPolicy = { roles: ['admin', 'estimator'] };
 
 ### パーティションキーの設定
 
-デフォルトでは、すべての Cosmos DB コンテナはパーティションキーとして `/id` を使用します。カスタムパーティションキーを使用するには、モデルファイルからエクスポートします：
+デフォルトでは、すべての Cosmos DB コンテナはパーティションキーとして `/id` を使用します。カスタムパーティションキーを使用するには、モデルファイルからエクスポートします。
 
 ```typescript
 // shared/models/order.ts
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 export const Order = z.object({
   id: z.string(),
@@ -1058,7 +1003,7 @@ export const partitionKey = '/customerId';
 - **`dev` コマンド**は正しいパーティションキーパスで Cosmos DB コンテナを作成
 - **`dev-seeds` コマンド**は正しいパーティションキーパスでコンテナを再作成
 
-`partitionKey` がエクスポートされていない場合、デフォルトの `/id` が使用されます — **既存プロジェクトは変更なしでそのまま動作します**。
+`partitionKey` がエクスポートされていない場合、デフォルトの `/id` が使用されます。**既存プロジェクトは変更なしでそのまま動作します**。
 
 ## ネストした契約スキーマと参照 URL
 
@@ -1066,7 +1011,7 @@ export const partitionKey = '/customerId';
 import したスキーマ、optional／nullable なオブジェクト、オブジェクト配列も子構造を保持します。
 埋め込みフィールドがルートに追加されたり、別エンティティの選択欄になったりすることはありません。
 フォームでは埋め込みオブジェクトを JSON として編集し、OpenAPI と C#／Python の生成型にも子フィールドを反映します。
-import では指定した export を選ぶため、契約ファイルに複数のスキーマがあり、ファイル名とスキーマ名が異なる場合も扱えます。
+import では指定したエクスポートを選ぶため、契約ファイルに複数のスキーマがあり、ファイル名とスキーマ名が異なる場合も扱えます。
 
 参照選択欄の取得 URL は、BFF と3言語のバックエンド生成処理と共通の API ルート解決関数から導出します。
 たとえば `GrammarTopic` の API は `/api/grammarTopic`、UI ページは `/grammar-topic` です。
@@ -1085,7 +1030,7 @@ import 先の契約ファイルも plan の入力として追跡するため、�
 
 ## 次のステップ
 
-- [Connector ガイド](./connector-guide) - 同じ Zod ワークフローで外部データソースを統合
+- [コネクタガイド](./connector-guide) - 同じ Zod ワークフローで外部データソースを統合
 - [認証ガイド](./auth-guide) - 認証とロールベースアクセス制御を追加
 - [Zod スキーマ共有](./zod-schema-sharing-guide) - 型安全なスキーマ共有の概念を理解
 - [デプロイガイド](./deployment-guide) - アプリケーションを Azure にデプロイ

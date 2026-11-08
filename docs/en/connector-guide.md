@@ -164,9 +164,9 @@ Generated files depend on the backend language:
 
 | Component | Standard Model | Connector Model |
 |-----------|---------------|-----------------|
-| **Functions (C#)** | `functions/` | `functions/Connectors/` |
-| **Functions (TypeScript)** | `functions/src/functions/` | `functions/src/functions/` |
-| **Functions (Python)** | `functions/` | `functions/` |
+| **Functions (C#)** | `functions/Crud/` | `functions/Connectors/` |
+| **Functions (TypeScript)** | `functions/src/` | `functions/src/` |
+| **Functions (Python)** | `functions/blueprints/` | `functions/blueprints/` |
 | **BFF routes** | Same | Same (transparent to frontend) |
 | **UI components** | Same | Same |
 | **Cosmos DB Bicep** | Generated | **Skipped** |
@@ -198,9 +198,6 @@ External data sources are defined in the `connectors` section of `swallowkit.con
 // swallowkit.config.js
 module.exports = {
   backend: { language: 'csharp' },
-  functions: {
-    baseUrl: process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071',
-  },
   connectors: {
     mysql: {
       type: 'rdb',
@@ -248,7 +245,7 @@ module.exports = {
 |----------|------|----------|-------------|
 | `type` | `'api'` | ✅ | Connector type |
 | `baseUrlEnvVar` | `string` | ✅ | Environment variable name holding the API base URL |
-| `auth` | `object` | ✅ | Authentication configuration (see below) |
+| `auth` | `object` | No | Authentication configuration (see below) |
 
 ### API Auth Types
 
@@ -268,14 +265,11 @@ module.exports = {
 | `type` | `'bearer'` | ✅ | Auth type |
 | `envVar` | `string` | ✅ | Environment variable holding the bearer token |
 
-**OAuth 2.0** (`type: 'oauth2'`):
+**OAuth 2.0** (`type: 'oauth2'`)
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `type` | `'oauth2'` | ✅ | Auth type |
-| `tokenUrlEnvVar` | `string` | ✅ | Environment variable holding the token endpoint URL |
-| `clientIdEnvVar` | `string` | ✅ | Environment variable holding the client ID |
-| `clientSecretEnvVar` | `string` | ✅ | Environment variable holding the client secret |
+The current generator reads an existing token from the environment variable named by `envVar` and forwards it as a Bearer token.
+It does not generate token-endpoint requests or automatic client-credentials token acquisition/refresh.
+`tokenUrlEnvVar`, `clientIdEnvVar`, and `clientSecretEnvVar` are not current configuration fields.
 
 ## Model Metadata Reference
 
@@ -293,7 +287,7 @@ The `connectorConfig` export in a model file tells SwallowKit which connector to
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
 | `table` | `string` | ✅ | Database table name |
-| `idColumn` | `string` | ✅ | Primary key column name |
+| `idColumn` | `string` | No | Primary key column; defaults to `id` |
 
 ```typescript
 export const connectorConfig = {
@@ -308,7 +302,7 @@ export const connectorConfig = {
 
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
-| `endpoints` | `object` | ✅ | Mapping of operation names to HTTP method + path |
+| `endpoints` | `object` | No | Operation to HTTP method/path mapping; omitted entries use model-derived defaults |
 
 ```typescript
 export const connectorConfig = {
@@ -331,7 +325,7 @@ Endpoint paths use `{id}` as a placeholder for the resource identifier.
 | `getAll` | GET | `SELECT * FROM {table}` | `GET {endpoint}` | Retrieve all records |
 | `getById` | GET | `SELECT * FROM {table} WHERE {idColumn} = ?` | `GET {endpoint}/{id}` | Retrieve a single record |
 | `create` | POST | `INSERT INTO {table} ...` | `POST {endpoint}` | Create a new record |
-| `update` | PUT | `UPDATE {table} SET ... WHERE {idColumn} = ?` | `PATCH {endpoint}/{id}` | Update an existing record |
+| `update` | PUT | `UPDATE {table} SET ... WHERE {idColumn} = ?` | `PUT {endpoint}/{id}` | Update an existing record |
 | `delete` | DELETE | `DELETE FROM {table} WHERE {idColumn} = ?` | `DELETE {endpoint}/{id}` | Delete a record |
 
 💡 **Read-only pattern**: To create a read-only integration, only include `getAll` and/or `getById` in the `operations` array. Scaffold will skip write handlers, and the mock server will return 405 for write requests.

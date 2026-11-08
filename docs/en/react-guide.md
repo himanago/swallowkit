@@ -1,5 +1,7 @@
 # React frontend
 
+React + Vite support starts in SwallowKit 2.x and is not available in stable 1.x. See [versions and installation](./versions.md).
+
 Choose React when you need a client-rendered application rather than Next.js
 SSR or React Server Components. SwallowKit generates a React + TypeScript SPA
 with Vite, React Router, and Tailwind CSS, while keeping the same independent
@@ -18,10 +20,10 @@ customized pages or styles in existing applications.
 The init wizard offers **Next.js** and **React**. For unattended initialization:
 
 ```sh
-npx swallowkit init my-app --frontend react --package-manager npm --cicd github --backend-language typescript --cosmos-db-mode freetier --vnet none --swa-plan free
+npx swallowkit@beta init my-app --frontend react --package-manager npm --cicd github --backend-language typescript --cosmos-db-mode freetier --vnet none --swa-plan free
 ```
 
-For pnpm, use `pnpm dlx swallowkit init ... --package-manager pnpm`, then
+For pnpm, use `pnpm dlx swallowkit@beta init ... --package-manager pnpm`, then
 `pnpm exec swallowkit ...` in the project. Backend languages remain
 `typescript`, `csharp`, and `python`; the managed BFF is always TypeScript.
 `--next-version` applies only to Next.js.

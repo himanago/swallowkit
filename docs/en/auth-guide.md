@@ -51,7 +51,7 @@ Browser
 ```
 Browser (Cookie)
   │
-  ├──→ Next.js Middleware
+  ├──→ Next.js proxy.ts
   │       │
   │       ├─ Check cookie exists
   │       ├─ Base64 decode → expiry check only (no crypto)
@@ -71,7 +71,7 @@ Browser (Cookie)
   ◄──────────────┘
 ```
 
-💡 **Defense in Depth**: Middleware only does a lightweight base64 expiry check because the Edge Runtime has no crypto API. Full JWT signature verification happens in Azure Functions.
+Next.js `proxy.ts` performs a preliminary cookie/expiry check. Standalone Azure Functions verify the JWT signature and roles; passing the preliminary check does not authorize an API request.
 
 ## Getting Started
 
@@ -110,10 +110,6 @@ module.exports = {
     },
     authorization: {
       defaultPolicy: 'authenticated',
-      policies: {
-        'estimate': { roles: ['admin', 'estimator'] },
-        'team': { roles: ['admin'] },
-      },
     },
   },
   connectors: {
@@ -426,9 +422,9 @@ For access tokens, use LINE's token verification endpoint, require a matching `c
 ### Cookie Settings
 
 - The BFF sets cookies with `httpOnly`, `secure`, and `sameSite: 'strict'` flags
-- `httpOnly` prevents JavaScript access (XSS protection)
+- `httpOnly` prevents JavaScript from reading the cookie; it does not prevent XSS itself
 - `secure` ensures cookies are only sent over HTTPS (except localhost)
-- `sameSite: 'strict'` prevents CSRF attacks
+- `sameSite: 'strict'` restricts sending the cookie on cross-site requests
 
 ### Defense in Depth
 
@@ -436,10 +432,10 @@ The auth flow uses a two-layer verification strategy:
 
 | Layer | What It Checks | Why |
 |-------|---------------|-----|
-| **Next.js Middleware** (Edge Runtime) | Base64-decoded expiry timestamp only | Edge Runtime has no native crypto API — cannot verify JWT signatures |
+| Next.js `proxy.ts` | Cookie and Base64-decoded expiry | Preliminary page protection; Functions perform final authentication and authorization |
 | **Azure Functions** | Full JWT signature verification + role-based access | Functions have full Node.js/C#/Python runtime with crypto support |
 
-This means an expired token is rejected early at the edge (fast, low cost), while a tampered token is caught at the Functions layer (full verification).
+Expired cookies are checked before page access; standalone Functions detect signature tampering and missing roles. React does not generate Next.js `proxy.ts`; it uses the managed BFF and standalone Functions.
 
 ### What NOT to Put in JWT
 
@@ -510,12 +506,12 @@ function Dashboard() {
 
 ## Limitations
 
-The following are current limitations of the auth feature in v1:
+These limitations apply to the generated `custom-jwt` flow. External IdPs follow their own capabilities and the verifier you implement:
 
 - **No refresh tokens**: Tokens expire after the configured `tokenExpiry` period. Users must re-login when the token expires
 - **No `swa-custom` mode**: SWA custom extensions are not implemented. Use built-in `swa` or `custom-jwt` authentication
 - **No token revocation**: Issued JWTs cannot be invalidated before expiry. For immediate access revocation, rotate the `JWT_SECRET` (invalidates all tokens)
-- **No Edge Runtime crypto**: Next.js Middleware (Edge Runtime) cannot verify JWT signatures — only expiry is checked at the middleware layer
+- **Preliminary page protection**: Next.js `proxy.ts` only checks cookies and expiry. Standalone Functions must verify signatures and policies.
 - **No password reset flow**: The `add-auth` command does not generate password reset or account recovery endpoints
 - **No multi-factor authentication**: MFA is not supported in the generated auth flow
 - **No session management UI**: There is no admin interface for viewing or managing active sessions/tokens
@@ -534,7 +530,7 @@ auth: {
   authorization: {
     defaultPolicy: 'anonymous',
     policies: {
-      adminOnly: { schemes: ['admin'], roles: ['authenticated'] },
+      adminOnly: { schemes: ['admin'], roles: ['admin'] },
       lineUserOnly: { schemes: ['lineUser'], roles: ['authenticated'] },
     },
   },

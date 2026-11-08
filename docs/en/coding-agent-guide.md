@@ -127,7 +127,7 @@ because the generated files occupy horizontal layers.
 
 Inspect responsibility boundaries before choosing files. Edit `ai-authored`
 locations normally, change `deterministic` artifacts only through their source
-of truth and plan/apply, and edit `shared` files only outside managed markers.
+of truth and plan/apply, and follow the path-specific edit policy for `shared` files (markers where present; manual exports are allowed in `shared/index.ts`).
 
 ### Verification
 
@@ -180,7 +180,7 @@ machine-readable authority for the current project:
 | --- | --- | --- |
 | `ai-authored` | Edit directly | source-of-truth models, custom logic, custom UI, tests |
 | `deterministic` | Never hand-edit; change source/config and plan/apply | generated CRUD, BFF, UI, schema, and infra artifacts |
-| `shared` | Edit only outside managed markers | aggregate or infrastructure files with SwallowKit sections |
+| `shared` | Follow each path's `editPolicy` | Marker-owned Python registrations; manual exports in `shared/index.ts` |
 
 The examples are not a substitute for inspection. Ownership can vary by
 backend, feature, and SwallowKit version.
@@ -371,7 +371,7 @@ implement
     ├─ inspect boundaries
     ├─ ai-authored → normal implementation/TDD
     ├─ deterministic → SwallowKit plan/apply
-    ├─ shared → edit outside managed markers
+    ├─ shared → follow the path-specific edit policy
     └─ SwallowKit verify
     ↓
 code-review

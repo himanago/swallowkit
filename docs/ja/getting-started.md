@@ -13,10 +13,10 @@ React では Vite SPA と SWA マネージド Functions BFF を生成します�
 ## 前提条件
 
 - Node.js 22.14 以上
-- **pnpm**（推奨）— `corepack enable` を実行するか `npm install -g pnpm` でインストール
+- **pnpm**（推奨）。 `corepack enable` を実行するか `npm install -g pnpm` でインストール
   - npm でも動作します。起動元のパッケージマネージャーを使います。`--package-manager npm|pnpm` で明示指定できます。
-- Azure Functions Core Tools 4.x — ローカル Functions 開発に必要
-- Azure Cosmos DB Emulator — ローカルデータストアに必要
+- Azure Functions Core Tools 4.x。ローカル Functions 開発に必要
+- Azure Cosmos DB Emulator。ローカルデータストアに必要
   - Windows: [ダウンロード](https://aka.ms/cosmosdb-emulator)
   - Docker: `docker run -p 8081:8081 mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator`
 
@@ -24,18 +24,18 @@ React では Vite SPA と SWA マネージド Functions BFF を生成します�
 
 ::: code-group
 ```bash [npm]
-npx swallowkit init my-app
+npx swallowkit@beta init my-app
 cd my-app
 ```
 ```bash [pnpm]
-pnpm dlx swallowkit init my-app
+pnpm dlx swallowkit@beta init my-app
 cd my-app
 ```
 :::
 
 Next.js の場合は `create-next-app` を使います。React の場合は Vite + React Router SPA とマネージド Functions BFF を生成します。
 
-対話プロンプトで以下を選択します：
+対話プロンプトで以下を選択します。
 
 | オプション | 値 | デフォルト |
 |-----------|-----|----------|
@@ -46,14 +46,14 @@ Next.js の場合は `create-next-app` を使います。React の場合は Vite
 | ネットワーク | `outbound`, `none` | （対話で選択） |
 | SWA プラン | `free`, `standard` | （対話で選択） |
 
-プロンプトをスキップするには、フラグで直接指定します：
+プロンプトをスキップするには、フラグで直接指定します。
 
 ::: code-group
 ```bash [npm]
-npx swallowkit init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
+npx swallowkit@beta init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
 ```
 ```bash [pnpm]
-pnpm dlx swallowkit init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
+pnpm dlx swallowkit@beta init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
 ```
 :::
 
@@ -68,11 +68,11 @@ pnpm exec swallowkit create-model todo
 ```
 :::
 
-`shared/models/todo.ts` にテンプレートスキーマが生成されます。編集してフィールドを追加します：
+`shared/models/todo.ts` にテンプレートスキーマが生成されます。編集してフィールドを追加します。
 
 ```typescript
 // shared/models/todo.ts
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 export const todo = z.object({
   id: z.string(),
@@ -85,7 +85,7 @@ export const todo = z.object({
 export type Todo = z.infer<typeof todo>;
 ```
 
-`id`、`createdAt`、`updatedAt` はバックエンドが管理するフィールドです。スキーマでは `optional()` として定義します。
+`id` は永続化するモデルに必須の `z.string()` です。`createdAt` と `updatedAt` は必要に応じて `optional()` で定義します。標準フォームではこれらを入力せず、BFF は送信データから除外します。バックエンドが作成・更新時に値を設定します。
 
 ## 3. CRUD コードを生成する
 
@@ -106,7 +106,7 @@ pnpm exec swallowkit scaffold todo
 | BFF ルート | `app/api/todo/route.ts`、`app/api/todo/[id]/route.ts` |
 | UI ページ | `app/todo/page.tsx`、`app/todo/[id]/page.tsx`、`app/todo/new/page.tsx`、`app/todo/[id]/edit/page.tsx` |
 | UI コンポーネント | `app/todo/_components/TodoForm.tsx` |
-| インフラ | `infra/containers/todo-container.bicep` |
+| インフラ | `infra/migrations/0001-create-todo-container/main.bicep` |
 
 C# バックエンドでは `functions/Crud/TodoCrudFunctions.cs`、Python では `functions/blueprints/todo.py` が生成されます。
 
@@ -156,7 +156,7 @@ my-app/
 │   └── todo.ts            # Azure Functions CRUD ハンドラー
 ├── infra/
 │   ├── main.bicep         # Azure リソース定義
-│   └── containers/        # Cosmos DB コンテナ定義
+│   └── migrations/        # Cosmos DB コンテナを追加するマイグレーション
 ├── lib/
 │   └── api/               # BFF ヘルパー（callFunction）
 └── .swallowkit/           # プロジェクトメタデータ
@@ -164,7 +164,7 @@ my-app/
 
 ## 次のステップ
 
-- [基本概念](/ja/concepts) — スキーマ中心のアーキテクチャと BFF パターンを理解する
-- [Scaffold ガイド](/ja/scaffold-guide) — 高度な scaffold オプション、ネストスキーマ、複数モデル
-- [ローカル開発](/ja/dev-guide) — Dev seeds、モックコネクタ、バックエンド別のセットアップ
-- [Azure へのデプロイ](/ja/deployment-guide) — リソースのプロビジョニングと CI/CD 設定
+- [基本概念](/ja/concepts)。スキーマ中心のアーキテクチャと BFF パターンを理解する
+- [Scaffold ガイド](/ja/scaffold-guide)。高度な scaffold オプション、ネストスキーマ、複数モデル
+- [ローカル開発](/ja/dev-guide)。Dev seeds、モックコネクタ、バックエンド別のセットアップ
+- [Azure へのデプロイ](/ja/deployment-guide)。リソースのプロビジョニングと CI/CD 設定

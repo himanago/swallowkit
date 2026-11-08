@@ -8,7 +8,7 @@ React uses the same commands with a managed Functions BFF. See the [React guide]
 the detailed `app/` and Next.js API route examples below describe the Next.js variant.
 
 ::: tip Package manager
-Bootstrap: `pnpm dlx swallowkit init my-app` or `npx swallowkit init my-app`. Inside the project: `pnpm exec swallowkit …` or `npx swallowkit …` uses the installed CLI. MCP independently resolves `latest`.
+Bootstrap: `pnpm dlx swallowkit@beta init my-app` or `npx swallowkit@beta init my-app`. Inside the project: `pnpm exec swallowkit …` or `npx swallowkit …` uses the installed CLI. MCP independently resolves `latest`.
 :::
 
 ## Table of Contents
@@ -149,9 +149,9 @@ Initialize a new SwallowKit project.
 ### Usage
 
 ```bash
-npx swallowkit init [project-name] [options]
+npx swallowkit@beta init [project-name] [options]
 # or
-pnpm dlx swallowkit init [project-name] [options]
+pnpm dlx swallowkit@beta init [project-name] [options]
 ```
 
 ### Arguments
@@ -182,10 +182,10 @@ You can skip prompts by passing flags directly:
 
 ```bash
 # Fully non-interactive
-npx swallowkit init my-app --cicd github --backend-language csharp --swa-plan free --cosmos-db-mode serverless --vnet outbound
+npx swallowkit@beta init my-app --cicd github --backend-language csharp --swa-plan free --cosmos-db-mode serverless --vnet outbound
 
 # Partially non-interactive (only --cicd specified; the rest will prompt)
-npx swallowkit init my-app --cicd skip
+npx swallowkit@beta init my-app --cicd skip
 ```
 
 This is especially useful when calling the CLI from VS Code extensions or scripts where stdin is not a TTY.
@@ -320,13 +320,13 @@ The generated project (lockfiles, workspace config, CI/CD scripts) matches the d
 
 ```bash
 # Initialize in new directory (interactive)
-npx swallowkit init my-awesome-app
+npx swallowkit@beta init my-awesome-app
 
 # Initialize in new directory (non-interactive)
-npx swallowkit init my-awesome-app --cicd github --swa-plan free --cosmos-db-mode serverless --vnet outbound
+npx swallowkit@beta init my-awesome-app --cicd github --swa-plan free --cosmos-db-mode serverless --vnet outbound
 
 # Using pnpm
-pnpm dlx swallowkit init my-awesome-app
+pnpm dlx swallowkit@beta init my-awesome-app
 
 # After initialization
 cd my-awesome-app
@@ -494,7 +494,7 @@ pnpm dlx swallowkit add-auth [options]
 2. Generates auth Functions (login, me, logout) for the configured backend language (TS/C#/Python)
 3. Generates JWT helper utilities for token verification and role checking
 4. Generates BFF routes (`app/api/auth/login|logout|me/route.ts`) with httpOnly cookie management
-5. Generates Next.js middleware (`middleware.ts`) for cookie-based auth checks and redirects
+5. Generates Next.js `proxy.ts` for preliminary cookie/expiry checks and redirects
 6. Generates a login page (`app/login/page.tsx`)
 7. Generates an auth React context (`lib/auth/auth-context.tsx`) with `useAuth` hook
 8. Updates `lib/api/call-function.ts` to forward the `Authorization` header
@@ -742,103 +742,57 @@ When a model file contains a `connectorConfig` export, scaffold detects it as a 
 
 ### Generated Code
 
-**1. Azure Functions (CRUD endpoints)**
+| Target | Output |
+| --- | --- |
+| TypeScript Functions | `functions/src/<model-kebab>.ts` |
+| C# Functions | `functions/Crud/<Model>CrudFunctions.cs` |
+| Python Functions | `functions/blueprints/<model_snake>.py` |
+| Next.js BFF | `app/api/<modelCamel>/route.ts` and `[id]/route.ts` |
+| React managed BFF | `bff/src/<modelCamel>/index.ts` and `bff/<modelCamel>/function.json` |
+| Next.js UI | Pages and `_components/<Model>Form.tsx` under `app/<model-kebab>/` |
+| React UI | Pages, forms, and route registration under `src/pages/<model-kebab>/` |
+
+TypeScript CRUD uses explicit handlers with Cosmos DB bindings or SDK calls as appropriate. The BFF validates input and responses with shared Zod schemas. Scaffold also records artifact ownership and infrastructure migrations.
+
+### Model requirements
+
+Define Zod schemas in `shared/models/`. Scaffold does not require a `BaseModel` subclass.
 
 ```typescript
-// functions/src/functions/{resource}.ts
-- GET    /api/{resource}       - Get all
-- GET    /api/{resource}/{id}  - Get by ID
-- POST   /api/{resource}       - Create
-- PUT    /api/{resource}/{id}  - Update
-- DELETE /api/{resource}/{id}  - Delete
-```
+// shared/models/todo.ts
+import { z } from 'zod/v4';
 
-Each endpoint includes:
-- ✅ Cosmos DB input/output bindings
-- ✅ Automatic Zod schema validation
-- ✅ Error handling
-- ✅ TypeScript type safety
-- ✅ Factory pattern support (shared `crud-factory.ts`)
-
-**2. Next.js BFF API Routes**
-
-```typescript
-// app/api/{resource}/route.ts
-// app/api/{resource}/[id]/route.ts
-```
-
-Each route:
-- ✅ Calls Azure Functions backend
-- ✅ Automatic schema validation
-- ✅ Error handling
-
-**3. React Components (optional)**
-
-```typescript
-// components/{Resource}List.tsx
-// components/{Resource}Form.tsx
-```
-
-### Prerequisites
-
-**Model file requirements:**
-
-```typescript
-// lib/models/todo.ts
-import { z } from 'zod';
-
-// 1. Define Zod schema
-export const todoSchema = z.object({
+export const Todo = z.object({
   id: z.string(),
   text: z.string().min(1),
   completed: z.boolean().default(false),
-  createdAt: z.string().default(() => new Date().toISOString()),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
 });
-
-// 2. Infer type from schema
-export type TodoType = z.infer<typeof todoSchema>;
+export type Todo = z.infer<typeof Todo>;
 ```
-
-### Examples
 
 ```bash
-# Generate CRUD from Todo model
-npx swallowkit scaffold lib/models/todo.ts
-
-# Generate CRUD from Product model
-npx swallowkit scaffold lib/models/product.ts
-
+npx swallowkit scaffold todo
+npx swallowkit scaffold shared/models/product.ts
 ```
 
-### Usage After Generation
+### Call the generated API
 
-**From frontend:**
+The standard `Todo` API uses the singular `/api/todo`. Updates validate the full input schema, so include required fields rather than sending only changed properties.
 
 ```typescript
-import { api } from '@/lib/api/backend';
-import type { TodoType } from '@/lib/models/todo';
-
-// Get all
-const todos = await api.get<TodoType[]>('/api/todos');
-
-// Create (validated by backend)
-const created = await api.post<TodoType>('/api/todos', {
-  text: 'Buy milk',
-  completed: false
+const response = await fetch('/api/todo');
+const todos = await response.json();
+const created = await fetch('/api/todo', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ text: 'Buy milk', completed: false }),
 });
-
-// Update (validated by backend)
-const updated = await api.put<TodoType>('/api/todos/123', {
-  completed: true
-});
-
-// Delete
-await api.delete('/api/todos/123');
 ```
 
-### Details
-
-See [Scaffold Guide](./scaffold-guide.md) for more information.
+Use the generated authenticated fetch helper on pages that use external-token authentication.
+See the [Scaffold guide](./scaffold-guide.md) and [Authentication guide](./auth-guide.md).
 
 ## swallowkit status
 

@@ -23,11 +23,11 @@ covers its generated paths, authentication, local development and deployment. Th
 
 ::: code-group
 ```bash [npm]
-npx swallowkit init my-app
+npx swallowkit@beta init my-app
 cd my-app
 ```
 ```bash [pnpm]
-pnpm dlx swallowkit init my-app
+pnpm dlx swallowkit@beta init my-app
 cd my-app
 ```
 :::
@@ -49,10 +49,10 @@ To skip prompts, pass flags directly:
 
 ::: code-group
 ```bash [npm]
-npx swallowkit init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
+npx swallowkit@beta init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
 ```
 ```bash [pnpm]
-pnpm dlx swallowkit init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
+pnpm dlx swallowkit@beta init my-app --frontend react --cicd github --backend-language typescript --cosmos-db-mode serverless --vnet none --swa-plan free
 ```
 :::
 
@@ -71,7 +71,7 @@ This generates `shared/models/todo.ts` with a template schema. Edit it:
 
 ```typescript
 // shared/models/todo.ts
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 export const todo = z.object({
   id: z.string(),
@@ -84,7 +84,7 @@ export const todo = z.object({
 export type Todo = z.infer<typeof todo>;
 ```
 
-The `id`, `createdAt`, and `updatedAt` fields are managed by the backend. Define them as `optional()` in the schema.
+`id` must be a required `z.string()` on persistent models. Declare `createdAt` and `updatedAt` as optional when needed. Standard forms do not ask for these values; the BFF removes them from input and the backend sets them during create/update.
 
 ## 3. Generate CRUD code
 
@@ -105,7 +105,7 @@ This generates:
 | BFF routes | `app/api/todo/route.ts`, `app/api/todo/[id]/route.ts` |
 | UI pages | `app/todo/page.tsx`, `app/todo/[id]/page.tsx`, `app/todo/new/page.tsx`, `app/todo/[id]/edit/page.tsx` |
 | UI components | `app/todo/_components/TodoForm.tsx` |
-| Infrastructure | `infra/containers/todo-container.bicep` |
+| Infrastructure | `infra/migrations/0001-create-todo-container/main.bicep` |
 
 For C# backends, the Functions file is `functions/Crud/TodoCrudFunctions.cs`. For Python, it is `functions/blueprints/todo.py`.
 
@@ -155,7 +155,7 @@ my-app/
 │   └── todo.ts            # Azure Functions CRUD handlers
 ├── infra/
 │   ├── main.bicep         # Azure resource definitions
-│   └── containers/        # Cosmos DB container definitions
+│   └── migrations/        # Versioned Cosmos DB container definitions
 ├── lib/
 │   └── api/               # BFF helper (callFunction)
 └── .swallowkit/           # Project metadata

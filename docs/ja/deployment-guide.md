@@ -19,7 +19,7 @@ SwallowKit プロジェクトの Azure リソースをプロビジョニング�
 - [前提条件](#前提条件)
 - [クイックスタート](#クイックスタート)
 - [生成されるリソース](#生成されるリソース)
-- [CI/CD セットアップ](#cicd-セットアップ)
+- [CI/CD ワークフロー](#ci-cd-ワークフロー)
 - [環境変数](#環境変数)
 - [トラブルシューティング](#トラブルシューティング)
 
@@ -35,7 +35,7 @@ SwallowKit プロジェクトの Azure リソースをプロビジョニング�
 ### 1. プロジェクト初期化
 
 ```bash
-npx swallowkit init my-app
+npx swallowkit@beta init my-app
 cd my-app
 ```
 
@@ -50,11 +50,11 @@ npx swallowkit provision --resource-group my-app-rg \
   --location japaneast --swa-location eastasia
 ```
 
-リージョンを省略した場合は対話式に選択します。通常の `provision` は実行すると Azure の状態を確認し、必要なデプロイを開始します。初回は `infra/main.bicep` をデプロイし、インフラの初期状態を baseline 0 として記録します。追加のコマンド承認や machine の plan／apply 操作は不要です。
+リージョンを省略した場合は対話式に選択します。通常の `provision` は実行すると Azure の状態を確認し、必要なデプロイを開始します。初回は `infra/main.bicep` をデプロイし、インフラの初期状態を初期インフラ 0 として記録します。追加のコマンド承認や machine の plan／apply 操作は不要です。
 
 成功後にはリソース名・URL と、CI/CD に必要な3つの値 `AZURE_STATIC_WEB_APPS_API_TOKEN`（SWA のデプロイトークン）、`AZURE_FUNCTIONAPP_NAME`、`AZURE_FUNCTIONAPP_PUBLISH_PROFILE`（発行プロファイルの XML）を表示します。これらはターミナルに表示するだけで、SwallowKit は保存しません。値を取得できなかった場合は取得用の `az` コマンドを表示します。この場合もリソースの provision 自体は成功として扱います。
 
-実行状況は内部のチェックポイントと migration の記録で管理し、中断後の二重デプロイや既存アプリ設定の上書きを防ぎます。エージェント向けの machine／MCP でデプロイする場合は、保存済み plan と明示的な人の承認が必要です。
+実行状況は内部のチェックポイントとマイグレーションの記録で管理し、中断後の二重デプロイや既存アプリ設定の上書きを防ぎます。エージェント向けの machine／MCP でデプロイする場合は、保存済み plan と明示的な人の承認が必要です。
 
 このコマンドは Bicep テンプレートを使用して以下を作成します:
 - Azure Static Web Apps
@@ -68,15 +68,15 @@ npx swallowkit provision --resource-group my-app-rg \
 
 #### 待機の中断と部分完了
 
-Bicep は `--no-wait` で一度だけ送信します。その後、通常の `provision` と `provision --resume` は同じ deployment の状態を確認し、`Succeeded`／`Failed`／`Canceled` になるまで待ちます。全体の待ち時間に上限はないため、10〜20分かかる deployment も1回の実行で完了まで待ち、その後にリソース情報と CI/CD の設定値を表示します。
+Bicep は `--no-wait` で一度だけ送信します。その後、通常の `provision` と `provision --resume` は同じデプロイの状態を確認し、`Succeeded`／`Failed`／`Canceled` になるまで待ちます。全体の待ち時間に上限はないため、10〜20分かかるデプロイも1回の実行で完了まで待ち、その後にリソース情報と CI/CD の設定値を表示します。
 
 個々の az 呼び出しには時間制限があり、一時的な状態照会エラーは再試行します。machine／MCP の apply はエージェントに応答を返すため、1回の待機を既定300秒で区切ります。`--wait-seconds` で0〜3600秒を指定できます。
 
-az の終了コードが0なら、stderr の warning だけで失敗にはしません。大量の出力は読み捨て、出力上限で az を停止しません。診断には exit code、signal、timeout／通信エラー、経過時間、出力を省略した事実を含め、キーや token などを伏せます。
+az の終了コードが0なら、stderr の警告だけで失敗にはしません。大量の出力は読み捨て、出力上限で az を停止しません。診断には終了コード、シグナル、タイムアウト／通信エラー、経過時間、出力を省略した事実を含め、キーやトークンなどを伏せます。
 
-成功後の通常 CLI は、決められたリソース情報の outputs だけを読み、SWA のデプロイトークンと Functions の発行プロファイルを `az` で取得してターミナルに表示します。任意の outputs は表示しません。machine／MCP は deployment outputs を返しません。
+成功後の通常 CLI は、決められたリソース情報の出力値だけを読み、SWA のデプロイトークンと Functions の発行プロファイルを `az` で取得してターミナルに表示します。任意の出力値は表示しません。machine／MCP はデプロイ出力値を返しません。
 
-Ctrl+C や状態を照会できない状態の継続で待機が途中で終わった場合、Azure が `Running`／`Accepted` なら進行中と表示し、`provision-failed` にはしません。照会できない場合や DeploymentNotFound は `unknown`（`blocked`）であり、Azure の失敗を意味しません。`Failed`／`Canceled` では、秘密を伏せた Azure のエラーと deployment operations の原因を示します。`Succeeded` でも migration tag とローカル ledger が未完了なら、全体は **partial** です。
+Ctrl+C や状態を照会できない状態の継続で待機が途中で終わった場合、Azure が `Running`／`Accepted` なら進行中と表示し、`provision-failed` にはしません。照会できない場合や DeploymentNotFound は `unknown`（`blocked`）であり、Azure の失敗を意味しません。`Failed`／`Canceled` では、秘密を伏せた Azure のエラーとデプロイ 操作 の原因を示します。`Succeeded` でもマイグレーションタグとローカル台帳が未完了なら、全体は **partial** です。
 
 `.swallowkit/state/provision/` を保存したまま、表示された run ID（元の plan ID）を使ってください。
 
@@ -86,26 +86,26 @@ pnpm exec swallowkit provision --status <runId>
 pnpm exec swallowkit provision --resume <runId>
 ```
 
-status は読み取り専用です。再開では元の subscription、deployment ID／correlation、fingerprint、migration checksum を再確認し、送信済み deployment を再送しません。未実行の承認済み処理と tag／ledger 更新だけを続けます。Azure 成功後に記録処理が失敗しても、baseline を再デプロイせず、このチェックポイントから記録を完了してください。Ctrl+C や強制終了後も Azure が続く場合があります。自動でキャンセル・削除はしません。強制終了では終了結果を表示できませんが、書き込み前のチェックポイントから復旧できます。
+状態は読み取り専用です。再開では元のサブスクリプション、デプロイ ID／correlation、変更検出用のハッシュ、マイグレーションチェックサムを再確認し、送信済みデプロイを再送しません。未実行の承認済み処理と tag／台帳更新だけを続けます。Azure 成功後に記録処理が失敗しても、初期インフラを再デプロイせず、このチェックポイントから記録を完了してください。Ctrl+C や強制終了後も Azure が続く場合があります。自動でキャンセル・削除はしません。強制終了では終了結果を表示できませんが、書き込み前のチェックポイントから復旧できます。
 
-MCP の provision リクエストをキャンセルした場合も、停止するのはローカルの machine 子プロセス／待機であり、Azure deployment ではありません。元の plan／run ID で状態を確認してから再開してください。MCP のキャンセルや応答の欠落は、Azure の失敗を意味しません。
+MCP の provision リクエストをキャンセルした場合も、停止するのはローカルの machine 子プロセス／待機であり、Azure デプロイではありません。元の plan／run ID で状態を確認してから再開してください。MCP のキャンセルや応答の欠落は、Azure の失敗を意味しません。
 
-#### 旧バージョンの未追跡 baseline を復旧する
+#### 旧バージョンの未追跡初期インフラを復旧する
 
-実行チェックポイントがない版で bootstrap が中断した場合は、まず元の deployment を確認します。タグの修復だけのために新しい bootstrap や `--reconcile` を実行しないでください。
+実行チェックポイントがない版で初期設定が中断した場合は、まず元のデプロイを確認します。タグの修復だけのために新しい初期設定や `--reconcile` を実行しないでください。
 
 ```powershell
 az deployment group show --resource-group <original-rg> --name swallowkit-baseline --subscription <original-subscription> --query "{state:properties.provisioningState,error:properties.error}" -o json
 pnpm exec swallowkit provision -g <original-rg> --subscription <original-subscription> --location japaneast --swa-location eastasia --resume-deployment swallowkit-baseline
 ```
 
-この復旧オプションを含む修正版 CLI で、元のローカル Bicep／parameters と既存 deployment の ARM template／非 secret parameters の一致を確認し、照会と記録処理だけを進めます。deployment create は送りません。Running なら追跡を続け、Succeeded 後に tag／ledger を記録します。不一致、照会不能、secure parameters、legacy manifest、baseline 以外の未追跡 migration は推測せず停止します。元の確認済みファイルを復元し、manifest の置き換えやチェックの回避はしないでください。Azure の生のエラーを共有する前には、秘密がないか確認してください。
+この復旧オプションを含む修正版 CLI で、元のローカルの Bicep とパラメーター と既存デプロイの ARM テンプレートとシークレット以外のパラメーター の一致を確認し、照会と記録処理だけを進めます。デプロイの作成要求は送りません。Running なら追跡を続け、Succeeded 後に tag／台帳を記録します。不一致、照会不能、セキュアなパラメーター、旧形式の台帳、初期インフラ以外の未追跡マイグレーションは推測せず停止します。元の確認済みファイルを復元し、プロジェクト情報ファイルの置き換えやチェックの回避はしないでください。Azure の生のエラーを共有する前には、秘密がないか確認してください。
 
-Azure が terminal `Failed` を返した場合は、ローカルの待機中断とは別の障害です。Cosmos module の失敗は Azure Portal でその module の deployment operations を確認してください。`NotFound: Request url is invalid` だけでは原因を特定できません。Cosmos DB アカウント名と Function App 名は Azure 全体で一意である必要があります。このバージョン以降に init したプロジェクトは `cosmos-<projectName>-<suffix>` と `func-<projectName>-<suffix>` を生成します。suffix は Resource Group から決まるため、Resource Group ごとに別の名前になり、同じ Resource Group への再デプロイでは同じ名前が維持されます。以前のバージョンで init したプロジェクトの `infra/main.bicep` は `cosmos-<projectName>` と `func-<projectName>` を使います。この場合は Resource Group だけ変えても名前は変わりません。また、アカウントや Resource Group を削除した後も、Azure がしばらく名前を保持することがあります（例: `database account ... state is not Online`）。再デプロイ前に既存アカウント名を確認し、再試行のためだけに稼働中アカウントを削除・改名しないでください。[Azure の命名規則](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/resource-name-rules#microsoftdocumentdb)も参照してください。
+Azure が終了 `Failed` を返した場合は、ローカルの待機中断とは別の障害です。Cosmos モジュール の失敗は Azure Portal でそのモジュール のデプロイ 操作 を確認してください。`NotFound: Request url is invalid` だけでは原因を特定できません。Cosmos DB アカウント名と Function App 名は Azure 全体で一意である必要があります。このバージョン以降に init したプロジェクトは `cosmos-<projectName>-<suffix>` と `func-<projectName>-<suffix>` を生成します。接尾辞は リソースグループ から決まるため、リソースグループ ごとに別の名前になり、同じ リソースグループ への再デプロイでは同じ名前が維持されます。以前のバージョンで init したプロジェクトの `infra/main.bicep` は `cosmos-<projectName>` と `func-<projectName>` を使います。この場合は リソースグループ だけ変えても名前は変わりません。また、アカウントや リソースグループ を削除した後も、Azure がしばらく名前を保持することがあります（例: `database account ... state is not Online`）。再デプロイ前に既存アカウント名を確認し、再試行のためだけに稼働中アカウントを削除・改名しないでください。[Azure の命名規則](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/resource-name-rules#microsoftdocumentdb)も参照してください。
 
 ### 3. コードのプッシュ
 
-コードをプッシュして CI/CD ワークフローをトリガーします：
+コードをプッシュして CI/CD ワークフローをトリガーします。
 
 ```bash
 git add .
@@ -113,13 +113,13 @@ git commit -m "Initial deployment"
 git push origin main
 ```
 
-> **注意**: このプッシュで CI/CD ワークフローが自動実行されますが、シークレットが未登録のため**失敗します**。これは想定内です——次のステップに進んでください。
+> **注意**: このプッシュで CI/CD ワークフローが自動実行されますが、シークレットが未登録のため**失敗します**。これは想定内です。次のステップに進んでください。
 
 ### 4. キャンセル・シークレット登録・再実行
 
 #### ステップ 4-1: 自動実行された CI/CD をキャンセル
 
-初回プッシュでトリガーされた CI/CD はシークレットがないため成功しません。キャンセルしてください：
+初回プッシュでトリガーされた CI/CD はシークレットがないため成功しません。キャンセルしてください。
 
 - **GitHub Actions**: Actions タブ → 実行中のワークフローをクリック → Cancel workflow
 - **Azure Pipelines**: Pipelines → 実行中のパイプラインをクリック → Cancel
@@ -152,15 +152,15 @@ git push origin main
 
 ### Cosmos DB の初期データ投入（GitHub Actions / TypeScript・C#・Python）
 
-ローカルで作成・検証した `dev-seeds/<name>/` の JSON を使い、Azure Cosmos DB に初期データを投入できます。モデルの定義、CRUD の生成、seed の保存とローカル検証の流れは[ローカル開発ガイド](./dev-guide.md#dev-seeds)を参照してください。ここでは、検証済みの seed を Azure に投入し、必要に応じて内容を修正する手順を説明します。
+ローカルで作成・検証した `dev-seeds/<name>/` の JSON を使い、Azure Cosmos DB に初期データを投入できます。モデルの定義、CRUD の生成、シードの保存とローカル検証の流れは[ローカル開発ガイド](./dev-guide.md#dev-seeds)を参照してください。ここでは、検証済みのシードを Azure に投入し、必要に応じて内容を修正する手順を説明します。
 
-TypeScript / C# / Python の生成プロジェクトには、手動で初期データを投入する `.github/workflows/initialize-cosmos-seeds.yml` が含まれます。通常の push デプロイでは seed を投入しません。
+TypeScript / C# / Python の生成プロジェクトには、手動で初期データを投入する `.github/workflows/initialize-cosmos-seeds.yml` が含まれます。通常の push デプロイではシードを投入しません。
 
 データ定義は既存の `dev-seeds/<name>/` をそのまま利用します。`npx swallowkit create-dev-seeds local` でテンプレートを作成するか、`npx swallowkit create-dev-seeds local --from-emulator` でローカル Emulator の内容をエクスポートします。JSON を確認・編集し、`npx swallowkit dev --seed-env local` でローカル検証してください。このローカルコマンドは Emulator の対象コンテナーを置き換えます。Azure では後述の通常モードと force モードで書き込み方法を選びます。Azure に投入するファイルだけをレビューしてコミットしてください。
 
 #### 実行前の準備
 
-Azure 上にデータベースと **seed が参照するすべてのコンテナーが存在すること**が前提です。モデルの追加・scaffold 後は、対象のリソースグループへ `swallowkit provision` で未適用のインフラ migration を適用してから seed を投入してください。通常モードも `force` も、データベースやコンテナーは作成しません。shared スキーマの検証や Functions のデプロイが成功していても、対応するコンテナーが Azure 上にあるとは限りません。
+Azure 上にデータベースと **シードが参照するすべてのコンテナーが存在すること**が前提です。モデルの追加・scaffold 後は、対象のリソースグループへ `swallowkit provision` で未適用のインフラマイグレーションを適用してからシードを投入してください。通常モードも `force` も、データベースやコンテナーは作成しません。shared スキーマの検証や Functions のデプロイが成功していても、対応するコンテナーが Azure 上にあるとは限りません。
 
 ```bash
 # 既存アプリのリソースグループと subscription を指定します。
@@ -169,33 +169,33 @@ npx swallowkit provision --resource-group <existing-resource-group> \
   --location <existing-location> --swa-location <existing-swa-location>
 ```
 
-provision の成功、対象データベース内のコンテナー名（大文字・小文字を区別）、Functions の接続先アカウント・データベースを確認します。seed の再試行だけを目的に `--reconcile`、リソース削除、別データベースの作成は行わないでください。provision はリソースをデプロイして費用が発生する場合があるため、プロジェクトの通常のインフラ承認手順に従ってください。
+provision の成功、対象データベース内のコンテナー名（大文字・小文字を区別）、Functions の接続先アカウント・データベースを確認します。シードの再試行だけを目的に `--reconcile`、リソース削除、別データベースの作成は行わないでください。provision はリソースをデプロイして費用が発生する場合があるため、プロジェクトの通常のインフラ承認手順に従ってください。
 
 #### 実行と書き込みモードの選択
 
 リポジトリの `main` から **Actions → Initialize Azure Cosmos DB seed data → Run workflow** を実行し、`seed_name` にディレクトリ名を入力します。`AZURE_FUNCTIONAPP_NAME` に設定済みの Function App 名も確認入力し、完全一致させてください。
 
-ワークフローは、ビルド済みの shared Zod スキーマで seed を検証します。`main` 以外の ref、不正な名前、seed ディレクトリ／JSON の欠落、未知モデル、Zod 検証失敗、500 ドキュメントまたは合計 4 MiB を超える seed は拒否されます。
+ワークフローは、ビルド済みの shared Zod スキーマでシードを検証します。`main` 以外の ref、不正な名前、シードディレクトリ／JSON の欠落、未知モデル、Zod 検証失敗、500 ドキュメントまたは合計 4 MiB を超えるシードは拒否されます。
 
-検証したデータは一時 Function のコードに埋め込み、デプロイ後に HTTP で呼び出して投入します。処理後は保存済みの通常版 Functions パッケージを再デプロイします。HTTP リクエストでは seed 名、任意 JSON、コンテナー名を指定できません。
+検証したデータは一時 Function のコードに埋め込み、デプロイ後に HTTP で呼び出して投入します。処理後は保存済みの通常版 Functions パッケージを再デプロイします。HTTP リクエストではシード名、任意 JSON、コンテナー名を指定できません。
 
 | 入力 | 意味 |
 |---|---|
 | `seed_name` | `dev-seeds/` 内の既存ディレクトリ名（例：`local`） |
 | `function_app_name` | `AZURE_FUNCTIONAPP_NAME` と完全一致する確認入力 |
-| `force` | 既定はオフ。seed のアイテムを作成・上書きし、他のアイテムは削除しない場合だけ有効化 |
+| `force` | 既定はオフ。シードのアイテムを作成・上書きし、他のアイテムは削除しない場合だけ有効化 |
 
-ワークフローはアプリ名からホスト名を組み立てず、デプロイ action の `app-url` 出力を使います。Flex Consumption のホスト名には固有の識別子やリージョンが含まれる場合があります。初期化 POST は1回だけ送信し、その前に同じ endpoint へ認証付きの読み取り専用 GET を最大12回送って起動を待ちます。各リクエストのタイムアウトは10秒、試行間隔は5秒です。GET は一時 Function の token と期限だけを確認し、Cosmos DB にはアクセスしません。準備完了チェックに失敗しても通常版への復元を試行します。404 が続く場合は実際のホスト名、デプロイされた Function の登録情報、起動ログを確認してください。既存プロジェクトではワークフローと `.github/scripts/prepare-cosmos-bootstrap.mjs` を一緒に更新してください。起動待ちを追加したワークフローには、新しい GET handler が必要です。
+ワークフローはアプリ名からホスト名を組み立てず、デプロイ action の `app-url` 出力を使います。Flex Consumption のホスト名には固有の識別子やリージョンが含まれる場合があります。初期化 POST は1回だけ送信し、その前に同じエンドポイントへ認証付きの読み取り専用 GET を最大12回送って起動を待ちます。各リクエストのタイムアウトは10秒、試行間隔は5秒です。GET は一時 Function のトークンと期限だけを確認し、Cosmos DB にはアクセスしません。準備完了チェックに失敗しても通常版への復元を試行します。404 が続く場合は実際のホスト名、デプロイされた Function の登録情報、起動ログを確認してください。既存プロジェクトではワークフローと `.github/scripts/prepare-cosmos-bootstrap.mjs` を一緒に更新してください。起動待ちを追加したワークフローには、新しい GET handler が必要です。
 
-既定の Azure への投入は Create-only です。存在しないアイテムは作成し、内容が同じ既存アイテムは Cosmos システムプロパティを無視してスキップし、異なる場合は競合として失敗します。既存アイテムやコンテナーの置換・削除は行いません。失敗しても先行アイテムが書き込まれている場合があります。表示された件数・競合を確認してから再実行してください。同一 seed を再実行しても、既に作成済みの同一アイテムは変更しません。
+既定の Azure への投入は Create-only です。存在しないアイテムは作成し、内容が同じ既存アイテムは Cosmos システムプロパティを無視してスキップし、異なる場合は競合として失敗します。既存アイテムやコンテナーの置換・削除は行いません。失敗しても先行アイテムが書き込まれている場合があります。表示された件数・競合を確認してから再実行してください。同一シードを再実行しても、既に作成済みの同一アイテムは変更しません。
 
-seed の内容で明示的に上書きする場合は、手動実行時に `force` を選択します。既定値は `false` です。検証済み seed の各アイテムを upsert し、同じ `id`・パーティションキーのアイテムがなければ作成し、あれば全体を置き換えます。
+シードの内容で明示的に上書きする場合は、手動実行時に `force` を選択します。既定値は `false` です。検証済みシードの各アイテムを upsert し、同じ `id`・パーティションキーのアイテムがなければ作成し、あれば全体を置き換えます。
 
-置き換えたアイテムからは seed にないプロパティも除かれます。一方、seed に含まれないアイテムやコンテナーは削除しません。パーティションキーを変更すると別アイテムとして作成され、元のアイテムは残ります。
+置き換えたアイテムからはシードにないプロパティも除かれます。一方、シードに含まれないアイテムやコンテナーは削除しません。パーティションキーを変更すると別アイテムとして作成され、元のアイテムは残ります。
 
 force の指定は一時パッケージに固定し、HTTP リクエストでは変更できません。`upserted` は作成・置き換えを合わせた成功件数で、このモードの `created` と `skipped` は0です。
 
-各アイテムは順に書き込まれるため、途中で失敗しても先行する書き込みは残ります。seed と投入先を確認してから有効にしてください。既存プロジェクトではワークフローと生成スクリプトの両方を更新してください。
+各アイテムは順に書き込まれるため、途中で失敗しても先行する書き込みは残ります。シードと投入先を確認してから有効にしてください。既存プロジェクトではワークフローと生成スクリプトの両方を更新してください。
 
 #### 結果の確認とトラブルシューティング
 
@@ -203,22 +203,22 @@ POST が成功すると件数が返ります。force 実行の例は `{"created"
 
 | 結果 | 意味と対応 |
 |---|---|
-| 起動待ち GET が最初は404、その後成功 | 一時ルートの起動途中です。GET 中には seed を書き込みません。 |
-| 起動待ちが最後まで失敗 | デプロイ先 URL、Function の登録・起動、token 期限、ネットワークを確認します。初期化 POST は未送信です。 |
-| POST が409 / `data-conflict` | 通常モードで既存データとの差分を検出しました。seed の位置を確認し、seed を修正するか、意図して `force` を選びます。 |
-| POST が503、C# の `cosmosStatusCode` が404 | 起動待ちの404とは別の Cosmos リソースエラーです。データベース・コンテナーと接続先を確認します。`upsert-item` の404 / 1003はコンテナー未作成の場合があるため、対象モデルの未適用 migration を provision してから再試行します。 |
+| 起動待ち GET が最初は404、その後成功 | 一時ルートの起動途中です。GET 中にはシードを書き込みません。 |
+| 起動待ちが最後まで失敗 | デプロイ先 URL、Function の登録・起動、トークン期限、ネットワークを確認します。初期化 POST は未送信です。 |
+| POST が409 / `data-conflict` | 通常モードで既存データとの差分を検出しました。シードの位置を確認し、シードを修正するか、意図して `force` を選びます。 |
+| POST が503、C# の `cosmosStatusCode` が404 | 起動待ちの404とは別の Cosmos リソースエラーです。データベース・コンテナーと接続先を確認します。`upsert-item` の404 / 1003はコンテナー未作成の場合があるため、対象モデルの未適用マイグレーションを provision してから再試行します。 |
 | POST がタイムアウト、または `write-outcome-unknown` | 先行する書き込みは残り、失敗した書き込みも完了している可能性があります。診断情報と既存データを確認してから再試行します。外側の503だけで一時的な Cosmos 障害と判断しないでください。 |
 | 通常版への復元が失敗 | デプロイの問題を解消してから、既存のデプロイワークフローで通常版を再デプロイします。 |
 
-C# の初期化で例外が起きた場合は、失敗した処理、コンテナー名、seed 配列の0始まりの位置、経過時間、例外型も応答に含めます。Cosmos の例外では status / substatus、activity ID、再試行待ち時間も返します。外側の HTTP 503 だけでは Cosmos 側の原因は分かりません。例外メッセージ、ドキュメントの値、接続情報は含めません。`upserted` が1以上なら既に部分的な書き込みが発生しているため、診断結果を確認してから再試行の可否を判断してください。
+C# の初期化で例外が起きた場合は、失敗した処理、コンテナー名、シード配列の0始まりの位置、経過時間、例外型も応答に含めます。Cosmos の例外では状態 / substatus、activity ID、再試行待ち時間も返します。外側の HTTP 503 だけでは Cosmos 側の原因は分かりません。例外メッセージ、ドキュメントの値、接続情報は含めません。`upserted` が1以上なら既に部分的な書き込みが発生しているため、診断結果を確認してから再試行の可否を判断してください。
 
-データ競合時の応答には `containerName` と `seedDocumentIndex`（検証済み seed 配列内の0始まりの位置）を含めます。該当する seed アイテムを特定し、その `id` とパーティションキーに対応する Cosmos の既存アイテムと比較してください。エラーにドキュメントの値は含めません。409 は初期化の失敗であり、結果不明やスキップ成功ではありません。差分を確認するまでは既存データを変更しないでください。
+データ競合時の応答には `containerName` と `seedDocumentIndex`（検証済みシード配列内の0始まりの位置）を含めます。該当するシードアイテムを特定し、その `id` とパーティションキーに対応する Cosmos の既存アイテムと比較してください。エラーにドキュメントの値は含めません。409 は初期化の失敗であり、結果不明やスキップ成功ではありません。差分を確認するまでは既存データを変更しないでください。
 
-一時 Function は `authLevel: anonymous` を明示し、さらに `Authorization: Bearer` ヘッダー内の暗号学的に安全な UUID v4 を要求します。GitHub Actions は UUID 生値をマスクし、一時パッケージには SHA-256 ハッシュと期限だけを埋め込みます。token は15分で期限切れになります。これは一時 bearer credential による認証であり、**GitHub の実行者 ID を確認するものではありません**。デプロイは既存の `Azure/functions-action` と `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` を継続利用します。Publish Profile は OIDC より制約があり、OIDC 移行は今回の対象外・将来の改善事項です。Subscription / Resource Group の照合も行いません。実行可能な主体は既存の GitHub Actions 実行権限、ブランチ保護、secret アクセス制御に依存します。本番では `main` とデプロイ実行者を適切に制限してください。
+一時 Function は `authLevel: anonymous` を明示し、さらに `Authorization: Bearer` ヘッダー内の暗号学的に安全な UUID v4 を要求します。GitHub Actions は UUID 生値をマスクし、一時パッケージには SHA-256 ハッシュと期限だけを埋め込みます。トークンは15分で期限切れになります。これは一時 bearer 資格情報による認証であり、**GitHub の実行者 ID を確認するものではありません**。デプロイは既存の `Azure/functions-action` と `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` を継続利用します。Publish Profile は OIDC より制約があり、OIDC 移行は今回の対象外・将来の改善事項です。Subscription / リソースグループ の照合も行いません。実行可能な主体は既存の GitHub Actions 実行権限、ブランチ保護、secret アクセス制御に依存します。本番では `main` とデプロイ実行者を適切に制限してください。
 
-同期 Function の処理期限は180秒で、Azure Functions HTTP Trigger の230秒制限より短くしています。入力上限は500ドキュメント・合計4 MiBです。HTTP 呼び出しがタイムアウトしたり書き込み結果が不明になった場合、成功扱いにはせずワークフローは失敗しますが、通常版への復元は試行します。Create-only のためレビュー済み seed の再試行は安全ですが、先に部分結果と競合を確認してください。通常デプロイと初期化デプロイは同一の非キャンセル型 concurrency group で直列化されます。
+同期 Function の処理期限は180秒で、Azure Functions HTTP Trigger の230秒制限より短くしています。入力上限は500ドキュメント・合計4 MiBです。HTTP 呼び出しがタイムアウトしたり書き込み結果が不明になった場合、成功扱いにはせずワークフローは失敗しますが、通常版への復元は試行します。Create-only のためレビュー済みシードの再試行は安全ですが、先に部分結果と競合を確認してください。通常デプロイと初期化デプロイは実行中の処理をキャンセルしない同一の同時実行グループ で直列化されます。
 
-この二段階デプロイは初回構築・アプリ公開前の初期化を基本用途としてください。稼働中の Flex Consumption Function App へのパッケージ再デプロイは、停止や実行中リクエストへの影響を生じる可能性があります。利用中のアプリに適用する場合は、停止時間と処理影響を事前評価してください。Cosmos DB のネットワークや firewall は緩和しません。Cosmos が Private Endpoint 限定の場合も、既存の VNet / Managed Identity 設定で Functions から接続できる必要があります。GitHub-hosted runner が Function App の HTTP endpoint に到達できない場合も失敗し、自動で公開設定を変更することはありません。
+この二段階デプロイは初回構築・アプリ公開前の初期化を基本用途としてください。稼働中の Flex Consumption Function App へのパッケージ再デプロイは、停止や実行中リクエストへの影響を生じる可能性があります。利用中のアプリに適用する場合は、停止時間と処理影響を事前評価してください。Cosmos DB のネットワークや firewall は緩和しません。Cosmos が Private Endpoint 限定の場合も、既存の VNet / Managed Identity 設定で Functions から接続できる必要があります。GitHub-hosted runner が Function App の HTTP エンドポイントに到達できない場合も失敗し、自動で公開設定を変更することはありません。
 
 通常版への復元に失敗した場合、ワークフローは失敗し復旧エラーを表示します。既存 Publish Profile の問題を解消後、`main` から **Deploy Azure Functions** を実行して通常版を再デプロイしてください。タイムアウトは書き込み未実行を意味しません。再試行の前に部分結果を確認してください。
 
@@ -355,7 +355,7 @@ infra/
     └── 0001-add-search/     # 追加リソース用の独立 Bicep
 ```
 
-モデルを scaffold すると、新しい Cosmos DB コンテナーは migration として生成されます。任意の追加リソースは次のコマンドで作成します。
+モデルを scaffold すると、新しい Cosmos DB コンテナーはマイグレーションとして生成されます。任意の追加リソースは次のコマンドで作成します。
 
 ```bash
 npx swallowkit create-migration add-search
@@ -363,7 +363,7 @@ npx swallowkit create-migration add-search
 npx swallowkit provision -g my-app-rg --location japaneast --swa-location eastasia
 ```
 
-`provision` は Resource Group タグの version/checksum とローカル manifest を比較し、未適用 migration だけを昇順に実行します。各 migration の成功後にタグを進めます。待機や tag/ledger 更新が中断した場合は、新しい deployment を作らず、元の実行チェックポイントから再開してください。適用済み migration は編集せず、修正用の新しい migration を追加してください。
+`provision` は リソースグループ タグの version/チェックサムとローカルプロジェクト情報ファイルを比較し、未適用マイグレーションだけを昇順に実行します。各マイグレーションの成功後にタグを進めます。待機や tag/台帳更新が中断した場合は、新しいデプロイを作らず、元の実行チェックポイントから再開してください。適用済みマイグレーションは編集せず、修正用の新しいマイグレーションを追加してください。
 
 ### 旧バージョンで作成したプロジェクト
 
@@ -374,11 +374,11 @@ npx swallowkit provision -g my-app-rg \
   --adopt-existing --baseline 0 --what-if
 ```
 
-最初のコマンドは現在の `infra/` を baseline 0 として記録するだけで、Azure を変更しません。adoption も `main.bicep` をデプロイせず、確認後に状態タグだけを追加します。what-if に Create/Delete が含まれる場合は、未デプロイ変更を migration へ切り出すまで停止します。Modify は警告として表示されるため、Portal で追加した Functions 設定などを確認してください。
+最初のコマンドは現在の `infra/` を初期インフラ 0 として記録するだけで、Azure を変更しません。adoption も `main.bicep` をデプロイせず、確認後に状態タグだけを追加します。what-if に Create/Delete が含まれる場合は、未デプロイ変更をマイグレーションへ切り出すまで停止します。Modify は警告として表示されるため、Portal で追加した Functions 設定などを確認してください。
 
 ### Baseline の明示的な再適用
 
-既存 baseline リソースを変更する必要がある場合だけ `--reconcile --what-if` を使います。
+既存初期インフラリソースを変更する必要がある場合だけ `--reconcile --what-if` を使います。
 
 ```bash
 npx swallowkit provision -g my-app-rg \
@@ -386,7 +386,7 @@ npx swallowkit provision -g my-app-rg \
   --reconcile --what-if
 ```
 
-reconcile は `main.bicep` 全体を再デプロイし、Functions の app settings など template 管理プロパティを戻す可能性があります。通常の `provision` が自動的に reconcile へ切り替わることはありません。
+reconcile は `main.bicep` 全体を再デプロイし、Functions の app settings など テンプレートで管理するプロパティを戻す可能性があります。通常の `provision` が自動的に reconcile へ切り替わることはありません。
 
 ## トラブルシューティング
 

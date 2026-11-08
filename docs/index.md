@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "SwallowKit"
   text: "Schema-driven scaffolding"
-  tagline: "Keep your Next.js frontend, BFF, Azure Functions backend, and infrastructure aligned through shared Zod schemas."
+  tagline: "SwallowKit 2.x prerelease documentation: generate Next.js or React applications, BFF routes, Azure Functions, and infrastructure from shared Zod schemas."
   image:
     src: /logo.png
     alt: SwallowKit

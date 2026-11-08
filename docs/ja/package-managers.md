@@ -4,37 +4,37 @@ Node.js 22.14 以上、pnpm 11／12 または npm 10 以上を使います。SWA
 
 | 操作 | pnpm | npm |
 | --- | --- | --- |
-| 新規作成 | `pnpm dlx swallowkit init my-app` | `npx swallowkit init my-app` |
-| model | `pnpm exec swallowkit create-model todo` | `npx swallowkit create-model todo` |
+| 新規作成 | `pnpm dlx swallowkit@beta init my-app` | `npx swallowkit@beta init my-app` |
+| モデル | `pnpm exec swallowkit create-model todo` | `npx swallowkit create-model todo` |
 | scaffold | `pnpm exec swallowkit scaffold todo` | `npx swallowkit scaffold todo` |
 | 開発 | `pnpm exec swallowkit dev` | `npx swallowkit dev` |
 | 検証 | `pnpm exec swallowkit machine verify project` | `npx swallowkit machine verify project` |
-| build | `pnpm run build` | `npm run build` |
+| ビルド | `pnpm run build` | `npm run build` |
 | lockfile に従う導入 | `pnpm install --frozen-lockfile` | `npm ci` |
 
 通常操作は `cd my-app` 後に実行します。生成プロジェクトは生成に使った SwallowKit のバージョンを固定します。`npx` もそのローカル版を使います。未導入時のダウンロードを禁止するには `npx --no-install swallowkit …` を使えます。グローバルインストールは不要です。
 
-`init --package-manager npm|pnpm` が最優先です。未指定なら起動元の user agent を使うため、pnpm がインストール済みでも `npx` から起動すれば npm を選びます。user agent のない直接起動では利用可能な pnpm、次に npm を選びます。既存プロジェクトの操作は metadata と lockfile を参照します。
+`init --package-manager npm|pnpm` が最優先です。未指定なら起動元のパッケージマネージャーを示す user agent を使うため、pnpm がインストール済みでも `npx` から起動すれば npm を選びます。user agent のない直接起動では利用可能な pnpm、次に npm を選びます。既存プロジェクトの操作はメタデータと lockfile を参照します。
 
-root の install で `shared/`、TypeScript backend なら `functions/` も導入します。選択した lockfile だけをコミットしてください。pnpm は `pnpm-workspace.yaml`、npm は npm workspaces と `package-lock.json` を使います。Functions の CI は選択した manager で root の frozen install を実行します。Next.js の SWA デプロイは内部の npm/Oryx に合わせ、CI の checkout だけ npm 用に変換する例外です（後述）。React の SWA デプロイはビルド済みの成果物を使います。`devEngines.packageManager` は対応範囲を指定し、pnpm は選択した版を lockfile に保存します。patch 固定を生成しません。[pnpm 11 の仕様](https://github.com/pnpm/pnpm.io/blob/main/blog/releases/11.0.md)も参照してください。
+ルートでの依存関係のインストールで `shared/`、TypeScript バックエンドなら `functions/` も導入します。選択した lockfile だけをコミットしてください。pnpm は `pnpm-workspace.yaml`、npm は npm workspaces と `package-lock.json` を使います。Functions の CI は選択したパッケージマネージャーでルートでの lockfile に従うインストール を実行します。Next.js の SWA デプロイは内部の npm/Oryx に合わせ、CI の checkout だけ npm 用に変換する例外です（後述）。React の SWA デプロイはビルド済みの成果物を使います。`devEngines.packageManager` は対応範囲を指定し、pnpm は選択した版を lockfile に保存します。特定のパッチバージョンには固定しません。[pnpm 11 の仕様](https://github.com/pnpm/pnpm.io/blob/main/blog/releases/11.0.md)も参照してください。
 
-MCP は最新情報を使うため、選択した manager で意図的に `swallowkit@latest` を解決します。`.mcp.json` は pnpm の package/dlx または npm の `npx --yes --package` を使います。通常のローカル CLI とは独立して更新されるため、beta のバージョン差が生じる可能性があります。未キャッシュの版にはネットワークが必要です。オフライン・再現性が必要な場合は `.mcp.json` 内の `SWALLOWKIT_MCP_VERSION` を指定して事前にキャッシュするか、ローカル machine CLI を使います。npm project の MCP に pnpm は不要です。`latest` より新しいプレリリース版のプロジェクトはその版に固定されます。選び直す場合は `swallowkit configure-mcp` を実行してください（[AI/MCP ガイド](./ai-mcp-guide.md#mcp-のバージョン選択)を参照）。
+MCP は最新情報を使うため、選択したパッケージマネージャーで意図的に `swallowkit@latest` を解決します。`.mcp.json` は pnpm の package/dlx または npm の `npx --yes --package` を使います。通常のローカル CLI とは独立して更新されるため、beta のバージョン差が生じる可能性があります。未キャッシュの版にはネットワークが必要です。オフライン・再現性が必要な場合は `.mcp.json` 内の `SWALLOWKIT_MCP_VERSION` を指定して事前にキャッシュするか、ローカル machine CLI を使います。npm プロジェクトの MCP に pnpm は不要です。`latest` より新しいプレリリース版のプロジェクトはその版に固定されます。選び直す場合は `swallowkit configure-mcp` を実行してください（[AI/MCP ガイド](./ai-mcp-guide.md#mcp-のバージョン選択)を参照）。
 
-Azure Functions Core Tools v4 と各 backend runtime は別途必要な開発環境です。そのバイナリ installer は CLI の依存に含めません。frontend 単独なら `dev --no-functions --no-swa` を利用できます。
+Azure Functions Core Tools v4 と各バックエンド実行環境は別途必要な開発環境です。そのバイナリーのインストーラー は CLI の依存に含めません。フロントエンド単独なら `dev --no-functions --no-swa` を利用できます。
 
-## build script と security policy の切り分け
+## ビルドスクリプトとセキュリティポリシーの切り分け
 
-SwallowKit CLI の起動に `esbuild` の build script 承認は不要です。旧版の `init` で `ERR_PNPM_IGNORED_BUILDS` が `esbuild` を示す場合は、SwallowKit を更新してから再実行してください。
+SwallowKit CLI の起動に `esbuild` のビルドスクリプトの実行承認は不要です。旧版の `init` で `ERR_PNPM_IGNORED_BUILDS` が `esbuild` を示す場合は、SwallowKit を更新してから再実行してください。
 
-生成アプリの project-local `allowBuilds` は、不要な `keytar`（SWA CLI のネイティブ資格情報ストア。`swa start` では不要）、`protobufjs`（Application Insights 経由のバージョン指定に関する通知）、`unrs-resolver`（native binding の fallback installer。対応 platform では optional な配布済み binary を利用）の script を明示的に **拒否** します。これらの実行許可は与えません。React 構成では、Vite／BFF のビルドに必要な `esbuild` だけを別途許可します。未知の依存は引き続きレビュー対象です。wildcard、global 許可、release age・trust policy の例外は生成しません。
+生成アプリのプロジェクト内の `allowBuilds` は、不要な `keytar`（SWA CLI のネイティブ資格情報ストア。`swa start` では不要）、`protobufjs`（Application Insights 経由のバージョン指定に関する通知）、`unrs-resolver`（ネイティブバインディングを補うインストーラー。対応環境では任意依存として配布されたバイナリーを利用）のスクリプトを明示的に **拒否** します。これらの実行許可は与えません。React 構成では、Vite／BFF のビルドに必要な `esbuild` だけを別途許可します。未知の依存は引き続きレビュー対象です。ワイルドカードや環境全体への許可、公開後の待機期間（release age）や信頼性（trust）のポリシーの例外は生成しません。
 
 `2.0.0-alpha.1` の React 初期化で `ERR_PNPM_IGNORED_BUILDS: keytar@7.9.0` が出た場合は、この修正を含むバージョンで `init` をやり直してください。初期化に失敗すると、新しく作成したプロジェクトディレクトリは削除されます。既存の pnpm プロジェクトでは、`pnpm-workspace.yaml` の既存の `allowBuilds` に `keytar: false` を追加し、他の設定を残して `pnpm install` を実行します。これは実行の拒否を記録する設定であり、資格情報ストアのネイティブバイナリを導入したり、pnpm の検査を緩めたりするものではありません。
 
-生成する開発フローは `swa start` を使い、CI のデプロイは `swa login` ではなく SWA action で行います。別途 `swa login` を使い、OS のキーチェーンへの資格情報保存が必要な場合だけ、`keytar` とそのネイティブ installer を確認したうえで、そのプロジェクトの設定を `keytar: true` に変更し、`pnpm rebuild keytar` を実行してください。永続保存を使わない場合は `swa login --no-use-keychain` を利用できます。いずれもグローバル設定は変更しないでください。
+生成する開発フローは `swa start` を使い、CI のデプロイは `swa login` ではなく SWA action で行います。別途 `swa login` を使い、OS のキーチェーンへの資格情報保存が必要な場合だけ、`keytar` とそのネイティブインストーラーを確認したうえで、そのプロジェクトの設定を `keytar: true` に変更し、`pnpm rebuild keytar` を実行してください。永続保存を使わない場合は `swa login --no-use-keychain` を利用できます。いずれもグローバル設定は変更しないでください。
 
-別の package が表示されたら `pnpm why <package>` とその `package.json`／script を確認し、アプリや platform に本当に必要か判断してください。必要な場合だけ内容をレビューし project-local に許可します。script は利用者の権限でコードを実行します。init を通すための一括承認や security controls の無効化は不要です。
+別のパッケージが表示されたら `pnpm why <package>` とその `package.json` とスクリプトを確認し、アプリや実行環境に本当に必要か判断してください。必要な場合だけ内容をレビューし、プロジェクト内で許可します。スクリプトは利用者の権限でコードを実行します。init を通すための一括承認やセキュリティ設定の無効化は不要です。
 
-pnpm の `dlx`／`create` にも、親 project を含む release-age・trust policy が適用されます。新しい beta や依存が待機期間中である場合は意図的な拒否です。適格になるまで待つか、既に適格な版を使ってください。SwallowKit は迂回しません。[pnpm の bootstrap security 仕様](https://pnpm.io/cli/pnx#security-and-trust-policies)を参照してください。
+pnpm の `dlx`／`create` にも、親プロジェクトを含む公開後の待機期間・信頼性のポリシーが適用されます。新しい beta や依存が待機期間中である場合は意図的な拒否です。適格になるまで待つか、既に適格な版を使ってください。SwallowKit は迂回しません。[pnpm の初期設定のセキュリティ仕様](https://pnpm.io/cli/pnx#security-and-trust-policies)を参照してください。
 
 
 ## pnpm プロジェクトの SWA デプロイ
@@ -57,4 +57,4 @@ CLI を更新しても、既存アプリのワークフローは自動更新さ�
 | Oryx 内の `npm ci` で lockfile 不整合 | SWA の `app_build_command` を `npm run build` にします。runner 側の `npm ci` は維持します。 |
 | `Node version 24 … is not supported` | SWA に渡す `package.json` の `engines.node` を `>=22.14.0 <23` にします。 |
 
-パッケージマネージャーの検査だけを無効化しても、workspace の依存参照や build コマンドの不一致は解消しません。npm 用変換のステップ全体を確認してください。
+パッケージマネージャーの検査だけを無効化しても、ワークスペースの依存参照やビルドコマンドの不一致は解消しません。npm 用変換のステップ全体を確認してください。

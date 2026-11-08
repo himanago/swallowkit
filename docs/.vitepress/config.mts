@@ -52,6 +52,7 @@ export default defineConfig({
         'Schema-driven application scaffolding for Next.js or React on Azure',
       themeConfig: {
         nav: [
+          { text: '2.x docs (beta)', link: '/en/versions' },
           { text: 'Getting Started', link: '/en/getting-started' },
           { text: 'Guides', link: '/en/scaffold-guide' },
           { text: 'CLI Reference', link: '/en/cli-reference' },
@@ -70,6 +71,7 @@ export default defineConfig({
               text: 'Overview',
               items: [
                 { text: 'Introduction', link: '/en/' },
+                { text: 'Versions and installation', link: '/en/versions' },
                 { text: 'Getting started', link: '/en/getting-started' },
                 { text: 'Core concepts', link: '/en/concepts' },
               ],
@@ -103,9 +105,10 @@ export default defineConfig({
       lang: 'ja',
       title: 'SwallowKit',
       description:
-        'Next.js / React と Azure のためのスキーマ駆動アプリケーション scaffolding',
+        'Zod スキーマから Next.js / React と Azure のアプリケーションを生成',
       themeConfig: {
         nav: [
+          { text: '2.x ドキュメント（beta）', link: '/ja/versions' },
           { text: 'はじめる', link: '/ja/getting-started' },
           { text: 'ガイド', link: '/ja/scaffold-guide' },
           { text: 'CLI リファレンス', link: '/ja/cli-reference' },
@@ -124,6 +127,7 @@ export default defineConfig({
               text: '概要',
               items: [
                 { text: 'イントロダクション', link: '/ja/' },
+                { text: '対象バージョンと導入', link: '/ja/versions' },
                 { text: 'はじめる', link: '/ja/getting-started' },
                 { text: '基本概念', link: '/ja/concepts' },
               ],

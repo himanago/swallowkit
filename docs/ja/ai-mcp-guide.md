@@ -2,28 +2,29 @@
 
 pnpm 11/12 と npm の使い分けは[コマンドとトラブルシューティング](./package-managers.md)を参照してください。
 
-SwallowKit は machine-readable CLI（`swallowkit machine`）と同梱の MCP stdio サーバー（`swallowkit-mcp`）を提供します。コーディングエージェントがファイルシステムを推測して直接編集するのではなく、正式な generator / inspector / validator を経由して操作できるようにするためです。
+SwallowKit は、JSON を返す CLI（`swallowkit machine`）と、標準入出力で接続する MCP サーバー（`swallowkit-mcp`）を提供します。
+エージェントは、現在の構成と編集規則を調べてから、標準の生成・検査・検証処理を呼び出せます。
 
-discovery、specification、planning、implementation、verification、review の全体で
+調査、仕様、計画、実装、検証、レビューの全体で
 SwallowKit を利用する指針は、[コーディングエージェントガイド](./coding-agent-guide.md)を
 参照してください。
 
 ## アーキテクチャ
 
-統合面は次のように分離されています。
+CLI、MCP、プロジェクト情報は、次の役割を担います。
 
-1. **人間向け CLI**: interactive prompt、colored log、人間向けガイダンス
-2. **machine CLI**: `swallowkit machine ...` による deterministic JSON 出力
-3. **MCP runtime**: `swallowkit-mcp` による stdio adapter
-4. **project manifest**: `.swallowkit/project.json` に保持される framework-owned metadata
+1. **人間向け CLI**: 対話プロンプト、色付きのログ、人間向けガイダンス
+2. **machine CLI**: `swallowkit machine ...` による再現可能な生成と JSON 形式の応答
+3. **MCP 実行環境**: `swallowkit-mcp` による標準入出力を使う接続処理
+4. **プロジェクト情報ファイル**: `.swallowkit/project.json` に保持される SwallowKit 管理のメタデータ
 
-これにより、framework ロジックは SwallowKit 本体に集約しつつ、AI integration の境界を明示できます。
+これにより、SwallowKit の生成・検査処理は SwallowKit 本体に集約しつつ、AI 連携の境界を明示できます。
 
 ## Machine CLI
 
-AI が構造化された project 情報を取得したい場合や、interactive prompt なしで正式 generator を呼びたい場合に使います。
+AI が構造化されたプロジェクト情報を取得したい場合や、対話プロンプトなしで標準の生成処理を呼びたい場合に使います。
 
-### Inspection
+### プロジェクトの検査
 
 ::: code-group
 ```bash [npm]
@@ -40,12 +41,12 @@ pnpm exec swallowkit machine inspect routes
 
 返される主な情報:
 
-- manifest の取得元
-- entity / schema metadata
-- BFF / Functions の route 対応
-- connector / auth / architecture metadata
+- プロジェクト情報ファイルの取得元
+- モデル / スキーマメタデータ
+- BFF / Functions のルート対応
+- コネクタ / 認証 / 構成情報
 
-### Validation
+### 構成の検証
 
 ::: code-group
 ```bash [npm]
@@ -56,15 +57,15 @@ pnpm exec swallowkit machine validate project
 ```
 :::
 
-validation は構造化 violation として以下を返します。
+検証で見つかった問題は、種類ごとに構造化して返します。
 
-- config error
-- naming issue
-- generated artifact 欠落
-- required file / directory 欠落
-- SwallowKit の layer をまたぐ forbidden dependency
+- 設定のエラー
+- 命名規則への違反
+- 生成物欠落
+- 必須のファイルやディレクトリの欠落
+- レイヤー間で禁止されている依存関係
 
-### Generation
+### コード生成
 
 ::: code-group
 ```bash [npm]
@@ -79,9 +80,9 @@ pnpm exec swallowkit machine generate scaffold todo --api-only
 ```
 :::
 
-生成も非対話で行われ、作成・更新された artifact を JSON で返します。
+生成も非対話で行われ、作成・更新された生成物を JSON で返します。
 
-### Plan / Apply
+### 変更計画と適用
 
 書き込み前に変更内容を確認する 2 段階フローです。自律エージェントにはこちらを推奨します。
 
@@ -102,11 +103,11 @@ pnpm exec swallowkit machine apply scaffold --plan <planId> --approve
 
 - `plan scaffold` は生成対象のファイルを変更せず、作成 / 更新 / 上書き予定のファイル一覧と競合（conflict）を返します。plan は `.swallowkit/state/plans/` に保存され、`planId` で参照できます。
 - `apply scaffold --plan <planId>` は、plan 作成後に対象ファイルが変更されていた場合 `stale-plan`（`status: "blocked"`）で拒否します。
-- 生成後に手編集された managed ファイルを上書きする場合は `approval-required`（`status: "requires-human"`）となり、`--approve` の明示が必要です。
-- C# / Python の OpenAPI / native schema 生成物も plan に含まれ、stale-plan 検出、競合判定、承認、生成物台帳の対象になります。plan では外部 tool やネットワークを使用せず、NSwag / datamodel-code-generator による検証と環境 bootstrap は apply 時だけ実行されます。この検証はファイル書き込み前のプリフライトとして行われ、失敗した場合（例: .NET SDK 未インストール）はプロジェクトを一切変更せずに失敗します。
-- `plan auth --provider <p>` / `apply auth` も同じ 2 段階フローで動作します（`custom-jwt` / `swa` / `external-token` / `none`、`--scheme` で named scheme 追加）。
+- 生成後に手編集された 管理対象のファイルを上書きする場合は `approval-required`（`status: "requires-human"`）となり、`--approve` の明示が必要です。
+- C# / Python の OpenAPI / ネイティブスキーマ生成物も plan に含まれ、stale-plan 検出、競合判定、承認、生成物台帳の対象になります。plan では外部ツール やネットワークを使用せず、NSwag / datamodel-code-generator による検証と環境初期設定は apply 時だけ実行されます。この検証はファイル書き込み前のプリフライトとして行われ、失敗した場合（例: .NET SDK 未インストール）はプロジェクトを一切変更せずに失敗します。
+- `plan auth --provider <p>` / `apply auth` も同じ 2 段階フローで動作します（`custom-jwt` / `swa` / `external-token` / `none`、`--scheme` で 名前付きスキーム追加）。
 
-### Provision（Plan / Apply、常に承認必須）
+### Provision（変更計画と適用、常に承認必須）
 
 ::: code-group
 ```bash [npm]
@@ -119,14 +120,14 @@ pnpm exec swallowkit machine apply provision --plan <planId> --approve
 ```
 :::
 
-- `plan provision` はローカル Bicep を解析し、az が使える場合は Azure の subscription／Resource Group／migration 状態を照会します。リソースは作成しませんが、オンラインの計画には Azure 接続と `az login` が必要です。az が使えない場合の offline preview は適用できません。
+- `plan provision` はローカル Bicep を解析し、az が使える場合は Azure のサブスクリプション／リソースグループ／マイグレーション状態を照会します。リソースは作成しませんが、オンラインの計画には Azure 接続と `az login` が必要です。az が使えない場合に作成するオフラインの計画は、適用できません。
 - `--what-if` は追加で Azure の変更予定を照会します。リソースは変更しません。
 - provision は課金リソースを作成するため、plan は常に `requiresApproval: true`（`status: "requires-human"`）です。`apply provision` は人間の承認を反映した `--approve` がない限り実行されません。
-- 適用時は書き込み前に実行チェックポイントを保存し、Bicep を `--no-wait` で一度だけ送信して時間を区切って確認します。既定300秒、`--wait-seconds` は0〜3600秒です。`status`／`outcome`／`nextActions` を確認してください。Running／Accepted は `in-progress`、照会不能は `unknown`、Succeeded でも tag／ledger 未完了なら `partial` です。
-- `machine inspect provision --plan <runId> [--wait-seconds 300]`／`swallowkit_inspect_provision` は読み取り専用です。再度人間の承認を得て `apply provision --plan <runId> --approve`／`swallowkit_apply_provision` で元のチェックポイントから再開します。送信済み deployment は再送しません。`.swallowkit/state/provision/` を保持し、待機・記録の修復だけのために reconcile／cancel／delete を使わないでください。Ctrl+C 後も Azure は続く場合があります。
-- 旧版の未追跡 baseline は、元の target／regions と `plan provision --resume-deployment <name>` を使えます。ARM template／非 secret parameters がローカルと一致しなければ停止します。診断では秘密を伏せ、deployment outputs の値は返しません。[復旧手順](./deployment-guide.md)も確認してください。
+- 適用時は書き込み前に実行チェックポイントを保存し、Bicep を `--no-wait` で一度だけ送信して時間を区切って確認します。既定300秒、`--wait-seconds` は0〜3600秒です。`status`／`outcome`／`nextActions` を確認してください。Running／Accepted は `in-progress`、照会不能は `unknown`、Succeeded でも tag／台帳未完了なら `partial` です。
+- `machine inspect provision --plan <runId> [--wait-seconds 300]`／`swallowkit_inspect_provision` は読み取り専用です。再度人間の承認を得て `apply provision --plan <runId> --approve`／`swallowkit_apply_provision` で元のチェックポイントから再開します。送信済みデプロイは再送しません。`.swallowkit/state/provision/` を保持し、待機・記録の修復だけのために reconcile／cancel／delete を使わないでください。Ctrl+C 後も Azure は続く場合があります。
+- 旧版の未追跡初期インフラは、元の対象／リージョンと `plan provision --resume-deployment <name>` を使えます。ARM テンプレートとシークレット以外のパラメーター がローカルと一致しなければ停止します。診断では秘密を伏せ、デプロイの出力値は返しません。[復旧手順](./deployment-guide.md)も確認してください。
 
-### Responsibility Boundary / Infra Inspection
+### 責任範囲とインフラの検査
 
 ::: code-group
 ```bash [npm]
@@ -139,10 +140,10 @@ pnpm exec swallowkit machine inspect infra
 ```
 :::
 
-- `inspect boundaries` は **AI の自由生成と SwallowKit の決定論的処理の責任分界点**を機械可読な契約として返します。各 ownership に `zone`（`deterministic` / `ai-authored` / `shared`）と `editPolicy`（`regenerate-via-plan-apply` / `free-edit` / `edit-outside-markers` / `never-hand-edit`）が対応付けられ、台帳に載っていないパスは `conventionRules`（prefix 規約）で解決されます。エージェントは編集前にこの契約を参照し、`deterministic` 領域は plan/apply 経由で変更してください。
-- `inspect infra` は `infra/` 配下の Bicep 資産（params / modules / outputs / container 配線状態）を Azure を呼ばずに解析します。scaffold が生成した container が `main.bicep` に配線されていない場合は `container-not-wired` warning を返します。
+- `inspect boundaries` は **AI の自由生成と SwallowKit の決定論的処理の責任分界点**を機械可読な契約として返します。各所有権に `zone`（`deterministic` / `ai-authored` / `shared`）と `editPolicy`（`regenerate-via-plan-apply` / `free-edit` / `edit-outside-markers` / `never-hand-edit`）が対応付けられ、台帳に載っていないパスは `conventionRules`（パスの先頭による規則）で解決されます。エージェントは編集前にこの契約を参照し、`deterministic` 領域は plan/apply 経由で変更してください。
+- `inspect infra` は `infra/` 配下の Bicep 資産（params / modules / 出力値 / コンテナー配線状態）を Azure を呼ばずに解析します。scaffold が生成したコンテナーが `main.bicep` に配線されていない場合は `container-not-wired` 警告を返します。
 
-### Artifact / Drift Inspection
+### 生成物と記録のずれの検査
 
 ::: code-group
 ```bash [npm]
@@ -155,10 +156,10 @@ pnpm exec swallowkit machine inspect drift
 ```
 :::
 
-- `inspect artifacts` は生成物台帳（`.swallowkit/artifacts.json`）の内容を、ownership（`managed` / `generated-once` / `user-owned` / `extension-point` / `metadata`）と modified / missing フラグ付きで返します。
-- `inspect drift` はスキーマ変更（schema-drift）、手編集（artifact-modified）、欠損（artifact-missing）、generator バージョン差（generator-drift）、manifest 乖離（manifest-drift）を検出し、各 finding に `repairAction` を付与します。
+- `inspect artifacts` は生成物台帳（`.swallowkit/artifacts.json`）の内容を、所有権（`managed` / `generated-once` / `user-owned` / `extension-point` / `metadata`）と modified / missing フラグ付きで返します。
+- `inspect drift` はスキーマ変更（schema-drift）、手編集（artifact-modified）、欠損（artifact-missing）、ジェネレーターのバージョン差（generator-drift）、プロジェクト情報ファイル乖離（manifest-drift）を検出し、各検出結果に `repairAction` を付与します。
 
-### Verify / Explain
+### 検証と失敗の説明
 
 ::: code-group
 ```bash [npm]
@@ -175,14 +176,14 @@ pnpm exec swallowkit machine explain failure --check typecheck
 ```
 :::
 
-- `verify project` は既定で `structure` / `drift` / `typecheck` / `backend-build` を実行し、根拠と `suggestedActions` を返します。structure は各永続モデルに現在の Cosmos コンテナー migration（または一致する baseline 管理コンテナー）があることも確認し、connector と参照される helper schema は除外します。これはローカル定義の検証であり Azure の状態は照会しません。バックエンド検証は C#/TypeScript のコンパイルと Python の構文検査（import や型は対象外）です。ツールチェーンがなければ理由付きで skip になります。`summary.done: true` は失敗がないことを意味し、skip した検査、実際の動作、Azure へのプロビジョニング済みを意味しません。本番ビルドも含める場合は `--checks "structure,drift,typecheck,backend-build,build"` を指定してください。PowerShell ではカンマ区切り値を引用符で囲みます。
-- `--checks` には `build` / `lint` / `test`（package.json の同名 script がある場合のみ実行、なければ skip）も指定できます。
+- `verify project` は既定で `structure` / `drift` / `typecheck` / `backend-build` を実行し、根拠と `suggestedActions` を返します。structure は各永続モデルに現在の Cosmos コンテナーマイグレーション（または一致する初期インフラ管理コンテナー）があることも確認し、コネクタと参照される補助スキーマは除外します。これはローカル定義の検証であり Azure の状態は照会しません。バックエンド検証は C#/TypeScript のコンパイルと Python の構文検査（インポートや型は対象外）です。ツールチェーンがなければ理由付きで省略になります。`summary.done: true` は失敗がないことを意味し、省略した検査、実際の動作、Azure へのプロビジョニング済みを意味しません。本番ビルドも含める場合は `--checks "structure,drift,typecheck,backend-build,build"` を指定してください。PowerShell ではカンマ区切り値を引用符で囲みます。
+- `--checks` には `build` / `lint` / `test`（package.json の同名のスクリプト がある場合のみ実行、なければ省略）も指定できます。
 - `swallowkit.config.json` の `verify.checks` にカスタムチェック（`{ "id": "smoke-api", "command": "node scripts/smoke.js" }`）を定義すると、既定セットに追加されます。id は `^[a-z][a-z0-9-]*$` に一致し、組み込み id と重複しないものだけが有効です。
 - `explain failure` は直近の verify 結果から失敗チェックの証拠と修復アクションを返します。
 
 ## レスポンス形式
 
-machine command は stdout に必ず 1 つの JSON を出力します。
+machine コマンドは stdout に必ず 1 つの JSON を出力します。
 
 ### 成功時
 
@@ -212,11 +213,11 @@ machine command は stdout に必ず 1 つの JSON を出力します。
 }
 ```
 
-### Terminal State
+### 処理の終了・継続状態
 
-すべての machine command は `status` を返し、自律ループの終端判定に使えます。
+すべての machine コマンドは `status` を返し、自律ループの終端判定に使えます。
 
-| status | 意味 |
+| 状態 | 意味 |
 | --- | --- |
 | `complete` | 操作完了。次のステップに進んでよい |
 | `in-progress` | 未解決の問題が残っている（例: verify 失敗）。修正を続ける |
@@ -228,16 +229,16 @@ machine command は stdout に必ず 1 つの JSON を出力します。
 
 主なガードレール系エラーコード:
 
-- `not-a-swallowkit-project`（blocked）— 書き込み系コマンドをプロジェクト外で実行した。プロジェクトルートに移動する
-- `stale-plan`（blocked）— plan 作成後に対象ファイルが変更された。再 plan する
-- `plan-not-found`（blocked）— plan が存在しないか破損している。再 plan する
-- `approval-required`（requires-human）— 上書き・プロビジョニングに人間の承認が必要。エラーではなくガードレール
+- `not-a-swallowkit-project`（blocked）。 書き込み系コマンドをプロジェクト外で実行した。プロジェクトルートに移動する
+- `stale-plan`（blocked）。 plan 作成後に対象ファイルが変更された。再 plan する
+- `plan-not-found`（blocked）。 plan が存在しないか破損している。再 plan する
+- `approval-required`（requires-human）。 上書き・プロビジョニングに人間の承認が必要。エラーではなくガードレール
 
-## Project Manifest
+## プロジェクト情報ファイル
 
-SwallowKit は project semantics を `.swallowkit/project.json` に保持します。
+SwallowKit はプロジェクトの構成情報を `.swallowkit/project.json` に保持します。
 
-次の framework-owned mutation の後で manifest が同期されます。
+次の SwallowKit によるファイルの変更の後でプロジェクト情報ファイルが同期されます。
 
 - `init`
 - `create-model`
@@ -245,11 +246,11 @@ SwallowKit は project semantics を `.swallowkit/project.json` に保持しま�
 - `add-connector`
 - `add-auth`
 
-inspection / validation はこの manifest を project map の一次情報として利用します。manifest が存在しない場合は、現在の project structure から再構築します。
+検査 / 検証はこのプロジェクト情報ファイルをプロジェクト構成の一次情報として利用します。プロジェクト情報ファイルが存在しない場合は、現在のプロジェクト構成から再構築します。
 
-## MCP Server
+## MCP サーバー
 
-MCP 対応の agent platform では、同梱の stdio server を使います。
+MCP 対応のエージェント環境では、同梱の標準入出力型サーバーを使います。
 
 ::: code-group
 ```bash [npm]
@@ -260,7 +261,7 @@ pnpm exec swallowkit-mcp
 ```
 :::
 
-公開される Tool は明示的なものだけです。
+公開されるツールは明示的なものだけです。
 
 - `swallowkit_inspect_project`
 - `swallowkit_inspect_entities`
@@ -286,23 +287,23 @@ pnpm exec swallowkit-mcp
 - `swallowkit_verify_project`
 - `swallowkit_explain_failure`
 
-MCP 層は framework ロジックを持たず、各 Tool 呼び出しを machine CLI に委譲します。
-`swallowkit_generate_model` は新規の非 connector モデルにコンテナー migration を登録します。
-`swallowkit_add_model_migration` は手書きモデルをスキーマ変更せず backfill する操作です。
-`dryRun` は具体的な migration / manifest の書き込み予定を表示しますが、書き込みません。
-`refreshPending` は opt-in であり、pending 定義を更新する前に指定された resource group の
-Azure migration tag と deployment history を読み取り専用で確認します。
-手書きスキーマの backfill を plan/apply で行う場合は
+MCP 層はSwallowKit の生成・検査処理を持たず、各ツール呼び出しを machine CLI に委譲します。
+`swallowkit_generate_model` は新規の非コネクタモデルにコンテナーマイグレーションを登録します。
+`swallowkit_add_model_migration` は手書きモデルをスキーマ変更せず既存モデルへのインフラ定義の追加する操作です。
+`dryRun` は具体的なマイグレーション / プロジェクト情報ファイルの書き込み予定を表示しますが、書き込みません。
+`refreshPending` は opt-in であり、未適用の定義を更新する前に指定されたリソースグループの
+Azure マイグレーションタグとデプロイ履歴 を読み取り専用で確認します。
+手書きスキーマの既存モデルへのインフラ定義の追加を plan/apply で行う場合は
 `swallowkit_plan_model_infrastructure` を使い、返された `planId` を
-`swallowkit_apply_model` に渡します。スキーマを保持し、migration、manifest、
-生成台帳への書き込みを fingerprint 付きで確認できます。
-永続化モデル生成を preview する場合は `swallowkit_plan_model` を使い、
-返された `planId` を `swallowkit_apply_model` に渡します。preview にはスキーマ、shared export、
-migration、manifest、生成台帳が含まれます。
+`swallowkit_apply_model` に渡します。スキーマを保持し、マイグレーション、プロジェクト情報ファイル、
+生成台帳への書き込みを変更検出用のハッシュ付きで確認できます。
+永続化モデルの生成内容を事前に確認する場合は `swallowkit_plan_model` を使い、
+返された `planId` を `swallowkit_apply_model` に渡します。計画にはスキーマ、共有パッケージのエクスポート、
+マイグレーション、プロジェクト情報ファイル、生成台帳が含まれます。
 
-## 生成プロジェクトでの bootstrap
+## 生成プロジェクトでの初期設定
 
-`swallowkit init` は、repository root に project-scoped な `.mcp.json` を出力します。起動ごとに最新の SwallowKit MCP entrypoint を解決し、固定する場合はファイル内の `SWALLOWKIT_MCP_VERSION` を変更します。
+`swallowkit init` は、リポジトリルートにプロジェクト単位のな `.mcp.json` を出力します。起動ごとに最新の SwallowKit MCP entrypoint を解決し、固定する場合はファイル内の `SWALLOWKIT_MCP_VERSION` を変更します。
 
 例:
 
@@ -321,11 +322,11 @@ migration、manifest、生成台帳が含まれます。
 
 実際の挙動:
 
-- **Claude Code** は `.mcp.json` の project-scoped MCP server を読み込めます
-- **GitHub Copilot CLI** も workspace の `.mcp.json` server を検出できます
-- **その他の agent / Codex 系 runtime** も、project-level config をサポートしていれば同じ launcher を再利用でき、未対応なら machine CLI fallback を使います
+- **Claude Code** は `.mcp.json` のプロジェクト単位の MCP サーバー を読み込めます
+- **GitHub Copilot CLI** も ワークスペースの `.mcp.json` に登録したサーバー を検出できます
+- **その他のエージェント / Codex 系実行環境** も、プロジェクト単位の設定をサポートしていれば同じ launcher を再利用でき、未対応なら machine CLI 代替処理を使います
 
-生成される instruction files（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）は、MCP Tool が使えるときはそれを優先し、使えないときは `swallowkit machine ...` にフォールバックするよう案内します。MCP は選択した package manager を使い、npm project に pnpm は不要です。npm 用 launcher は `npx --yes --package swallowkit@${SWALLOWKIT_MCP_VERSION} swallowkit-mcp` です。未キャッシュのバージョンにはネットワークが必要です。
+生成される instruction files（`AGENTS.md`、`CLAUDE.md`、`.github/copilot-instructions.md`）は、MCP ツールが使えるときはそれを優先し、使えないときは `swallowkit machine ...` にフォールバックするよう案内します。MCP は選択したパッケージマネージャーを使い、npm プロジェクトに pnpm は不要です。npm 用 launcher は `npx --yes --package swallowkit@${SWALLOWKIT_MCP_VERSION} swallowkit-mcp` です。未キャッシュのバージョンにはネットワークが必要です。
 
 ### MCP のバージョン選択
 
@@ -341,25 +342,25 @@ migration、manifest、生成台帳が含まれます。
 
 ### Agent Skills（agentskills.io 標準）
 
-`init` は自律ループのランブックを [Agent Skills](https://agentskills.io/) 標準のスキルとしても `.github/skills/` に生成します。Skills 対応エージェント（GitHub Copilot の VS Code / CLI / cloud agent など）は frontmatter の `name` / `description` だけを常駐ロードし、タスクが合致したときだけ本文を読み込みます（progressive disclosure）。
+`init` は自律ループのランブックを [Agent Skills](https://agentskills.io/) 標準のスキルとしても `.github/skills/` に生成します。スキル対応エージェント（GitHub Copilot の VS Code / CLI / cloud エージェントなど）は frontmatter の `name` / `description` だけを常駐ロードし、タスクが合致したときだけ本文を読み込みます（progressive disclosure）。
 
 | スキル | 用途 |
 |--------|------|
 | `swallowkit-add-model` | モデル / CRUD 機能の追加（plan/apply/verify ループ） |
-| `swallowkit-modify-model` | 既存スキーマ変更と drift 解消 |
+| `swallowkit-modify-model` | 既存スキーマ変更と記録とのずれ解消 |
 | `swallowkit-verify-repair` | 検証と修復の収束ループ |
 | `swallowkit-provision` | Azure プロビジョニング（必ず人間の承認を経由） |
 
-Skills 非対応のエージェント向けには、同一内容のランブックが `.swallowkit/workflows/` にあり、`AGENTS.md` から参照されます。
+スキル非対応のエージェント向けには、同一内容のランブックが `.swallowkit/workflows/` にあり、`AGENTS.md` から参照されます。
 
 ## 推奨フロー
 
-- まず **inspect** で SwallowKit が理解している project structure を取得する
+- まず **検査** で SwallowKit が理解しているプロジェクト構成を取得する
 - 書き込みを伴う操作は **plan → (確認) → apply** の 2 段階で行う
-- 適用後は **verify** で検証し、失敗したら **explain failure** で証拠を取得して修正する
-- 生成の前後で **validate** / **inspect drift** を実行して framework rule violation と乖離を確認する
-- framework-owned artifact（ownership: `managed`）は手書き編集より **generate / apply** を優先する
-- アプリ固有ロジックは手書きしてよいが、生成構造と metadata は SwallowKit に管理させる
+- 適用後は **verify** で検証し、失敗したら **explain 失敗** で証拠を取得して修正する
+- 生成の前後で **validate** / **検査記録とのずれ** を実行して構成規則への違反と乖離を確認する
+- SwallowKit 管理の生成物（所有権: `managed`）は手書き編集より **generate / apply** を優先する
+- アプリ固有ロジックは手書きしてよいが、生成構造とメタデータは SwallowKit に管理させる
 
 典型的な自律ループ:
 
@@ -373,13 +374,13 @@ inspect project → plan scaffold → apply scaffold --plan <id> → verify proj
 
 | zone | 編集ポリシー | 例 |
 | --- | --- | --- |
-| `deterministic` | 手編集せず plan/apply で再生成 | `functions/src/*.ts`, `app/api/*/route.ts`, `infra/containers/` |
-| `ai-authored` | AI / 開発者が自由に記述 | `app/**/page.tsx`（生成後）, `lib/`, 独自コード |
+| `deterministic` | 手編集せず plan/apply で再生成 | 台帳に記録された CRUD・BFF の生成物、初期インフラの Bicep |
+| `ai-authored` | AI / 開発者が自由に記述 | 未生成の独自ページ、`lib/` の独自コード、適用前のマイグレーション |
 | `shared` | パスごとの規則に従う | `shared/index.ts` は手動のエクスポート追加可（マーカーなし）。Python の `functions/function_app.py` は登録マーカー外を編集 |
 
-規則は `backend.language` に応じて出し分けます。C# と TypeScript のバックエンドには登録用ファイルがないため、バックエンドのマーカー規則は出力しません。`infra/` のベースラインは `infra/migrations/manifest.json` がチェックサムを記録しているため deterministic です。インフラの追加は新しい migration で行ってください。
+規則は `backend.language` に応じて出し分けます。C# と TypeScript のバックエンドには登録用ファイルがないため、バックエンドのマーカー規則は出力しません。`infra/` の初期定義は `infra/migrations/manifest.json` がチェックサムを記録しており、手編集できません。新しいマイグレーションは適用前だけ編集できます。台帳に登録済みの生成物には、一般的なパス規則より台帳の所有権が優先されます。インフラの追加は新しいマイグレーションで行ってください。
 
 編集前に `inspect boundaries`（または `swallowkit_inspect_boundaries`）で契約を取得し、`deterministic` 領域への変更はモデル編集 + plan/apply に置き換えてください。
-# machine/MCP出力の認証情報
+## machine/MCP 出力の認証情報
 
-`inspect project` と対応するMCP project inspectionは、正規化済みの `auth.schemes` と `auth.authorization.policies` を返します。旧単一provider設定は `default` スキーム、`public` は `anonymous` として現れます。validation診断には設定パスと修正方法が含まれます。利用側は不正または欠落したポリシーを匿名として解釈してはいけません。
+`inspect project` と対応するMCP プロジェクト検査は、正規化済みの `auth.schemes` と `auth.authorization.policies` を返します。旧単一プロバイダー設定は `default` スキーム、`public` は `anonymous` として現れます。検証診断には設定パスと修正方法が含まれます。利用側は不正または欠落したポリシーを匿名として解釈してはいけません。

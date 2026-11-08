@@ -374,8 +374,8 @@ Responsibility boundary principles:
 
 | zone | Edit policy | Examples |
 | --- | --- | --- |
-| `deterministic` | Never hand-edit; regenerate via plan/apply | `functions/src/*.ts`, `app/api/*/route.ts`, `infra/containers/` |
-| `ai-authored` | AI / developers write freely | `app/**/page.tsx` (after generation), `lib/`, custom code |
+| `deterministic` | Never hand-edit; regenerate via plan/apply | Tracked generated CRUD/BFF files; baseline Bicep |
+| `ai-authored` | AI / developers write freely | Custom pages not registered as generated artifacts, custom `lib/` code, unapplied migrations |
 | `shared` | Follow the path-specific rule | `shared/index.ts` allows manual exports (no markers); Python `functions/function_app.py` requires edits outside registration markers |
 
 Convention rules are resolved for the configured `backend.language`: C# and TypeScript backends have no registration file, so no backend marker rule is reported. Baseline `infra/` files are deterministic because `infra/migrations/manifest.json` records their checksums; add infrastructure as new migrations instead.

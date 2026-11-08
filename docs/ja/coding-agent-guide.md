@@ -2,137 +2,108 @@
 
 生成先の指示は `frontend.framework` に応じて Next.js API Routes、または
 React SPA + SWA マネージド Functions BFF を説明します。`app/api` の存在を仮定せず、
-manifest を inspect してください。パス、検証、環境上の注意は [React ガイド](./react-guide.md)を参照してください。
-このツールキット自身の直下の `AGENTS.md` は、生成先のテンプレートとは別の開発者向け指示です。
+`.swallowkit/project.json` を検査してください。パス、検証、環境上の注意は [React ガイド](./react-guide.md)を参照してください。
+このツールキット自身の直下の `AGENTS.md` は生成先のテンプレートとは別の開発者向け指示です。
 
 pnpm 11/12 と npm の使い分けは[コマンドとトラブルシューティング](./package-managers.md)を参照してください。
 
-SwallowKit はコーディングエージェントの開発プロセスを置き換えません。
-要件整理、仕様化、計画、TDD、実装、レビューと合成できる、プロジェクト検査、
-決定論的な変更操作、責務境界、検証ガードレールを提供します。
-
-machine/MCP のコマンドとレスポンス契約の詳細は
-[AI / MCP 統合](./ai-mcp-guide.md)を参照してください。
+SwallowKit は要件整理や実装、レビューの進め方を決めるツールではありません。
+エージェントが現在のプロジェクトを調べ、モデルや設定から生成物を再現し、変更後の構造を検証するために使います。
+コマンドと応答形式の詳細は [AI / MCP 統合](./ai-mcp-guide.md)を参照してください。
 
 ## 目的
 
-開発プロセス Skill は、作業を**どのように進めるか**を決定します。
-SwallowKit は、現在のプロジェクトを**どのように安全かつ再現可能に検査・変更するか**を
-決定する、プロジェクト固有の authoritative layer です。
+開発プロセスを定めるスキルやフレームワークには、要件整理、仕様作成、チケット分割、TDD、実装、レビューの進め方を任せます。
+その中で SwallowKit を呼び出すと、現在のモデル・ルート・所有権を調べ、変更計画を作り、適用後に検証できます。
+エージェントは、取得した情報を根拠に編集するファイルと再生成するファイルを区別します。
 
 ```text
-開発プロセス / エンジニアリングプラクティス
-  例: process Skill、Spec Kit、GSD、BMAD、
-      独自 Skill、通常の Agent interaction
-                    │
-                    │ intent / specification / task
-                    ▼
-             SwallowKit contract
-                    │
-        ┌───────────┼────────────┐
-        │           │            │
-     inspect     plan/apply     verify
-        │           │            │
-        └───────────┼────────────┘
-                    ▼
-       deterministic Azure application
+要件・仕様・作業内容を決める
+  ↓
+現在のプロジェクトと編集規則を調べる（inspect）
+  ↓
+生成物の変更計画を確認して適用する（plan/apply）
+  ↓
+構造を検証し、実際の動作を確かめる（verify・テスト）
 ```
 
-SwallowKit は current-project inspection、deterministic artifact generation、
-drift detection、structural verification、failure explanation、infrastructure
-guardrail を担います。独自の要件、仕様、チケット、semantic review framework は
-導入しません。
+SwallowKit はプロジェクトの検査、生成物の再生成、記録からのずれの検出、構造の検証、失敗した検査の説明を担当します。
+独自の要件定義やチケット管理の仕組みを導入するものではありません。
 
-## 生成される Agent integration files
+## 生成される指示ファイル
 
-`swallowkit init` は、同じ大きな規約を Agent ごとに繰り返すのではなく、
-階層化された integration を生成します。
+`swallowkit init` は、共通の規約と、利用するエージェントや作業ごとの指示を分けて生成します。
 
 | ファイル | 役割 |
 | --- | --- |
-| `AGENTS.md` | canonical always-on project contract |
-| `CLAUDE.md` | `AGENTS.md` を参照する Claude Code adapter |
-| `.github/copilot-instructions.md` | `AGENTS.md` を参照する GitHub Copilot adapter |
-| `.github/instructions/*.instructions.md` | path/layer-specific rules |
-| `.mcp.json` | project-scoped SwallowKit MCP bootstrap |
-| `.github/skills/*/SKILL.md` | task-specific Agent Skills |
-| `.swallowkit/workflows/*.md` | Agent-neutral fallback runbooks |
+| `AGENTS.md` | すべての作業で参照する共通のプロジェクト規約 |
+| `CLAUDE.md` | Claude Code に共通規約の参照を指示するファイル |
+| `.github/copilot-instructions.md` | GitHub Copilot に共通規約の参照を指示するファイル |
+| `.github/instructions/*.instructions.md` | ファイルの場所やレイヤーごとの編集規則 |
+| `.mcp.json` | プロジェクトで使用する SwallowKit MCP サーバーの起動設定 |
+| `.github/skills/*/SKILL.md` | 特定の作業で読み込む Agent Skills |
+| `.swallowkit/workflows/*.md` | Agent Skills 非対応のエージェントも読める作業手順書 |
 
-adapter 自身にも、`AGENTS.md` を読む前から SwallowKit を認識できる最低限の
-always-on rule が含まれます。task-specific な詳細は Skills/runbooks に置き、
-canonical contract を百科事典ではなく operational contract に保ちます。
+Claude Code と Copilot 向けの指示にも、最初に `AGENTS.md` を読むことや MCP の利用方針を記載します。
+モデル追加や検証などの詳しい手順は、対応するスキルまたは作業手順書に置きます。
 
 これらのファイルは Next.js / React、各バックエンド言語、npm / pnpm 向けに `init` が生成します。
 `init` は既存ディレクトリを拒否し、SwallowKit の更新だけでは指示ファイルは更新されません。
 指示ファイル専用の更新コマンドはありません。既存プロジェクトに新しい指示を取り込む場合は、
-選択済みの frontend / backend / package manager に合わせて新旧テンプレートの差分を確認し、
-canonical な `AGENTS.md` と必要な adapter / runbook に手動でマージしてください。
+選択済みのフロントエンド / バックエンド / パッケージマネージャーに合わせて新旧テンプレートの差分を確認し、
+共通の `AGENTS.md` と必要な参照指示ファイル / 作業手順書に手動でマージしてください。
 プロジェクト独自の指示を保ち、既存ドキュメントの上書きや既存プロジェクトへの `init` は避けます。
 
-canonical contract は、Cosmos（本番）/ Emulator（ローカル）の永続化と障害を隠す代替ストレージの禁止、
+共通のプロジェクト規約は、Cosmos（本番）/ Emulator（ローカル）の永続化と障害を隠す代替ストレージの禁止、
 `dev-seeds/<environment>/` の明示的な適用、ローカル操作時のデータ保護を定めます。
-seed ファイル名は複数形のコンテナー名ではなく、モデル名の単数形 kebab-case
-（例: `learning-profile.json`）です。置換成功と判断する前に、実効 DB 名と seed ログを確認します。
-build、fixture、`verify project` は機械的な証拠にとどまります。起動・永続化・API・UI の変更では、
-実アプリの BFF / Functions / DB を通した動作確認も必要です。永続化は再 seed せずに
-再読み込み・再起動して確認します。前提条件の不足、skip、warning、模擬サービスと実サービスの違いを
+シードファイル名は複数形のコンテナー名ではなく、モデル名の単数形 kebab-case
+（例: `learning-profile.json`）です。置換成功と判断する前に、実効 DB 名とシードログを確認します。
+ビルド、テスト用データ、`verify project` は機械的な証拠にとどまります。起動・永続化・API・UI の変更では、
+実アプリの BFF / Functions / DB を通した動作確認も必要です。永続化は再シードせずに
+再読み込み・再起動して確認します。前提条件の不足、省略、警告、模擬サービスと実サービスの違いを
 明示してください。ドキュメントだけの変更には実 DB の検証は不要です。
 
 ## 開発ライフサイクル全体での SwallowKit
 
-### Discovery と requirements clarification
+### 要件整理
 
-実装詳細を人間に質問する前に、現在のプロジェクト、関連する entity、route、infra、
-ownership boundary を検査します。repository や SwallowKit から判明する事実は Agent が
-回答し、人間への質問は本物の product/domain decision に限定します。
+実装の詳細を人に質問する前に、関連するモデル、ルート、インフラ、所有権を調べます。
+リポジトリや検査結果から分かることはエージェントが確認し、アプリの仕様や業務上の判断が必要な点を人に質問します。
 
-### Specification
+### 仕様作成
 
-user intent、observable behavior、acceptance criteria、重要な test seam を記述します。
-SwallowKit architecture と ownership は implementation constraint として扱い、
-生成される各 layer を独立した手動実装 component として記述しません。
+利用者が何をしたときに何が起きるか、受け入れ条件は何か、どの動作をテストするかを記述します。
+SwallowKit の構成と所有権は実装上の条件として扱い、自動生成するレイヤーを別々の手作業として計画しません。
 
-### Planning
+### 計画
 
-capability や ownership が設計判断を変える場合は current interface を検査します。
-学習時のモデル知識から SwallowKit capability を推測してはなりません。
+利用できる機能や所有権が設計に影響する場合は、現在の CLI または MCP で調べます。
+エージェントが学習した古い知識だけで、SwallowKit にできることを決めないでください。
 
-### Ticket decomposition
+### チケット分割
 
-独立して価値があり検証可能な vertical slice を優先します。1つのモデル変更から
-schema contract、Functions、BFF、UI、infra が決定論的に導出される場合、それらは
-同じ behavioral slice に含めます。
+独立して利用者の目的を満たし、実装・検証できる単位で分割します。
+1つのモデル変更からスキーマ、Functions、BFF、UI、インフラを再生成する場合は、それらを同じチケットに含めます。
+生成先のディレクトリが違うという理由だけで、レイヤー別のチケットに分けません。
 
-```text
-Todo に priority support を追加
-  ├─ source-of-truth model を変更
-  ├─ managed artifact を plan/apply
-  ├─ custom behavior と test を追加
-  └─ project を verify
-```
+### 実装
 
-生成ファイルが horizontal layer に分かれているという理由だけで、schema、backend、
-BFF、UI、infra の別チケットを作成しません。
+ファイルを選ぶ前に編集規則を確認します。`ai-authored` は直接編集し、`deterministic` はモデルや設定と plan/apply から変更します。
+`shared` はパスごとの規則に従ってください。マーカーの外だけを編集するファイルと、手動でエクスポートを追記できるファイルがあります。
 
-### Implementation
+### 検証
 
-ファイルを選ぶ前に responsibility boundary を検査します。`ai-authored` は通常どおり編集し、
-`deterministic` は source of truth と plan/apply だけで変更し、`shared` は managed marker の
-外側だけを編集します。
+変更後に SwallowKit の検証を実行し、失敗した検査の結果を読んで修正します。
+修正後は再検証し、人の判断が必要な場合は、その対象と選択肢を示します。
 
-### Verification
+### レビュー
 
-実装後に SwallowKit verification を実行し、明示的な人間の判断が必要になるか収束するまで、
-構造化された failure evidence に従います。
+構造や生成物のずれを検証したあとに、設計と動作が仕様を満たしているかをレビューします。
+機械的な検査と、利用者の目的に照らしたレビューは、互いの代わりにはなりません。
 
-### Review
+## 質問・設計の前の検査
 
-mechanical な SwallowKit verification の後に semantic/specification/engineering review を
-実施します。この2つの gate は異なる問いに答えるため、相互に代替できません。
-
-## 質問・設計の前に inspect する
-
-タスクに関係する inspection だけを利用します。
+タスクに関係する検査だけを利用します。
 
 ::: code-group
 ```bash [npm]
@@ -153,47 +124,41 @@ pnpm exec swallowkit machine inspect infra
 ```
 :::
 
-利用可能なら同等の `swallowkit_*` MCP tools を優先し、利用できない場合は Agent-facing
-fallback として machine interface を使います。
+利用できる場合は `swallowkit_*` MCP ツールを優先し、MCP が使えない場合は machine CLI を使用します。
 
-これにより、generated CRUD layer の wiring、managed route の編集可否、infra operation の
-有無など、current inspection で回答できる質問を人間へ転嫁しません。一方、曖昧な
-product behavior、business rule、risk choice は適切に人間へ確認します。
+これにより、生成された CRUD レイヤーの接続設定、管理対象のルートの編集可否、インフラ操作 の
+有無など、現在の検査結果で回答できる質問を人間へ転嫁しません。一方、曖昧な
+製品の動作、業務ルール、リスクについての判断は適切に人間へ確認します。
 
-## Responsibility boundary
+## 責任範囲と編集規則
 
-`machine inspect boundaries`（または `swallowkit_inspect_boundaries`）が現在の project の
-machine-readable authority です。
+`machine inspect boundaries`（または `swallowkit_inspect_boundaries`）が現在のプロジェクトの
+機械可読な編集規則の確認元です。
 
 | zone | 編集ポリシー | 典型例 |
 | --- | --- | --- |
-| `ai-authored` | 直接編集する | source-of-truth model、custom logic/UI、test |
-| `deterministic` | 決して手編集せず source/config と plan/apply で変更する | generated CRUD、BFF、UI、schema、infra artifacts |
-| `shared` | managed marker の外側だけ編集する | SwallowKit section を含む集約・infra files |
+| `ai-authored` | 直接編集する | 定義元のモデル、独自のロジックや画面、テスト |
+| `deterministic` | 決して手編集せずモデルや設定と plan/apply で変更する | 生成 CRUD、BFF、UI、スキーマ、インフラの生成物 |
+| `shared` | 管理対象を示すマーカーの外側だけ編集する | SwallowKit の管理区間 を含む集約・インフラファイル |
 
-例は inspection の代わりにはなりません。ownership は backend、feature、SwallowKit version
+例は検査の代わりにはなりません。所有権はバックエンド、機能、SwallowKit のバージョン
 によって変わり得ます。
 
-## Planning と ticketing
+## 計画とチケット作成
 
-仕様は generated-file mechanics ではなく desired behavior を中心にします。計画には
-SwallowKit constraint と plan/apply/verify loop を記録できますが、deterministic output を
-独立した manual work として扱いません。
+仕様には、生成ファイルの作り方よりも、実現したい動作を書きます。
+計画には SwallowKit の編集規則と plan/apply/verify の手順を含め、再生成で済む作業を独立した手作業として数えません。
+チケットは単独で実装・検証できる機能単位にします。レイヤー別に分割するのは、それぞれに独立した価値やリスクがある場合です。
 
-ticket boundary は、独立して実装・検証できる vertical/tracer-bullet slice とします。
-horizontal ticket は、generated directory が別という理由ではなく、独立した価値やリスクが
-本当に存在する場合だけにします。
+## 実装の進め方
 
-## Implementation workflow
-
-Agent の標準 workflow は次のとおりです。
+エージェントの標準作業手順は次のとおりです。
 
 ```text
 inspect → plan → conflict/approval の評価 → apply → verify
 ```
 
-runtime が公開している場合は MCP tools を優先し、それ以外では structured machine
-operations を使用します。
+実行環境で MCP ツールを利用できる場合は優先し、それ以外では machine CLI を使います。
 
 ::: code-group
 ```bash [npm]
@@ -210,50 +175,50 @@ pnpm exec swallowkit machine verify project
 ```
 :::
 
-Agent Skills 対応 runtime では `swallowkit-add-model`、`swallowkit-modify-model`、
+Agent Skills 対応実行環境では `swallowkit-add-model`、`swallowkit-modify-model`、
 `swallowkit-verify-repair` を利用します。それ以外では対応する
-`.swallowkit/workflows/` runbook を読みます。これらは上位の implementation process から
-呼び出せる task-level capability です。
+`.swallowkit/workflows/` 作業手順書を読みます。これらは上位の実装手順から
+呼び出せる作業単位の機能です。
 
 ### カスタム API の有無にかかわらず、永続化モデルのインフラを生成する
 
 新しい永続化モデルでは、
-`machine plan model <model> --overwrite never` を preview し、返された plan を
+`machine plan model <model> --overwrite never` で変更予定を確認し、返された plan を
 `machine apply model --plan <planId>` で適用します。スキーマを作成し、
-connector 以外のモデル用 Cosmos コンテナー migration を登録します。
-対話 CLI の `create-model` も同じ generator を使います。
-スキーマを編集し、shared の export を確認してください。モデル生成は Azure へのデプロイや
+コネクタ以外のモデル用 Cosmos コンテナーマイグレーションを登録します。
+対話 CLI の `create-model` も同じ生成処理 を使います。
+スキーマを編集し、共有パッケージのエクスポートを確認してください。モデル生成は Azure へのデプロイや
 CRUD 生成を行いません。手書きモデルでは `machine plan model-infrastructure <model>` で
-preview し、返された plan を `machine apply model --plan <planId>` で適用すると、
-スキーマの内容を変更せずコンテナー migration を追加できます。
+変更予定を確認し、返された plan を `machine apply model --plan <planId>` で適用すると、
+スキーマの内容を変更せずコンテナーマイグレーションを追加できます。
 生成 CRUD が必要な場合のみ plan/apply scaffold を使います。`--api-only` は UI を省略するだけで、CRUD は生成します。
 pnpm を使う場合は `npx` を `pnpm exec` に置き換えます。
 
 model-infrastructure の plan/apply は、登録済みコンテナーの場合も、
-現在の全モデルに合わせて `.swallowkit/project.json` を同期します。
+現在のすべてのモデルに合わせて `.swallowkit/project.json` を同期します。
 メタデータだけを修復する場合は、`model <existing-model> --overwrite never` を plan し、
-確認後に apply してください。スキーマがすべて skip されても manifest は更新されます。
+確認後に apply してください。スキーマがすべて省略されてもプロジェクト情報ファイルは更新されます。
 CRUD 生成、インフラの書き換え、Azure 接続は不要です。
 
-migration 生成後に partition key を変更した場合は、
+マイグレーション生成後にパーティションキーを変更した場合は、
 `npx swallowkit machine plan model-infrastructure <model> --refresh-pending --resource-group <name>`
-で明示的に pending 定義の更新を preview します。読み取り専用のリモート確認を行い、
-適用済み・デプロイ試行済み・状態不明・手編集済みの migration は拒否します。
-dry-run とローカルのモデル生成は Azure の provisioning を行いません。
+で、未適用の定義を更新する計画を明示的に作成します。読み取り専用のリモート確認を行い、
+適用済み・デプロイ試行済み・状態不明・手編集済みのマイグレーションは拒否します。
+dry-run とローカルのモデル生成は Azure のリソースの作成・更新を行いません。
 
-entities、infra、artifacts、drift を inspect し、verify project を実行してください。
-モデルのコンテナー名・partition key と Bicep、マイグレーション manifest、生成台帳の対応を確認します。
-既存 baseline の接続や外部コネクターの対応も、該当する場合は検証してください。
+モデル、インフラ、生成物、記録からのずれを検査し、`machine verify project` を実行してください。
+モデルのコンテナー名・パーティションキーと Bicep、マイグレーション台帳、生成台帳の対応を確認します。
+既存初期インフラの接続や外部コネクターの対応も、該当する場合は検証してください。
 `--skip-infra` などで生成を延期する場合は、理由と未完了事項を明示します。
 verify が通っても、必要なインフラがない状態で完了扱いやデプロイ可能という案内をしてはなりません。
-ローカルでの生成は Azure provisioning の許可ではありません。
+ローカルでの生成は Azure リソースの作成・更新の許可ではありません。
 
 ### エージェントへの依頼例
 
 モデル変更は、生成ファイルごとの修正ではなく、実現したい振る舞いとして依頼します。
 
-> Todo に優先度を追加してください。このプロジェクトの AGENTS.md と関連する Skill／workflow を読み、
-> 選択済みのパッケージマネージャーを維持してください。編集前に ownership と drift を確認し、
+> Todo に優先度を追加してください。このプロジェクトの AGENTS.md と関連するスキル／作業手順を読み、
+> 選択済みのパッケージマネージャーを維持してください。編集前に所有権と記録とのずれを確認し、
 > モデルを変更したら scaffold の Plan を作成してください。変更対象と競合を確認して Apply し、
 > verify と優先度の振る舞いを確認するテストまで実施してください。
 > 手編集の上書きなど判断が必要な場合は、対象の差分と選択肢を示してください。
@@ -271,14 +236,14 @@ Plan を作り直して再確認します。`--approve` は古い Plan を有効
 ### ドリフトが見つかったとき
 
 ドリフトは、モデル・生成時の記録・現在のファイルなどの間のずれです。
-`machine inspect drift` の finding にある種類、重要度、`repairAction` と、
+`machine inspect drift` の検出結果にある種類、重要度、`repairAction` と、
 `machine inspect boundaries` の編集ポリシーを合わせて確認します。
-finding があるだけで、すべてを上書きする必要があるとは限りません。
+検出結果があるだけで、すべてを上書きする必要があるとは限りません。
 
-| finding | エージェントが確認すること |
+| 検出結果 | エージェントが確認すること |
 | --- | --- |
 | `schema-drift` | 意図したモデル変更か確認し、対象モデルの scaffold を Plan → Apply します。 |
-| `artifact-modified` | 生成後の差分と ownership を確認します。ユーザー編集が認められる領域の変更は正常な場合があります。必要なカスタマイズを消さないでください。 |
+| `artifact-modified` | 生成後の差分と所有権を確認します。ユーザー編集が認められる領域の変更は正常な場合があります。必要なカスタマイズを消さないでください。 |
 | `artifact-missing` | 削除が意図したものか確認し、必要な生成物を再生成します。 |
 | `generator-drift` | 生成時と実行中の SwallowKit のバージョンを確認し、更新を採用する場合は再生成の差分をレビューします。 |
 | `manifest-drift` | 実際のプロジェクト構造と記録のずれを調べ、提示された `repairAction` に従います。 |
@@ -293,87 +258,71 @@ MCP のバージョン指定は[パッケージマネージャーガイド](./pa
 確認します。ドリフトが解消しても、依頼した機能の振る舞いや Azure デプロイの成功まで
 証明されたわけではありません。それぞれのテスト・実行結果で確認してください。
 
-## Verification と semantic review の違い
+## 構造の検証と仕様のレビュー
 
-SwallowKit verification が問うこと:
+SwallowKit の検証では、プロジェクトの構造、管理対象の生成物のずれ、設定されたチェックの結果を調べます。
+一方、設計・仕様のレビューでは、実際の動作が利用者の目的と受け入れ条件を満たすかを確かめます。
 
-> project は mechanically/structurally correct で、managed artifact drift がなく、
-> configured check に成功しているか？
+実装、SwallowKit の検証、設計・仕様のレビューの順に進めます。
+検証に失敗した場合は `machine explain failure` または対応する MCP ツールで原因を調べ、定義元を直して再検証してください。
 
-Semantic review が問うこと:
+## 人による承認
 
-> design と behavior は正しいか？ specification と user intent を満たすか？
+machine 操作は処理の終了・継続状態と `nextActions` を返します。`requires-human` は意図的な
+停止であり、回避すべきエラーではありません。エージェントは指定された判断を人間に求め、
+承認を捏造してはなりません。
 
-推奨順序:
-
-```text
-implementation → SwallowKit verify → semantic code review
-```
-
-verification が失敗した場合は `machine explain failure` または MCP equivalent を使い、
-正しい source を修復して再度 verify します。
-
-## Human approval
-
-machine operation は terminal state と `nextActions` を返します。`requires-human` は意図的な
-停止であり、回避すべき error ではありません。Agent は指定された判断を人間に求め、
-approval を捏造してはなりません。
-
-Azure provisioning は常に `swallowkit-provision` Skill/runbook と明示的 approval gate を
-利用します。deployment 完了までという広い依頼であっても、plan 提示後に必要となる approval が
+Azure リソースの作成・更新は常に `swallowkit-provision` スキル/作業手順書と明示的承認が必要な手順を
+利用します。デプロイ完了までという広い依頼であっても、plan 提示後に必要となる承認が
 暗黙に付与されたことにはなりません。
 
-## 外部 development process との composition
+## 外部開発プロセスとの組み合わせ
 
-任意の process framework が discovery、specification、ticketing、TDD、implementation
-orchestration、semantic review を提供し、current-project facts と deterministic operation に
-SwallowKit を呼び出せます。この関係は custom Skills、Spec Kit、GSD、BMAD、通常の Codex、
-Claude Code、GitHub Copilot interaction に共通です。
+要件整理、仕様作成、チケット管理、TDD、実装、レビューを進める外部ツールから、SwallowKit の検査・生成処理を呼び出せます。
+独自のスキル、Spec Kit、GSD、BMAD を使う場合も、Codex、Claude Code、GitHub Copilot に直接作業を依頼する場合も、同じように組み合わせられます。
 
-### 例: Matt Pocock Skills
+### 例: Matt Pocock スキル
 
-以下は推奨 composition の例であり、互換性保証や dependency ではありません。
+以下は組み合わせて使う例です。連携を保証するものではなく、SwallowKit の依存パッケージでもありません。
 
 ```text
 grill-with-docs
-    ├─ 必要に応じて project/entities/routes/boundaries を inspect
-    ├─ repository/SwallowKit で回答可能な質問は自律的に回答
-    └─ 本物の product/domain decision だけを人間に質問
+    ├─ プロジェクト、モデル、ルート、編集規則を検査
+    ├─ リポジトリから分かることを確認
+    └─ 製品や業務の仕様に関する判断を人に質問
     ↓
 to-spec
-    ├─ intent と observable behavior を記述
-    ├─ SwallowKit architecture/ownership を constraint に含める
-    └─ generated layer を独立した manual implementation として扱わない
+    ├─ 目的と、利用者が確認できる動作を記述
+    ├─ SwallowKit の構成と所有権を条件に含める
+    └─ 生成するレイヤーを別々の手作業として数えない
     ↓
 to-tickets
-    ├─ vertical / tracer-bullet slice を維持
-    └─ generated schema/API/BFF/UI/infra work は slice 内に含める
+    ├─ 独立して実装・検証できる機能単位に分割
+    └─ スキーマ、API、BFF、UI、インフラの生成を同じ作業に含める
     ↓
 implement
-    ├─ boundaries を inspect
-    ├─ ai-authored → 通常の implementation/TDD
+    ├─ 編集規則を検査
+    ├─ ai-authored → 通常の実装・TDD
     ├─ deterministic → SwallowKit plan/apply
-    ├─ shared → managed marker の外側を編集
+    ├─ shared → パスごとの編集規則に従う
     └─ SwallowKit verify
     ↓
 code-review
-    └─ mechanical verification 後に semantic/spec/engineering review
+    └─ 機械的な検証の後に、設計・仕様・実装をレビュー
 ```
 
-**SwallowKit は hard dependency ではなく composition によって Matt Pocock Skills を
-サポートします。** SwallowKit はこれらの Skills を install、vendor、fork、rewrite しません。
+Matt Pocock スキルと SwallowKit はそれぞれを呼び出して組み合わせて使えます。これらのスキルのインストール、取り込み、複製、書き換えを SwallowKit が行うわけではありません。
 
-## 完全な生成 Agent documents
+## 生成される指示ファイルの全文
 
-以下は `swallowkit init` が利用する完全な英語 template であり、抜粋ではありません。
+以下は `swallowkit init` が利用する完全な英語テンプレートであり、抜粋ではありません。
 `{{projectName}}`、`{{backendLanguageLabel}}`、`{{functionsStructureLine}}`、
-`{{backendRules}}`、`{{pm}}`、`{{runCmd}}` は選択した project に合わせて展開されます。
-docs は canonical template を直接 import するため、generator wording と English original は
-同じ source を共有します。
+`{{backendRules}}`、`{{pm}}`、`{{runCmd}}` は選択したプロジェクトに合わせて展開されます。
+このページは生成用テンプレートを直接読み込むため、掲載する英語の原文はジェネレーターが使う内容と一致します。
 
 ## 生成される AGENTS.md
 
-### English original
+### 生成される英語の原文
 
 <<< ../../src/core/project/agent-templates/AGENTS.md{md}
 
@@ -383,7 +332,7 @@ docs は canonical template を直接 import するため、generator wording �
 
 ## 生成される CLAUDE.md
 
-### English original
+### 生成される英語の原文
 
 <<< ../../src/core/project/agent-templates/CLAUDE.md{md}
 
@@ -393,7 +342,7 @@ docs は canonical template を直接 import するため、generator wording �
 
 ## 生成される .github/copilot-instructions.md
 
-### English original
+### 生成される英語の原文
 
 <<< ../../src/core/project/agent-templates/copilot-instructions.md{md}
 

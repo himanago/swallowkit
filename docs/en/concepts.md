@@ -14,7 +14,7 @@ Every model in a SwallowKit project is defined once as a Zod schema in `shared/m
 - TypeScript types (via `z.infer<>`)
 - Frontend form validation
 - BFF request/response validation
-- Backend handler validation
+- TypeScript/C# backend validation and generated Python Pydantic types
 - Cosmos DB document shape
 - OpenAPI contracts (for C#/Python backends)
 - UI component generation
@@ -23,10 +23,10 @@ When you change the schema, you re-run `swallowkit scaffold` to regenerate the a
 
 ## BFF pattern
 
-SwallowKit generates a Backend-For-Frontend layer using Next.js API routes. The BFF sits between the browser and Azure Functions:
+The Backend for Frontend (BFF) validates browser requests and forwards them to standalone Azure Functions. Next.js uses API routes; React uses SWA managed Functions.
 
 ```
-Browser → Next.js BFF routes → Azure Functions → Cosmos DB
+Browser → Next.js API routes / SWA managed BFF → standalone Azure Functions → Cosmos DB
 ```
 
 The BFF layer:
@@ -41,12 +41,8 @@ This separation means the frontend never calls Azure Functions directly. Backend
 
 SwallowKit generates code that you own. There is no hidden runtime layer.
 
-- Generated files are committed to your repository
-- You can edit any generated file
-- Re-running `scaffold` overwrites previously generated files for that model
-- If you need behavior that differs from the generator, edit the file directly
-
-SwallowKit is a scaffolding tool, not a framework. It produces a starting point; you take it from there.
+Commit generated code to your repository and review it as ordinary source. Regeneration behavior depends on each file's ownership.
+Prefer changes in models, configuration, or extension points. If you edit a managed file directly, use plan/apply to review the overwrite conflict before regenerating it.
 
 ### Ownership classes
 
@@ -67,8 +63,8 @@ Editing a `managed` file is possible, but the change will be lost on regeneratio
 | Layer | Location | Responsibility |
 |-------|----------|---------------|
 | Schema | `shared/models/` | Type definitions, validation rules |
-| Frontend | `app/{model}/` | Pages, forms, user interaction |
-| BFF | `app/api/{model}/` | Request validation, Functions proxy |
+| Frontend | `app/{model}/` or `src/pages/{model}/` | Pages, forms, user interaction |
+| BFF | `app/api/{model}/` or `bff/` | Request validation, Functions proxy |
 | Backend | `functions/` | Business logic, data access, authorization |
 | Infrastructure | `infra/` | Azure resource definitions (Bicep) |
 | Metadata | `.swallowkit/` | Project manifest for tooling |
@@ -95,12 +91,12 @@ SwallowKit provides two CLI interfaces:
 
 ::: code-group
 ```bash [npm]
-npx swallowkit init my-app
+npx swallowkit@beta init my-app
 npx swallowkit scaffold todo
 npx swallowkit dev
 ```
 ```bash [pnpm]
-pnpm dlx swallowkit init my-app
+pnpm dlx swallowkit@beta init my-app
 pnpm exec swallowkit scaffold todo
 pnpm exec swallowkit dev
 ```
@@ -128,7 +124,7 @@ The machine CLI is designed for coding agents (GitHub Copilot, Claude Code, Open
 SwallowKit generates files and exits. It does not:
 - Run a custom server at runtime
 - Intercept requests at runtime
-- Require a specific runtime dependency beyond Next.js and Azure Functions
+- Replace the generated application request path with a SwallowKit-specific server
 - Hide implementation details behind proprietary abstractions
 
 The generated BFF routes are standard Next.js API routes. The generated Functions are standard Azure Functions. You can replace any piece without breaking the rest.

@@ -13,19 +13,19 @@ SwallowKit プロジェクトのすべてのモデルは、`shared/models/` に 
 - TypeScript 型（`z.infer<>` 経由）
 - フロントエンドのフォームバリデーション
 - BFF のリクエスト・レスポンスバリデーション
-- バックエンドハンドラーのバリデーション
+- TypeScript／C# バックエンドの検証と、Python 向けの Pydantic 型
 - Cosmos DB ドキュメントの形状
 - OpenAPI 契約（C#/Python バックエンド用）
 - UI コンポーネントの生成
 
-スキーマを変更したら `swallowkit scaffold` を再実行して、影響するレイヤーを再生成します。スキーマが権威であり、生成コードはそれに従います。
+スキーマを変更したら `swallowkit scaffold` を再実行して、影響するレイヤーを再生成します。モデルの定義元を更新し、その内容を生成コードに反映します。
 
 ## BFF パターン
 
-SwallowKit は Next.js API ルートを使って Backend-For-Frontend レイヤーを生成します。BFF はブラウザと Azure Functions の間に位置します：
+BFF（Backend for Frontend）は、ブラウザのリクエストを検証して独立 Azure Functions に転送するサーバー側の処理です。Next.js では API ルート、React では SWA マネージド Functions として生成します。
 
 ```
-ブラウザー → Next.js BFF ルート → Azure Functions → Cosmos DB
+ブラウザー → Next.js API ルート／SWA マネージド BFF → 独立 Azure Functions → Cosmos DB
 ```
 
 BFF レイヤーの役割：
@@ -40,18 +40,14 @@ BFF レイヤーの役割：
 
 SwallowKit が生成するコードは開発者のものです。隠されたランタイムレイヤーはありません。
 
-- 生成ファイルはリポジトリにコミットされる
-- どの生成ファイルも自由に編集できる
-- `scaffold` を再実行すると、そのモデルの生成ファイルは上書きされる
-- ジェネレーターと異なる動作が必要なら、ファイルを直接編集する
+生成コードはリポジトリにコミットし、内容を確認・変更できます。ただし、再生成時の扱いはファイルの所有権によって異なります。
+業務上の変更は、まずモデルや設定、追記用のファイルで表現してください。管理対象の生成ファイルを直接編集した場合は、plan/apply で上書き前に競合を確認します。
 
-SwallowKit はフレームワークではなく scaffolding ツールです。出発点を提供し、そこから先は開発者が引き継ぎます。
+### 所有権の分類
 
-### Ownership の分類
+生成物は `.swallowkit/artifacts.json`（生成物台帳、Git 管理対象）に所有権付きで記録されます。
 
-生成物は `.swallowkit/artifacts.json`（生成物台帳、Git 管理対象）に ownership 付きで記録されます。
-
-| Ownership | 意味 | 再生成時の扱い |
+| 所有権 | 意味 | 再生成時の扱い |
 | --- | --- | --- |
 | `managed` | SwallowKit が全体を管理（Functions CRUD、BFF ルート、UI ページなど） | 上書き再生成される。生成後に手編集したファイルは競合として検出され、上書きには承認（`--approve`）が必要 |
 | `generated-once` | 初回のみ生成されるテンプレート | 再生成で上書きされない |
@@ -59,24 +55,24 @@ SwallowKit はフレームワークではなく scaffolding ツールです。�
 | `extension-point` | 追記ポイント（`shared/index.ts`、Python の `function_app.py`、ナビゲーション設定など） | パスごとの規則に従う。`shared/index.ts` は手動追記可・マーカーなし。Python の登録はマーカーを使用。既存内容は保持される |
 | `metadata` | ツール向けメタデータ（`.swallowkit/` 配下） | SwallowKit が全体を再構築する |
 
-`managed` なファイルを編集すること自体は可能ですが、再生成すると失われるため、恒久的な変更はモデル・設定・extension-point 側で行うことを推奨します。編集した場合も、`swallowkit status` / `swallowkit machine inspect drift` が乖離を検出し、plan / apply フローが上書き前に承認を求めます。
+`managed` なファイルを編集すること自体は可能ですが、再生成すると失われるため、恒久的な変更はモデル・設定・拡張用のファイルで行うことを推奨します。編集した場合も、`swallowkit status` / `swallowkit machine inspect drift` が乖離を検出し、plan / apply フローが上書き前に承認を求めます。
 
 ## レイヤーの責任分担
 
 | レイヤー | 場所 | 責任 |
 |---------|------|------|
 | スキーマ | `shared/models/` | 型定義、バリデーションルール |
-| フロントエンド | `app/{model}/` | ページ、フォーム、ユーザーインタラクション |
-| BFF | `app/api/{model}/` | リクエストバリデーション、Functions プロキシ |
+| フロントエンド | `app/{model}/` または `src/pages/{model}/` | ページ、フォーム、ユーザーインタラクション |
+| BFF | `app/api/{model}/` または `bff/` | リクエストバリデーション、Functions プロキシ |
 | バックエンド | `functions/` | ビジネスロジック、データアクセス、認可 |
 | インフラ | `infra/` | Azure リソース定義（Bicep） |
-| メタデータ | `.swallowkit/` | ツール向けプロジェクト manifest |
+| メタデータ | `.swallowkit/` | ツール向けプロジェクト情報ファイル |
 
 各レイヤーには明確な境界があります。BFF はビジネスロジックを持ちません。フロントエンドはデータベースにアクセスしません。バックエンドは UI をレンダリングしません。
 
-## プロジェクト manifest
+## プロジェクト情報ファイル
 
-SwallowKit は `.swallowkit/project.json` に機械可読な manifest を保持します。記録される内容：
+SwallowKit は `.swallowkit/project.json` に機械可読なプロジェクト情報を保持します。次の内容を記録します。
 
 - バックエンド言語
 - 登録されたモデルとスキーマ
@@ -84,28 +80,28 @@ SwallowKit は `.swallowkit/project.json` に機械可読な manifest を保持�
 - 認証設定
 - 生成済みアーティファクト
 
-manifest は `swallowkit machine` コマンドと MCP サーバーがプロジェクトの検査・検証に使用します。直接編集する必要はありません。
+プロジェクト情報ファイルは `swallowkit machine` コマンドと MCP サーバーがプロジェクトの検査・検証に使用します。直接編集する必要はありません。
 
 ## Human CLI と Machine CLI
 
-SwallowKit は 2 つの CLI インターフェースを提供します：
+SwallowKit は 2 つの CLI インターフェースを提供します。
 
-**Human CLI** — 対話プロンプト、カラー出力、ガイダンスメッセージ：
+**人間向け CLI（Human CLI）** は、対話プロンプト、カラー出力、ガイダンスメッセージを提供します。
 
 ::: code-group
 ```bash [npm]
-npx swallowkit init my-app
+npx swallowkit@beta init my-app
 npx swallowkit scaffold todo
 npx swallowkit dev
 ```
 ```bash [pnpm]
-pnpm dlx swallowkit init my-app
+pnpm dlx swallowkit@beta init my-app
 pnpm exec swallowkit scaffold todo
 pnpm exec swallowkit dev
 ```
 :::
 
-**Machine CLI** — 非対話、stdout は JSON のみ、決定的：
+**エージェント向け CLI（Machine CLI）** は非対話で実行し、結果を標準出力に JSON で返します。
 
 ::: code-group
 ```bash [npm]
@@ -128,13 +124,13 @@ SwallowKit はファイルを生成して終了します。以下のことはし
 
 - 実行時にカスタムサーバーを動かす
 - 実行時にリクエストをインターセプトする
-- Next.js と Azure Functions 以外の特定のランタイム依存を要求する
+- 生成アプリのリクエスト処理を SwallowKit 独自のサーバーに置き換える
 - 独自の抽象化の背後に実装を隠す
 
-生成された BFF ルートは標準的な Next.js API ルートです。生成された Functions は標準的な Azure Functions です。どの部分も他を壊すことなく置き換えられます。
+生成される BFF は標準的な Next.js API ルート、または SWA マネージド Functions です。独立バックエンドも標準的な Azure Functions として動作します。実装を置き換える際は、共有スキーマと通信・認可の契約を維持してください。
 
 ## 次のステップ
 
-- [はじめる](/ja/getting-started) — 最初のプロジェクトを作成する
-- [Scaffold ガイド](/ja/scaffold-guide) — CRUD 生成の詳細
-- [AI / MCP ガイド](/ja/ai-mcp-guide) — Machine interface とコーディングエージェント統合
+- [はじめる](/ja/getting-started)。最初のプロジェクトを作成する
+- [Scaffold ガイド](/ja/scaffold-guide)。CRUD 生成の詳細
+- [AI / MCP ガイド](/ja/ai-mcp-guide)。Machine インターフェースとコーディングエージェント統合

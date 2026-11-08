@@ -4,64 +4,39 @@
 
 このプロジェクトは **SwallowKit** によって生成されました。
 
-SwallowKit は、このプロジェクトのアーキテクチャおよび開発ワークフローの一部です。
-コード生成時だけでなく、discovery、requirements clarification、specification、planning、
-ticket decomposition、implementation、verification、review の間、常に適用される制約として
-扱わなければなりません。
+SwallowKit の構成と編集規則は、コード生成時だけでなく、調査、要件整理、仕様作成、計画、チケット分割、実装、検証、レビューのすべてで守ってください。
 
 <!-- source-section: How SwallowKit Fits Into the Development Process -->
 ## SwallowKit と開発プロセスの関係
 
-SwallowKit はソフトウェア開発プロセス全体を所有**しません**。
+SwallowKit は開発プロセス全体の進め方を決めるものではありません。
+利用者や別の Agent Skill、フレームワークが要件整理、仕様作成、計画、チケット管理、TDD、実装、レビューの手順を定めている場合は、その手順に従ってください。
 
-ユーザー、別の Agent Skill、または framework が requirements discovery、specification、
-planning、ticketing、TDD、implementation、review のプロセスを定義している場合は、
-そのプロセスに引き続き従ってください。
+その中で SwallowKit を使い、現在のプロジェクト、モデル、ルート、インフラ、責任範囲を調べます。
+編集可能な生成物を判断し、plan/apply によって同じ定義から生成物を再現し、記録とのずれを検出して検証します。
+人の承認が必要な操作では、定められた承認手順に従ってください。
 
-以下については、SwallowKit を authoritative な project-specific layer として使用してください。
-
-- 現在のプロジェクトの検査
-- entity、route、infrastructure、responsibility boundary の理解
-- 直接編集できる artifact の判定
-- plan/apply による deterministic generation
-- drift の検出
-- 生成後のプロジェクトの検証
-- sensitive operation に対する human approval gate の強制
-
-外部の development-process Skill と SwallowKit は合成して使用することを意図しています。
-
-process Skill は**どのように進めるか**を決定します。
-SwallowKit は**この SwallowKit project をどのように安全かつ再現可能に変更できるか**を決定します。
+開発プロセスのスキルが作業の進め方を定め、SwallowKit がプロジェクトの検査と再現可能な変更方法を担います。両方を組み合わせて使用してください。
 
 <!-- source-section: Do Not Assume SwallowKit Capabilities From Memory -->
-## 記憶から SwallowKit capability を推測してはならない
+## 現在利用できる機能の確認
 
-SwallowKit は時間とともに進化します。
+SwallowKit の機能はバージョンによって変わります。エージェントが学習した知識や記憶だけで、生成できるもの・できないものを判断してはいけません。
+利用できる機能、プロジェクト構成、所有権が設計に影響する場合は、判断の前に現在のプロジェクトとツールを検査してください。
 
-SwallowKit が生成できるもの・できないものについて、モデルが保持する知識や仮定に
-依存してはなりません。
-
-SwallowKit capability、project structure、ownership boundary が設計判断に影響する場合、
-判断前に現在のプロジェクトと現在利用可能な SwallowKit interface を検査してください。
-
-利用可能な場合は `swallowkit_*` MCP tools を優先してください。
-
-MCP を利用できない場合は machine interface を使用します。
+利用できる場合は `swallowkit_*` MCP ツールを優先します。MCP が使えない場合は machine CLI を使ってください。
 
 ```bash
 {{runCmd}} swallowkit machine ...
 ```
 
-machine interface は Agent-facing fallback であり、自律 workflow に適した構造化済みの
-`status` / `nextActions` を返します。
+machine CLI は `status` と `nextActions` を構造化された形式で返し、エージェントが次の操作を判断するために使えます。
 
 <!-- source-section: Inspect Before Asking or Designing -->
-## 質問または設計の前に検査する
+## 質問・設計の前の検査
 
-タスクが SwallowKit-managed application structure に影響する可能性がある場合、
-人間に質問したり実装設計を確定したりする前にプロジェクトを検査してください。
-
-タスクに関係する inspection だけを使用してください。典型的な inspection は次のとおりです。
+SwallowKit 管理の構成に影響する作業では、人に質問したり実装の設計を確定したりする前にプロジェクトを調べてください。
+タスクに関連する検査を選びます。
 
 ```bash
 {{runCmd}} swallowkit machine inspect project
@@ -73,132 +48,70 @@ machine interface は Agent-facing fallback であり、自律 workflow に適�
 {{runCmd}} swallowkit machine inspect capabilities
 ```
 
-`inspect capabilities` は「SwallowKit に何ができるか」(サポートされる model 宣言と
-正確な書式、認証導入の正しい workflow、generated CRUD が保証すること・しないこと、
-seed の適用方法) に答えます。推測したり SwallowKit 内部を grep したりする代わりに
-これを使用してください。
+`inspect capabilities` では、対応するモデル宣言の書式、認証の導入手順、生成 CRUD の範囲、シードの適用方法を確認できます。
+機能を推測したり SwallowKit 内部の実装を検索したりする前に、この情報を使います。対応する MCP ツールが利用できる場合は、そちらを優先してください。
 
-利用可能な場合は同等の `swallowkit_*` MCP tools を使用してください。
-
-repository または SwallowKit inspection から回答できる質問は、人間に委ねず Agent が
-回答しなければなりません。
-
-例:
-
-- SwallowKit が generated CRUD layer を定義・生成している場合、その wiring 方法を質問しない。
-- responsibility boundary を確認する前に generated file の編集を提案しない。
-- current SwallowKit project と available operation を検査する前に、infrastructure capability が
-  利用できないと仮定しない。
+リポジトリや検査結果から分かることはエージェントが確認します。
+たとえば、生成 CRUD の接続方法、生成ファイルを編集できるかどうか、必要なインフラ操作があるかどうかを、検査せずに人へ質問してはいけません。
 
 <!-- source-section: Specification and Planning Guidance -->
-## Specification と planning のガイダンス
+## 仕様と計画
 
-specification を作成または改善する場合:
+仕様には、利用者から確認できる動作と業務上の目的、受け入れ条件、テストで確かめる動作を記載します。
+SwallowKit の構成と責任範囲は実装上の制約として扱い、モデルや設定から生成できるものを、手作業で実装する部品として重複して計画してはいけません。
 
-- user-visible behavior と domain intent を記述する
-- acceptance criteria と重要な test seam を定義する
-- SwallowKit architecture と responsibility boundary を implementation constraint として扱う
-- generated artifact を手動実装 component として早計に記述しない
-- SwallowKit が source of truth から決定論的に導出できる作業を重複させない
-
-例えば、model field の追加により SwallowKit が backend、BFF、UI、infrastructure artifact を
-再生成する場合、specification は主に期待する end-to-end behavior と SwallowKit constraint を
-記述すべきです。
-
-各 generated layer が独立した manual implementation decision であると示唆すべきではありません。
-
-SwallowKit が望む behavior をサポートするかどうかが specification に影響する場合、
-spec を確定する前に current capability を検査してください。
+たとえば、モデルにフィールドを追加して Functions、BFF、UI、インフラを再生成する場合は、その機能全体の期待動作と必要な制約を仕様に記載します。
+各レイヤーが別々の手作業であるかのように扱わないでください。
+目的の動作を SwallowKit が生成できるかによって仕様が変わる場合は、確定する前に現在の機能を検査します。
 
 <!-- source-section: Ticket Decomposition Guidance -->
-## Ticket decomposition のガイダンス
+## チケット分割
 
-独立して検証可能な user/system behavior の **vertical slice** を優先してください。
-
-artifact が別 layer に存在するという理由だけで、作業を次のような horizontal ticket に
-分割してはなりません。
-
-- schema ticket
-- backend ticket
-- BFF ticket
-- UI ticket
-- infrastructure ticket
-
-SwallowKit がそれらの layer を決定論的に生成し、1つの end-to-end behavior を表す場合は、
-同じ vertical slice 内に保持してください。
-
-例:
+単独で価値があり、実装・検証できる機能単位でチケットを作成してください。
+スキーマ、バックエンド、BFF、UI、インフラの生成先が違うという理由だけで、レイヤー別のチケットに分割してはいけません。
+1つの機能をモデルから再生成できる場合は、同じチケットに含めます。
 
 ```text
-Todo に priority support を追加
-  ├─ source-of-truth model を更新
-  ├─ SwallowKit plan/apply で managed artifact を再整合
-  ├─ 必要な ai-authored business logic を追加
-  ├─ test を追加/更新
-  └─ project を verify
+Todo に優先度を追加
+  ├─ 定義元のモデルを変更
+  ├─ plan/apply で生成物を更新
+  ├─ 必要な独自の業務ロジックを実装
+  ├─ テストを追加・更新
+  └─ プロジェクトを検証
 ```
 
-ticket boundary は SwallowKit の generated file structure ではなく、独立して価値があり検証可能な
-behavior を反映すべきです。
+チケットの範囲は、生成先のディレクトリではなく、独立して価値と動作を確認できる単位で決めてください。
 
 <!-- source-section: Responsibility Boundary -->
-## Responsibility boundary
+## 責任範囲と編集規則
 
-file-level implementation decision の前に、current machine-readable boundary contract を
-検査してください。
+編集するファイルを決める前に、現在の編集規則を取得してください。
 
 ```bash
 {{runCmd}} swallowkit machine inspect boundaries
 ```
 
-その時点の結果を authoritative として扱ってください。
-
-一般的な ownership model は次のとおりです。
+ここで返される現在の契約に従います。以下の例だけで編集可否を決めてはいけません。
 
 ### ai-authored
 
-Agent はこれらを直接編集できます。
-
-典型例:
-
-- source-of-truth model
-- custom business logic
-- custom page/component
-- test
+モデルの定義元、独自の業務ロジック、独自のページ・コンポーネント、テストなど、直接編集できる領域です。
 
 ### deterministic
 
-これらの artifact を手編集してはなりません。
-
-SwallowKit が生成・所有します。適切な source of truth または configuration を変更してから、
-SwallowKit plan/apply で再生成してください。
-
-managed artifact は `.swallowkit/artifacts.json` などの SwallowKit metadata で追跡されます。
+SwallowKit が管理する生成物です。直接編集せず、モデルや設定を変更して plan/apply で再生成してください。
+管理対象は `.swallowkit/artifacts.json` などに記録されています。
 
 ### shared
 
-SwallowKit-managed marker の外側だけを編集してください。
-
-この文書の例だけに依存せず、常に current boundary contract を検査してください。
+パスごとの `editPolicy` に従ってください。マーカーで管理するファイルでは、その外側を編集します。
+`shared/index.ts` はマーカーがなく、必要なエクスポートを手動で追記できます。
 
 <!-- source-section: Deterministic Changes: Plan → Apply → Verify -->
-## Deterministic change: Plan → Apply → Verify
+## 定義に基づく変更の手順
 
-自律または Agent-driven generation では SwallowKit の two-phase workflow を優先してください。
-
-```text
-inspect
-   ↓
-plan
-   ↓
-conflict / approval requirement を評価
-   ↓
-apply
-   ↓
-verify
-```
-
-例:
+エージェントによる生成では、計画と適用を分ける SwallowKit の手順を優先してください。
+現在の状態を検査し、plan を作り、競合と承認の要否を確認してから apply し、最後に verify します。
 
 ```bash
 {{runCmd}} swallowkit machine plan scaffold <model>
@@ -206,17 +119,14 @@ verify
 {{runCmd}} swallowkit machine verify project
 ```
 
-deterministic artifact を手編集して plan/apply を迂回してはなりません。
-
-plan が conflict を報告した場合は、既存の hand-written behavior を ai-authored location に
-移す必要があるか、overwrite approval が必要かを判断してください。
-
-human approval を捏造したり暗黙に付与したりしてはなりません。
+生成物の手編集で plan/apply を迂回してはいけません。
+競合が見つかった場合は、既存の手書き処理を直接編集できる場所へ移すか、上書きの承認を得るかを判断してください。
+人の承認が必要な場面で、承認を捏造したり、暗黙に得たと解釈したりしてはいけません。
 
 <!-- source-section: Model Changes -->
-## Model change
+## モデルの変更
 
-既存 model の変更は通常、次の pattern です。
+既存モデルは、次の順序で変更します。
 
 ```text
 source-of-truth model を編集
@@ -234,25 +144,25 @@ verify
 
 利用可能なら `swallowkit-modify-model` Agent Skill を使用してください。
 
-それ以外では `.swallowkit/workflows/` にある同等の runbook を読み、従ってください。
+それ以外では `.swallowkit/workflows/` にある同等の作業手順書を読み、従ってください。
 
-SwallowKit-managed artifact を直接 patch して schema drift を修復してはなりません。
+SwallowKit 管理の生成物を直接修正してスキーマと記録のずれを修復してはなりません。
 
-model 変更に関する追加事項:
+モデル変更に関する追加事項:
 
-- shared package はビルド済み `dist/` 経由で参照されます。`verify project` は typecheck の前に
-  自動で rebuild しますが、手動で typecheck する場合は先に shared package をビルドしてください
+- 共有パッケージはビルド済み `dist/` 経由で参照されます。`verify project` は型検査の前に
+  自動で再ビルドしますが、手動で型検査する場合は先に共有パッケージをビルドしてください
   (古い `dist/` は "no exported member" エラーとして現れます)。
-- 開発用 seed は、次の手順でモデルの変更に追従させてください。
+- 開発用シードは、次の手順でモデルの変更に追従させてください。
 
-### 開発用 seed データ
+### 開発用シードデータ
 
 `dev-seeds/<environment>/` を使い、
 `{{runCmd}} swallowkit dev --seed-env <environment>` で明示的に適用します。
 JSON の編集だけでは適用されません。このコマンドは対象コンテナーのデータを置換するため、
-実行前に「日常的な command」の対象確認と承認規則に従ってください。
+実行前に「日常的なコマンド」の対象確認と承認規則に従ってください。
 
-seed ファイル名は、複数形の Cosmos コンテナー名ではなく、モデル名の単数形 kebab-case です。
+シードファイル名は、複数形の Cosmos コンテナー名ではなく、モデル名の単数形 kebab-case です。
 `LearningProfile` なら `LearningProfiles.json` ではなく
 `dev-seeds/<environment>/learning-profile.json` を使います。
 モデルに合うフィールドを持つ、トップレベルのドキュメント配列の例:
@@ -263,26 +173,26 @@ seed ファイル名は、複数形の Cosmos コンテナー名ではなく、�
 ]
 ```
 
-意図したモデルを、実効 DB 名とログに出る seed ファイル名、コンテナー、挿入件数に
-照合してください。全ファイルの skip、対応スキーマなし、対象ファイルなしは、
-seed の適用成功を示しません。
+意図したモデルを、実効 DB 名とログに出るシードファイル名、コンテナー、挿入件数に
+照合してください。全ファイルの省略、対応スキーマなし、対象ファイルなしは、
+シードの適用成功を示しません。
 
 HTTP リクエスト、バックエンド起動、DB が空であることを契機にデモデータを自動投入しては
-なりません。独自の reset API / UI、importer、demo flag でこの手順を置き換えてはなりません。
-標準の seed ファイルを出力し、バックエンドから呼ばれないオフライン fixture 生成は可能です。
-正当な業務上の初期化はデモ用 seed とは別です。必要なドメイン動作は削除しないでください。
+なりません。独自の reset API / UI、importer、demo フラグでこの手順を置き換えてはなりません。
+標準のシードファイルを出力し、バックエンドから呼ばれないオフラインのテスト用データの生成は可能です。
+正当な業務上の初期化はデモ用シードとは別です。必要なドメイン動作は削除しないでください。
 
 <!-- source-section: New Models / CRUD Features -->
-## 新しい model / CRUD feature
+## 新しいモデルと CRUD 機能
 
 利用可能なら `swallowkit-add-model` Agent Skill を使用してください。
 
-それ以外では `.swallowkit/workflows/` の同等の runbook に従ってください。
+それ以外では `.swallowkit/workflows/` の同等の作業手順書に従ってください。
 
-Agent は domain-specific schema field と custom behavior を記述できますが、framework-owned
-CRUD artifact は SwallowKit が生成すべきです。
+エージェントは 業務に固有のスキーマフィールドと独自の動作を記述できますが、SwallowKit 管理の
+CRUD 生成物は SwallowKit が生成すべきです。
 
-SwallowKit が所有する boilerplate を手作業で再作成してはなりません。
+SwallowKit が所有する 定型コード を手作業で再作成してはなりません。
 
 ### カスタム API の有無にかかわらず、永続化モデルにはインフラ生成が必要
 
@@ -290,166 +200,146 @@ SwallowKit が所有する boilerplate を手作業で再作成してはなり�
 SwallowKit のモデル作成・インフラ生成手順を実行してください。手書きモデルを追加しただけでは完了ではありません。
 
 1. `{{runCmd}} swallowkit machine plan model <model> --overwrite never` で
-   source-of-truth schema、shared export、Cosmos コンテナー migration、manifest、
+   定義元のスキーマ、共有パッケージのエクスポート、Cosmos コンテナーマイグレーション、プロジェクト情報ファイル、
    生成台帳の書き込み予定を確認し、返された plan を
    `{{runCmd}} swallowkit machine apply model --plan <planId>` で適用します。
    plan は apply 前に生成ファイルを書き込みません。
-   `shared/models/` にドメインのフィールドを記述し、`shared/index.ts` の export を確認してください。
+   `shared/models/` にドメインのフィールドを記述し、`shared/index.ts` のエクスポートを確認してください。
    手書きスキーマやテンプレートをスキップしたモデルは、
    `{{runCmd}} swallowkit machine plan model-infrastructure <model>` で確認後、
    返された plan を `{{runCmd}} swallowkit machine apply model --plan <planId>`
-   で適用してください。スキーマを変更せず backfill できます。
-   登録済みコンテナーの場合も、現在の全モデルに合わせて `.swallowkit/project.json` を同期します。
+   で適用してください。スキーマを変更せず既存モデルにインフラ定義を追加できます。
+   登録済みコンテナーの場合も、現在のすべてのモデルに合わせて `.swallowkit/project.json` を同期します。
    メタデータだけを修復する場合は、`model <existing-model> --overwrite never` を plan し、
-   確認後に apply してください。skip されたスキーマは保持されます。
+   確認後に apply してください。省略されたスキーマは保持されます。
    CRUD 生成、インフラの書き換え、Azure 接続は不要です。
 2. 生成 CRUD が必要なら `machine plan scaffold <model>` →
-   `machine apply scaffold --plan <planId>` で Functions、BFF、UI、必要な OpenAPI／native schema
-   asset を生成します。`--api-only` は UI だけを省略し、
-   CRUD Functions と BFF route は生成します。
+   `machine apply scaffold --plan <planId>` で Functions、BFF、UI、必要な OpenAPI／ネイティブスキーマ
+   生成ファイルを生成します。`--api-only` は UI だけを省略し、
+   CRUD Functions と BFF ルートは生成します。
    カスタム API が CRUD を置き換える場合、不要な CRUD を scaffold してはなりません。
-   手順 1 で生成した migration（または backfill）だけで十分です。
+   手順 1 で生成したマイグレーション（または既存モデルへのインフラ定義の追加）だけで十分です。
 3. `machine inspect entities`、`machine inspect infra`、`machine inspect artifacts`、
    `machine inspect drift` で確認し、`{{runCmd}} swallowkit machine verify project` を実行します。
-   モデルのコンテナー名・partition key が、`infra/migrations/` の Bicep、
+   モデルのコンテナー名・パーティションキーが、`infra/migrations/` の Bicep、
    `infra/migrations/manifest.json` の `sourceModel`、`.swallowkit/artifacts.json` と対応することを確認してください。
-   既存の baseline-owned コンテナーでは新規マイグレーションが不要な場合があります。
+   初期インフラが管理する既存コンテナーでは新規マイグレーションが不要な場合があります。
    その場合は追跡済みの定義と `infra/main.bicep` の接続を確認してください。
    外部 `connectorConfig` モデルは Cosmos DB ではなく設定済みのコネクターを使うため、
    Cosmos コンテナーを追加せず、その対応を検証してください。
 
-コンテナー追加のために checksum-locked baseline や既存マイグレーションを手編集してはなりません。
-現在のマイグレーション手順を使用してください。生成はローカル操作であり、Azure provisioning ではありません。
-デプロイには後述の provisioning 承認ゲートが引き続き適用されます。
+コンテナー追加のためにチェックサムで保護された初期インフラや既存マイグレーションを手編集してはなりません。
+現在のマイグレーション手順を使用してください。生成はローカル操作であり、Azure リソースの作成・更新ではありません。
+デプロイには後述のリソースの作成・更新に関する承認手順が引き続き適用されます。
 
 インフラ生成を延期する場合は、理由と未完了のコンテナー／マイグレーション作業を明示してください。
 CRUD では `plan scaffold` / `apply scaffold` に `--skip-infra` (MCP は `skipInfra: true`) を指定します。
 `infra/` は変更されず、plan は `infra-skipped` を返します。
-手書き・スキップしたモデルで migration が未登録なら、後で
-`{{runCmd}} swallowkit machine plan model-infrastructure <model>` で preview し、
+手書き・スキップしたモデルでマイグレーションが未登録なら、後で
+`{{runCmd}} swallowkit machine plan model-infrastructure <model>` で変更予定を確認し、
 返された plan を `{{runCmd}} swallowkit machine apply model --plan <planId>`
-で適用してください。partition key の変更後に pending migration を更新する場合も、
+で適用してください。パーティションキーの変更後に未適用のマイグレーションを更新する場合も、
 `{{runCmd}} swallowkit machine plan model-infrastructure <model> --refresh-pending --resource-group <name>`
-で明示的に preview します。
-この読み取り専用確認では target の migration tag と deployment history を検証します。
-適用済み・デプロイ試行済み・状態不明・手編集済みの migration は書き換えられません。
+で明示的に変更予定を確認します。
+この読み取り専用確認では対象のマイグレーションタグとデプロイ履歴を検証します。
+適用済み・デプロイ試行済み・状態不明・手編集済みのマイグレーションは書き換えられません。
 `verify project` が通っても、必要なインフラがない状態で永続化モデルを完了扱いにしたり、
 デプロイ可能と案内したりしてはなりません。
 
 <!-- source-section: Authentication -->
-## Authentication
+## 認証
 
-認証の導入は **plan/apply operation** であり、自由な config 編集ではありません。
-`swallowkit.config` の所有権は分割されています。
+認証は plan/apply で導入します。設定ファイルで編集できる項目は、次のように分かれます。
 
-- `auth.schemes` — SwallowKit が所有します。**必ず
-  `{{runCmd}} swallowkit machine plan auth --provider <p> [--scheme <name>]` から始めてください。
-  `auth.schemes` を手書きしてはなりません**。apply auth が追記します。手書きされた scheme は
-  plan を "already exists" で失敗させます。
-- `auth.authorization.policies` と `swa.allowedProviders` — apply **後に**手で追記します
-  (config は extension point であり、この編集は想定内の workflow です)。
-  `swa.allowedProviders` は plan 時に `--allowed-providers github,aad` でも指定できます。
+- `auth.schemes` は SwallowKit が管理します。`{{runCmd}} swallowkit machine plan auth --provider <p> [--scheme <name>]` から始め、返された plan を `apply auth` で適用してください。先にスキームを手書きすると、既存スキームとして扱われ、plan が `already exists` で停止します。
+- `auth.authorization.policies` と `swa.allowedProviders` は apply 後に追記します。SWA のプロバイダーは plan 時に `--allowed-providers github,aad` でも指定できます。
 
-`apply auth` の後は、返される `nextActions` に従ってください。
+適用後は `nextActions` に従ってください。
 
-1. 新しい scheme を参照する `auth.authorization.policies` を定義する。
-2. `swa` の場合: `swa.allowedProviders` を確認する。generated login URL はこれを使用します。
-3. `external-token` の場合: generated verifier stub を実装する。stub は fail closed であり、
-   **stub のままでも verify は成功します** — verify が green でも external-token 認証が
-   end-to-end で動くことを意味しません (`verify project` は stub が未修正の間
-   `auth-verifier-stub` warning を表示します)。
-4. auth guard が必要な model の plan/apply scaffold を再実行し、verify する。
+1. 追加したスキームを参照する認可ポリシーを定義します。
+2. SWA では `swa.allowedProviders` を確認します。生成されるログイン URL はこの値を使います。
+3. 外部トークンでは、生成された検証処理のひな形を実装します。ひな形はすべてのトークンを拒否します。未実装でも `verify project` は警告 `auth-verifier-stub` を表示して成功する場合があり、認証の動作確認の代わりにはなりません。
+4. 認証・認可が必要なモデルを plan/apply scaffold で再生成し、検証します。
 
-利用可能なら `swallowkit-add-auth` Agent Skill または
-`.swallowkit/workflows/add-auth.md` runbook を使用してください。
+利用できる場合は `swallowkit-add-auth` Agent Skill、使えない場合は `.swallowkit/workflows/add-auth.md` の手順書に従ってください。
 
-### Generated CRUD の守備範囲
+### 生成 CRUD が制御する範囲
 
-Generated CRUD endpoint は model の `authPolicy` (認証 + role) を強制しますが、
-**認証済み user へのデータのスコープはしません**。policy を通過した caller は
-任意の document を読み書きできます。user が自分のレコードのみ操作できるべき
-multi-user データでは、検証済み principal から scoping key (例: `learnerId`) を導出する
-ai-authored custom endpoint を追加し (request body からは決して導出しない)、
-generated write endpoint は admin role に制限してください。
+生成 CRUD はモデルの `authPolicy` による認証とロールを検査しますが、利用者ごとのデータ所有権は制御しません。ポリシーを満たした呼び出し元は、任意のドキュメントを操作できます。
+自分のレコードだけを操作させる場合は、検証済みの利用者情報から `learnerId` などの対象キーを取得する独自 API を作成してください。対象キーをリクエスト本文から信用して取得してはいけません。生成された書き込み API は管理者ロールに制限します。
 
-`authPolicy` を宣言する前に `plan auth` / `apply auth` で認証を設定してください。
-認証未設定の明示的なポリシーは、書き込み前に
-`auth-policy-without-auth` で blocked になります。`nextActions` に従い、再計画します。
-空の `{}` は従来どおり明示的なポリシーなしと解釈し、認証を有効にはしません。
-名前付き `auth.schemes` では、スキームとロールを選ぶ名前付き認可ポリシーを
-`authPolicy.policy` または read/write 名で参照します。ロールのみの宣言は
-`auth-policy-requires-named-policy` で blocked になります。逆に、単一プロバイダーの
-`auth.provider` ではロールの配列だけを使えます。名前付きポリシー（名前付きの
-`defaultPolicy` も含む）は `auth-named-policy-requires-named-scheme` で blocked になります。
+`authPolicy` の宣言前に plan/apply auth で認証を設定してください。未設定のまま明示的なポリシーを宣言すると、書き込み前に `auth-policy-without-auth` で停止します。空の `{}` は明示的なポリシーなしと解釈し、認証を有効にしません。
+名前付きスキームでは、`authPolicy.policy` または `read`／`write` で名前付きポリシーを参照します。ロールだけの宣言は `auth-policy-requires-named-policy` で停止します。
+旧形式の単一 `auth.provider` ではロール配列を使います。名前付きポリシーや名前付きの `defaultPolicy` は `auth-named-policy-requires-named-scheme` で停止します。
 
 <!-- source-section: Verification Is a Completion Gate -->
-## Verification は completion gate
+## 完了前に必要な検証
 
-Agent-driven implementation を完了とみなす前に SwallowKit verification を実行してください。
+エージェントによる実装を完了とみなす前に SwallowKit の検証を実行してください。
 
 ```bash
 {{runCmd}} swallowkit machine verify project
 ```
 
-または同等の MCP operation を使用します。
+または同等の MCP 操作を使用します。
 
 既定チェックは `structure` / `drift` / `typecheck` / `backend-build` と設定済みの
 カスタムチェックです。`backend-build` は独立 `functions/` を検証します。
 C# は `dotnet build`、TypeScript はプロジェクトの `tsc --noEmit`、
-Python 3 は `compileall`（構文のみ。import や型は対象外）で、Python は
+Python 3 は `compileall`（構文のみ。インポートや型は対象外）で、Python は
 PATH より `functions/.venv` を優先します。ツールチェーンがなければ理由付きで
-skip になります。skip はバックエンドの検証成功ではありません。復元して再実行してください。
+省略になります。省略はバックエンドの検証成功ではありません。復元して再実行してください。
 本番フロントエンドビルドも含める場合は
 `--checks "structure,drift,typecheck,backend-build,build"` を指定します。
 PowerShell ではカンマ区切り値を引用符で囲みます。
 
-verification が失敗した場合は structured failure explanation を使用します。
+検証が失敗した場合は失敗した検査の構造化された結果を使用します。
 
 ```bash
 {{runCmd}} swallowkit machine explain failure
 ```
 
-または MCP equivalent を使用し、適切な source を修復して再び verify します。
+または対応する MCP ツールを使用し、適切な定義元を修復して再検証します。
 
-該当する場合は `swallowkit-verify-repair` Agent Skill または runbook を使用してください。
+該当する場合は `swallowkit-verify-repair` Agent Skill または作業手順書を使用してください。
 
-SwallowKit verification が答える問い:
+SwallowKit の検証が答える問い:
 
-> SwallowKit project は mechanically/structurally valid か？
+> SwallowKit プロジェクトは構成・構造の規則を満たしているか？
 
-semantic code review が答える別の問い:
+設計と仕様に照らしたコードレビューが答える別の問い:
 
-> この implementation は適切に設計されているか？
-> specification と user intent を満たすか？
+> この実装は適切に設計されているか？
+> 仕様と利用者の目的を満たすか？
 
-したがって、semantic code review を最後の quality gate として扱う前に SwallowKit verification を
+したがって、設計と仕様に照らしたコードレビューを完了の条件とする前に SwallowKit の検証を
 実施し、以下で必要とされる実動作の証拠も確認してください。
 
 ### 変更した動作の実行時の証拠
 
-verification、build、型検査、単体テスト、fixture、起動確認は機械的な証拠であり、
+検証、ビルド、型検査、単体テスト、テスト用データ、起動確認は機械的な証拠であり、
 実 DB への接続や E2E 動作の証明ではありません。起動・永続化・API・UI の変更では、通常の
-`{{runCmd}} swallowkit dev` を実行し、実アプリから、設定された frontend の同一オリジン BFF、
+`{{runCmd}} swallowkit dev` を実行し、実アプリから、設定されたフロントエンドの同一オリジン BFF、
 独立 Functions、DB を通して変更した動作を確認してください。
-「日常的な command」の frontend 別ルーティングに従います。
+「日常的なコマンド」のフロントエンド別ルーティングに従います。
 Functions の直接呼び出しでは BFF や UI は検証できません。
 
 永続化の変更ではアプリから書き込み、再読み込みして読み戻し、
-再 seed せずにアプリを再起動してデータが残ることを確認します。
+再シードせずにアプリを再起動してデータが残ることを確認します。
 正常系だけでなく、関連する入力検証エラー、存在しない ID、設定された認証・認可も確認してください。
 
-Emulator / Azure Cosmos DB、mock AI / 実 AI サービス呼び出し、
-固定の開発用 identity / 実認証、および pass / skip / warning を分けて報告します。
+Emulator / Azure Cosmos DB、模擬 AI / 実 AI サービス呼び出し、
+開発用の固定 ID / 実認証、および成功 / 省略 / 警告を分けて報告します。
 API 成功はホストの健全性を意味しません。HTTP 成功で `AzureWebJobsStorage` の警告が
-解消したことにはなりません。サービス、資格情報、コンテナー、ツールの不足は blocker または
+解消したことにはなりません。サービス、資格情報、コンテナー、ツールの不足は作業を進められない理由または
 未検証事項です。無関係なテストの成功を根拠に完了を宣言してはなりません。
 
 ドキュメントだけの変更には実 DB の検証は不要です。
 
 <!-- source-section: Human Approval Gates -->
-## Human approval gate
+## 人の承認が必要な操作
 
-machine operation は次のような terminal state を返す場合があります。
+machine 操作は次のような処理の終了・継続状態を返す場合があります。
 
 - `complete`
 - `in-progress`
@@ -459,44 +349,37 @@ machine operation は次のような terminal state を返す場合がありま�
 
 `nextActions` に従ってください。
 
-status が `requires-human` の場合は停止し、必要な human decision を要求してください。
+状態が `requires-human` の場合は停止し、必要な人による判断を要求してください。
 
-`requires-human` を回避すべき error と解釈してはなりません。
+`requires-human` を回避すべきエラーと解釈してはなりません。
 
-Azure provisioning は human-approved operation です。
+Azure リソースの作成・更新は人の承認が必要な操作です。
 
-`swallowkit-provision` Agent Skill または runbook を使用し、その approval gate を決して迂回しては
-なりません。広い deployment request 自体は、その workflow が要求する明示的 approval を
-付与しません。
+`swallowkit-provision` Agent Skill または作業手順書を使用し、その承認が必要な手順を決して迂回しては
+なりません。デプロイ全体を依頼されただけでは、その作業手順が要求する明示的承認を得たことにはなりません。
 
-Provision は Bicep を一度送信し、元の Azure deployment を時間を区切って確認します。
-ローカルの timeout／error、出力の省略、Ctrl+C は Azure の失敗を意味しません。
+Provision は Bicep を一度送信し、元の Azure デプロイを時間を区切って確認します。
+ローカルのタイムアウト／エラー、出力の省略、Ctrl+C は Azure の失敗を意味しません。
 `in-progress` は Running／Accepted、`unknown` は結果を照会できない状態、
-`partial` は Azure 成功後の tag／ledger 未完了です。待機や記録の修復だけのために
+`partial` は Azure 成功後の tag／台帳未完了です。待機や記録の修復だけのために
 Bicep を再送したり、reconcile／adopt／cancel／delete を実行したりしないでください。
 
 `.swallowkit/state/provision/` の実行チェックポイントを保持し、
 `{{runCmd}} swallowkit machine inspect provision --plan <runId> --wait-seconds 300`
 で読み取り専用の状態確認／待機を行います。再度、人間の明示承認を得て
 `{{runCmd}} swallowkit machine apply provision --plan <runId> --approve`
-で再開してください。runId は元の planId と同じです。fingerprint、subscription、
-deployment の識別子、migration のチェックは引き続き有効です。
-Azure Succeeded と tag／ledger の確認が完了した
+で再開してください。runId は元の planId と同じです。変更検出用のハッシュ、サブスクリプション、
+デプロイの識別子、マイグレーションのチェックは引き続き有効です。
+Azure Succeeded と tag／台帳の確認が完了した
 `status: "complete"`／`outcome: "succeeded"` だけを全体の成功と扱ってください。
-deployment outputs の秘密値や `az --debug` の生の出力を表示してはいけません。
-旧版の未追跡 baseline は、元の target／regions と
+デプロイ出力値の秘密値や `az --debug` の生の出力を表示してはいけません。
+旧版の未追跡初期インフラは、元の対象／リージョンと
 `plan provision --resume-deployment <name>` を使い、ARM／parameters の一致を確認します。
 
 <!-- source-section: SwallowKit Agent Skills and Runbooks -->
-## SwallowKit Agent Skills と runbook
+## Agent Skills と作業手順書
 
-SwallowKit は task-specific Agent Skills を次の場所にインストールします。
-
-```text
-.github/skills/
-```
-
-現在の workflow:
+SwallowKit は、次の作業に対応する Agent Skills を `.github/skills/` に生成します。
 
 - `swallowkit-add-model`
 - `swallowkit-modify-model`
@@ -504,117 +387,87 @@ SwallowKit は task-specific Agent Skills を次の場所にインストール�
 - `swallowkit-verify-repair`
 - `swallowkit-provision`
 
-同等の agent-agnostic runbook は次の場所にあります。
-
-```text
-.swallowkit/workflows/
-```
-
-runtime が Agent Skills をサポートする場合、タスクに合う Skill を使用してください。
-それ以外では対応する runbook を読んでください。
-
-これらの task-specific instruction は `AGENTS.md` を補足します。always-on project contract を
-置き換えるものではありません。
+Agent Skills に対応する実行環境では、作業に合うスキルを使用してください。
+対応しない場合は、`.swallowkit/workflows/` にある同じ作業の手順書を読みます。
+これらは作業ごとの詳細であり、すべての作業に適用する `AGENTS.md` の代わりではありません。
 
 <!-- source-section: Architecture -->
-## Architecture
+## アーキテクチャ
 
-これは TypeScript frontend/BFF と {{backendLanguageLabel}} の Azure Functions backend を持ち、
-Azure に deploy される full-stack application です。
+このアプリケーションは、TypeScript のフロントエンド・BFF と、{{backendLanguageLabel}} の独立 Azure Functions バックエンドで構成され、Azure にデプロイされます。
 
 ```text
-Frontend ({{frontendLabel}})
+フロントエンド（{{frontendLabel}}）
   ↓
-BFF ({{bffLabel}})
+BFF（{{bffLabel}}）
   ↓
-Azure Functions
+独立 Azure Functions
   ↓
 Azure Cosmos DB
 ```
 
-### Core architecture rules
+### 構成の基本規則
 
-1. {{bffLabel}} は BFF/proxy layer です。application business logic や direct database
-   access を置いてはなりません。
-2. `shared/models/` の Zod schema が application model の source of truth です。
-3. model definition を layer 間で重複させてはなりません。
-4. Azure Functions が backend business logic と data access を所有します。
-5. SwallowKit-generated artifact は手編集せず、source of truth と deterministic generation
-   workflow から変更しなければなりません。
-6. infrastructure は Bicep による code として管理されます。SwallowKit ownership marker と
-   boundary を尊重してください。
-7. production の Azure resource access は generated security architecture に従わなければ
-   なりません。hard-coded credential または connection string を導入してはなりません。
-8. 独立 Functions を SWA にリンクしてはなりません。同一オリジンの BFF が
-   BACKEND_FUNCTIONS_BASE_URL / BACKEND_FUNCTIONS_KEY をサーバー側で使います。
-   ブラウザーバンドルや VITE_* に公開しないでください。マネージド Functions は
-   HTTP 専用です。DB、非 HTTP トリガー、マネージド ID、閉域網は独立バックエンドの責務です。
+1. {{bffLabel}} はリクエストの検証と転送を担います。業務ロジックやデータベースへの直接アクセスを置いてはいけません。
+2. `shared/models/` の Zod スキーマをモデルの定義元とします。
+3. レイヤーごとにモデル定義を重複させてはいけません。
+4. 業務ロジックとデータアクセスは、独立 Azure Functions が担当します。
+5. SwallowKit 管理の生成物は直接編集せず、定義元と plan/apply から変更します。
+6. インフラは Bicep で管理し、SwallowKit の所有権と編集規則に従います。
+7. 本番の Azure リソースには生成された認証・接続の構成でアクセスします。資格情報や接続文字列をコードに直接記述してはいけません。
+8. 独立 Functions を SWA にリンクしてはいけません。同一オリジンの BFF が `BACKEND_FUNCTIONS_BASE_URL` と `BACKEND_FUNCTIONS_KEY` をサーバー側で使用します。ブラウザーのバンドルや `VITE_*` には公開しないでください。マネージド Functions は HTTP 専用です。DB、非 HTTP トリガー、マネージド ID、閉域網は独立バックエンドが担当します。
 
-### Backend-specific rules
+### バックエンドごとの規則
 
 {{backendRules}}
 
-backend が `id`、`createdAt`、`updatedAt` を所有します。client-sent value を決して信頼しては
-なりません。
+`id`、`createdAt`、`updatedAt` はバックエンドが管理します。クライアントが送信した値を信頼してはいけません。
 
 ### 永続化の規約
 
-Cosmos を使うモデルでは、本番は Azure Cosmos DB、ローカルは Cosmos DB Emulator を使います。
-サービス、資格情報、コンテナーの不足は報告し、File / JSON / SQLite / InMemory による
-アプリの保存先や、接続障害を隠す fallback で回避してはなりません。
-明示的な単体テスト用 double は利用できますが、DB 検証の証拠にはなりません。
+Cosmos を使うモデルでは、本番は Azure Cosmos DB、ローカルは Cosmos DB Emulator を使用します。
+サービス、資格情報、コンテナーが不足している場合は報告してください。接続障害を隠すために、保存先を File / JSON / SQLite / InMemory に置き換えてはいけません。
+単体テスト用の代替実装は使用できますが、実 DB を検証した証拠にはなりません。
 
-カスタム API と業務ロジックも、標準の接続設定と実効 DB 名を使います。
+カスタム API と業務ロジックでも、標準の接続設定と実効 DB 名を使います。
 `swallowkit dev` が解決する worktree 分離後の DB 名もこれに含まれます。
-分離前の DB 名のハードコードや、不要な独自 DB / path / storage option、
-本番用の起動 flag を追加してはなりません。別の永続化設定を作らず、検査した設定と
-capability に従ってください。明示的な別の永続化要件や外部 `connectorConfig` モデルは、
-確認済みの capability と ownership boundary の範囲で利用できます。
-これは Cosmos の障害時に無断で保存先を置き換える許可ではありません。
+分離前の DB 名を直接記述したり、不要な独自の DB・パス・ストレージ設定や本番用の起動フラグを追加したりしてはいけません。
+別の永続化要件や外部の `connectorConfig` モデルを使う場合も、確認した機能と編集規則に従ってください。Cosmos の障害時に無断で保存先を置き換える許可ではありません。
 
 <!-- source-section: Project Structure -->
-## Project structure
+## プロジェクト構成
 
 ```text
 {{projectName}}/
 {{frontendStructure}}
-├── functions/              # Azure Functions backend
+├── functions/              # 独立 Azure Functions バックエンド
 {{functionsStructureLine}}
 ├── shared/
-│   ├── models/             # Zod source-of-truth models
+│   ├── models/             # 定義元の Zod モデル
 │   └── index.ts
-├── lib/                    # auth, navigation, and shared application utilities
+├── lib/                    # 認証、ナビゲーション、共通処理
 ├── components/
-├── infra/                  # Bicep infrastructure
-├── .swallowkit/            # SwallowKit project metadata and runbooks
-├── .github/skills/         # SwallowKit Agent Skills
-├── .mcp.json               # project-scoped SwallowKit MCP bootstrap
+├── infra/                  # Bicep インフラ
+├── .swallowkit/            # プロジェクト情報と作業手順書
+├── .github/skills/         # SwallowKit の Agent Skills
+├── .mcp.json               # MCP サーバーの起動設定
 └── AGENTS.md
 ```
 
-すべての project がまったく同じ generated structure を持つと仮定せず、current project を
-検査してください。
+すべてのプロジェクトで同じファイル構成になるとは限りません。作業するプロジェクトを検査してください。
 
 <!-- source-section: Naming and Model Conventions -->
-## Naming と model convention
+## 命名とモデルの規約
 
-- Model schema file は `shared/models/{kebab-case}.ts` を使用します。
-- Zod schema constant と inferred TypeScript type は同じ PascalCase name を使用します:
-  `export const Todo = z.object(...); export type Todo = z.infer<typeof Todo>`。
-- create-model と plan/apply scaffold は、手作業のモデルも含め、不足する
-  エクスポートを `shared/index.ts` に追記します。手動の追記も可能です。
-  管理マーカーはなく、既存内容は保持されます。
-- `id` は必須の `z.string()` です。optional な backend-managed field は
-  `createdAt` / `updatedAt` のみです。
-- model は `partitionKey`、`authPolicy`、`displayName`、`connectorConfig` を exported constant
-  として宣言できます。正確な書式:
-  `{{runCmd}} swallowkit machine inspect capabilities` (modelDeclarations)。
-- Cosmos DB container は PascalCase plural name を使用し、model が別の key を宣言しない限り
-  partition key の default は `/id` です。宣言例:
-  `export const partitionKey = '/learnerId';` (field は schema に存在する必要があります)。
+- モデルのファイルは `shared/models/{kebab-case}.ts` に置きます。
+- Zod の定数と推論した TypeScript 型は同じ PascalCase 名を使います。例は `export const Todo = z.object(...); export type Todo = z.infer<typeof Todo>` です。
+- `create-model` と plan/apply scaffold は、手書きモデルを含め、不足するエクスポートを `shared/index.ts` に追記します。マーカーはなく、既存内容を保持し、手動での追記もできます。
+- `id` は必須の `z.string()` です。バックエンド管理の `createdAt` と `updatedAt` は任意項目にできます。
+- `partitionKey`、`authPolicy`、`displayName`、`connectorConfig` はエクスポートした定数で指定できます。正確な書式は `{{runCmd}} swallowkit machine inspect capabilities` の `modelDeclarations` を確認してください。
+- Cosmos DB のコンテナー名は PascalCase の複数形です。パーティションキーの既定値は `/id` で、たとえば `export const partitionKey = '/learnerId';` で変更できます。指定するフィールドはスキーマ内に定義してください。
 
 <!-- source-section: Everyday Commands -->
-## 日常的な command
+## 日常的なコマンド
 
 ```bash
 {{pm}} install
@@ -624,7 +477,7 @@ capability に従ってください。明示的な別の永続化要件や外部
 {{runCmd}} swallowkit machine verify project
 ```
 
-この project 向けに生成された package-runner convention で SwallowKit を呼び出してください。
+このプロジェクト向けに生成された package-runner convention で SwallowKit を呼び出してください。
 package-manager invocation style を勝手に混在させてはなりません。
 
 {{devGuidance}}
@@ -634,13 +487,13 @@ package-manager invocation style を勝手に混在させてはなりません�
 明示的な許可なく起動・再起動・リセットしてはなりません。
 ポートを空けるために利用者のサービスを再起動してはなりません。
 
-破壊的な seed 置換、コンテナー再作成、その他のデータ変更の前に、
-実際の endpoint、実効 DB 名、対象コンテナーを確認します。分離したテスト DB とポートを使い、
+破壊的なシード置換、コンテナー再作成、その他のデータ変更の前に、
+実際のエンドポイント、実効 DB 名、対象コンテナーを確認します。分離したテスト DB とポートを使い、
 worktree 内にいるというだけで分離済みと判断せず、解決済みの設定とログで確認します。
 本番・共有・既存の利用者データには適用される人間の承認が必要です。破棄可能と決めつけてはなりません。
 検証を通すために TLS 検証を無効化したり、証明書の信頼設定・グローバルツール・PC の設定を
 変更したり、別プロトコルを推測して使ってはなりません。
-実際に設定された HTTP / HTTPS endpoint を使い、接続障害は報告してください。
+実際に設定された HTTP / HTTPS エンドポイントを使い、接続障害は報告してください。
 
 停止するのは自分が起動したプロセスだけにし、個々のプロセスを特定してください。
 プロセス名による一括停止は禁止です。ローカルの未追跡設定やテスト DB の残存を報告します。
@@ -649,23 +502,10 @@ worktree 内にいるというだけで分離済みと判断せず、解決済�
 <!-- source-section: Final Rules -->
 ## 最終ルール
 
-してはならないこと:
+次の操作をしてはいけません。
 
-- current inspection で回答できる場合に、記憶上の SwallowKit capability に依存する
-- deterministic SwallowKit-managed artifact を手編集する
-- plan/apply safety check を迂回する
-- human approval gate を迂回する
-- generated layer 間で model definition を重複させる
-- backend business logic を BFF に移す
-- 複数の generated layer があるという理由だけで、1つの end-to-end SwallowKit-generated
-  feature を人為的な horizontal ticket に分解する
-- SwallowKit verification が成功する前に implementation を完了とみなす
-
-行うこと:
-
-- SwallowKit-dependent な設計仮定の前に inspect する
-- 外部 development-process workflow を維持する
-- SwallowKit を deterministic execution/verification layer として使用する
-- specification を intent と observable behavior 中心に保つ
-- vertical で独立して検証可能な slice を優先する
-- final semantic review の前に verify する
+- 現在の検査結果で分かる機能を、記憶だけで判断する。
+- SwallowKit 管理の生成物を手編集する。
+- plan/apply の検査や、人の承認が必要な手順を迂回する。
+- 生成されるレイヤー間でモデル定義を重複させる。
+- バックエンドの業務ロジックを BFF に移す。

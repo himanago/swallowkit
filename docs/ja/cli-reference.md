@@ -33,7 +33,7 @@ SwallowKit CLI の全コマンドとオプションです。
 
 ## swallowkit machine
 
-AI / MCP 統合向けの machine-readable command group です。
+AI / MCP 統合向けの機械可読なコマンド群 です。
 
 ### 使用法
 
@@ -45,27 +45,27 @@ npx swallowkit machine <command> <subcommand> [options]
 
 | コマンド | 用途 |
 |---------|------|
-| `inspect project` | framework-owned project metadata を返す |
-| `inspect entities` | entity / schema metadata を返す |
-| `inspect routes` | BFF / Functions route metadata を返す |
-| `inspect artifacts` | 生成物台帳（ownership 付き）を返す |
+| `inspect project` | SwallowKit が管理するプロジェクト情報を返す |
+| `inspect entities` | モデル / スキーマメタデータを返す |
+| `inspect routes` | BFF / Functions ルートメタデータを返す |
+| `inspect artifacts` | 生成物台帳（所有権付き）を返す |
 | `inspect boundaries` | AI 自由生成と決定論的生成の責任分界契約を返す |
 | `inspect drift` | 生成物と現在状態の乖離を検出する |
-| `inspect infra` | Bicep 資産（params / modules / outputs / container 配線）を Azure 呼び出しなしで解析する |
-| `inspect capabilities` | framework の能力契約（model 宣言子と書式例・認証導入 workflow・生成 CRUD の守備範囲・seed 適用方法・コマンド一覧）を返す |
-| `validate project` | 永続モデルの Cosmos コンテナー migration のローカルな不足・不一致を含む validation violation を返す |
+| `inspect infra` | Bicep 資産（params / modules / 出力値 / コンテナー配線）を Azure 呼び出しなしで解析する |
+| `inspect capabilities` | 利用可能な機能（モデル宣言の書式例・認証の導入手順・生成 CRUD の範囲・シードの適用方法・コマンド一覧）を返す |
+| `validate project` | 永続モデルの Cosmos コンテナーマイグレーションのローカルな不足・不一致を含む検証で見つかった問題 を返す |
 | `generate model` | `create-model` を非対話 JSON モードで実行する |
 | `generate scaffold` | `scaffold` を非対話 JSON モードで実行する |
-| `plan model` | スキーマ、shared export、コンテナー migration、manifest、生成台帳の変更を、プロジェクトに書き込まず preview する |
-| `plan model-infrastructure` | 既存スキーマの bytes を変更せずコンテナー migration の登録を preview する。pending refresh の Azure 確認は読み取り専用 |
-| `apply model` | 入力 fingerprint と上書き承認を検証して model plan を適用する |
-| `plan scaffold` | 書き込まずに scaffold の変更計画（planId 付き）を返す（複数 model 対応） |
-| `apply scaffold` | plan の鮮度・承認を検証して scaffold を適用する（複数 model 対応） |
-| `plan auth` | 書き込まずに add-auth の変更計画を返す（`--allowed-providers` で SWA identity provider を指定） |
+| `plan model` | スキーマ、共有パッケージのエクスポート、コンテナーマイグレーション、プロジェクト情報ファイル、生成台帳の変更を、プロジェクトに書き込まず事前に確認する |
+| `plan model-infrastructure` | 既存スキーマの内容を変更せず、コンテナーマイグレーションの登録内容を確認する。未適用の定義を更新する際の Azure 確認は読み取り専用 |
+| `apply model` | 入力変更検出用のハッシュと上書き承認を検証してモデル plan を適用する |
+| `plan scaffold` | 書き込まずに scaffold の変更計画（planId 付き）を返す（複数モデル対応） |
+| `apply scaffold` | plan の鮮度・承認を検証して scaffold を適用する（複数モデル対応） |
+| `plan auth` | 書き込まずに add-auth の変更計画を返す（`--allowed-providers` で SWA 認証プロバイダーを指定） |
 | `apply auth` | plan の鮮度・承認を検証して認証コードを適用する |
-| `plan provision` | ローカルのモデルコンテナー migration 完備性を確認し、Azure 状態を調べて bootstrap / adoption / migration / reconcile の plan を返す |
+| `plan provision` | ローカルのモデルコンテナーマイグレーション完備性を確認し、Azure 状態を調べて初期設定 / adoption / マイグレーション / reconcile の plan を返す |
 | `apply provision` | 承認済み plan を適用する（常に `--approve` 必須） |
-| `verify project` | structure（ローカルのモデルコンテナー migration 完備性を含む）/ drift / typecheck / backend-build（+ 明示指定の build / lint / test とカスタム）を実行する。Azure プロビジョニング済みであることは証明しません（`--compact` で info-severity findings を抑制） |
+| `verify project` | structure（ローカルのモデルコンテナーマイグレーション完備性を含む）/ 記録とのずれ / 型検査 / backend-build（+ 明示指定のビルド / lint / テストとカスタム）を実行する。Azure プロビジョニング済みであることは証明しません（`--compact` で info-severity findings を抑制） |
 | `explain failure` | 直近の verify 失敗の証拠と修復アクションを返す |
 
 ### 例
@@ -102,17 +102,17 @@ npx swallowkit machine explain failure --check typecheck
 - stdout は常に 1 つの JSON
 - 非対話
 - 成功 / 失敗ともに構造化出力（`status` フィールドで `complete` / `in-progress` / `blocked` / `requires-human` / `failed` を返す）
-- `generate model` は overwrite policy（`always` または `never`）を明示する
+- `generate model` は overwrite ポリシー（`always` または `never`）を明示する
 - 生成物は `.swallowkit/artifacts.json`（Git 管理対象）に台帳として記録される
-- scaffold は対応する Zod object / enum / literal を TypeScript AST で先に解析し、情報欠落を伴う regex metadata を apply しない
-- scaffold plan は parser mode、canonical model metadata、semantic fingerprint、diagnostics を保持し、apply 時の再解析が異なる場合は `schema-analysis-mismatch` で blocked になる
-- schema / verify の子プロセスを起動できない場合は、diagnostics 付きの `schema-evaluation-unavailable` / `verification-command-unavailable` と `status: blocked` を返す
+- scaffold は対応する Zod object / enum / literal を TypeScript AST で先に解析し、情報欠落を伴う regex メタデータを apply しない
+- scaffold の計画は、解析モード、共通のモデルメタデータ、スキーマの意味に基づくハッシュ、診断情報を保持する。apply 時の再解析結果が異なる場合は `schema-analysis-mismatch` で停止する
+- スキーマ / verify の子プロセスを起動できない場合は、diagnostics 付きの `schema-evaluation-unavailable` / `verification-command-unavailable` と `status: blocked` を返す
 
 アーキテクチャやレスポンス例の詳細は [AI / MCP ガイド](./ai-mcp-guide.md) を参照してください。
 
 ## swallowkit-mcp
 
-AI コーディングエージェント向けの同梱 MCP stdio server です。
+AI コーディングエージェント向けの同梱の標準入出力型 MCP サーバー です。
 
 ### 使用法
 
@@ -141,7 +141,7 @@ npx swallowkit-mcp
 - `swallowkit_verify_project`
 - `swallowkit_explain_failure`
 
-MCP server は `swallowkit machine ...` の thin adapter であり、独自の framework ロジックは持ちません。
+MCP サーバーは `swallowkit machine ...` を呼び出すための接続処理を担います。生成・検査処理は CLI と共通です。
 
 ## swallowkit init
 
@@ -150,9 +150,9 @@ MCP server は `swallowkit machine ...` の thin adapter であり、独自の f
 ### 使用法
 
 ```bash
-npx swallowkit init [project-name] [options]
+npx swallowkit@beta init [project-name] [options]
 # or
-pnpm dlx swallowkit init [project-name] [options]
+pnpm dlx swallowkit@beta init [project-name] [options]
 ```
 
 ### 引数
@@ -179,14 +179,14 @@ pnpm dlx swallowkit init [project-name] [options]
 
 Free はこのツールの基本構成で利用できます。Standard は SLA、カスタム認証プロバイダー、Functions によるカスタムロール付与、Static Web Apps 自体の Private Endpoint、Free より大きいクォータが必要な場合に選択してください。`--vnet outbound` が作成する Functions/Cosmos DB 用 VNet は、SWA プランとは独立しています。
 
-フラグで直接指定するとプロンプトをスキップできます：
+フラグで直接指定するとプロンプトをスキップできます。
 
 ```bash
 # 完全非対話モード
-npx swallowkit init my-app --cicd github --backend-language csharp --swa-plan free --cosmos-db-mode serverless --vnet outbound
+npx swallowkit@beta init my-app --cicd github --backend-language csharp --swa-plan free --cosmos-db-mode serverless --vnet outbound
 
 # 部分指定（--cicd のみ指定、残りはプロンプト表示）
-npx swallowkit init my-app --cicd skip
+npx swallowkit@beta init my-app --cicd skip
 ```
 
 VS Code 拡張機能やスクリプトなど、stdin が TTY でない環境から CLI を呼び出す場合に特に便利です。
@@ -194,7 +194,7 @@ VS Code 拡張機能やスクリプトなど、stdin が TTY でない環境か�
 非対話環境（CI、コーディングエージェント、パイプ経由の実行など）を検出すると、`init` はプロンプトでハングする代わりに以下のように振る舞います：
 
 - 設定フラグが不足している場合は、不足フラグの一覧をエラーとして即座に返します（ハングしません）。
-- pnpm プロジェクトは `pnpm-workspace.yaml` にローカルの build script 方針を記録します。React のビルドに必要な `esbuild` は許可し、不要な `keytar`、`protobufjs`、`unrs-resolver` の script は拒否します。未知の script は自動承認しません。[パッケージマネージャーの切り分け](./package-managers#build-script-と-security-policy-の切り分け)も参照してください。
+- pnpm プロジェクトは `pnpm-workspace.yaml` にローカルのビルドスクリプトの実行方針を記録します。React のビルドに必要な `esbuild` は許可し、不要な `keytar`、`protobufjs`、`unrs-resolver` のスクリプトは拒否します。未知のスクリプトは自動承認しません。[パッケージマネージャーの切り分け](./package-managers#ビルドスクリプトとセキュリティポリシーの切り分け)も参照してください。
 
 不正な値を指定するとエラーになります：
 
@@ -267,39 +267,39 @@ my-app/
 └── package.json
 ```
 
-### AI エージェント bootstrap / 指示ファイル
+### AI エージェント初期設定 / 指示ファイル
 
-`init` コマンドは、複数の AI コーディングエージェント向けの指示ファイルに加え、repository MCP 自動検出に対応した runtime 向けの project-scoped MCP bootstrap も自動生成します。これらにより、AI エージェント（GitHub Copilot、Claude Code、OpenAI Codex など）がコードを生成・修正する際に、プロジェクトのアーキテクチャと規約に従います。
+`init` コマンドは、複数の AI コーディングエージェント向けの指示ファイルに加え、リポジトリ MCP 自動検出に対応した実行環境向けのプロジェクト単位の MCP 初期設定も自動生成します。これらにより、AI エージェント（GitHub Copilot、Claude Code、OpenAI Codex など）がコードを生成・修正する際に、プロジェクトのアーキテクチャと規約に従います。
 
 #### 生成されるファイル一覧
 
 | ファイル | 対象エージェント | 説明 |
 |---------|----------------|------|
 | `AGENTS.md` | OpenAI Codex / 汎用エージェント | アーキテクチャ全体仕様、規約、命名規則、CLI コマンド、自律ループ手順 |
-| `CLAUDE.md` | Claude Code | canonical な `AGENTS.md` 規約を参照する adapter |
-| `.mcp.json` | Claude Code / project MCP runtime | 起動ごとに `swallowkit-mcp` を解決し、`SWALLOWKIT_MCP_VERSION` で固定できる launcher |
+| `CLAUDE.md` | Claude Code | 共通の `AGENTS.md` 規約を参照する参照指示ファイル |
+| `.mcp.json` | Claude Code / プロジェクト MCP 実行環境 | 起動ごとに `swallowkit-mcp` を解決し、`SWALLOWKIT_MCP_VERSION` で固定できる launcher |
 | `.github/copilot-instructions.md` | GitHub Copilot | 主要ルールのサマリー（Copilot が自動読み込み） |
 | `.github/instructions/shared-models.instructions.md` | GitHub Copilot | `shared/models/**` 向けレイヤー別ルール |
 | `.github/instructions/bff-routes.instructions.md` | GitHub Copilot | Next.js: `app/api/**`、React: `bff/**` 向けレイヤー別ルール |
 | `.github/instructions/azure-functions.instructions.md` | GitHub Copilot | `functions/**` 向けレイヤー別ルール |
-| `.github/skills/*/SKILL.md` | Skills 対応エージェント（Copilot VS Code / CLI / cloud agent 等） | [Agent Skills](https://agentskills.io/) 標準のワークフロースキル（`swallowkit-add-model` / `swallowkit-modify-model` / `swallowkit-verify-repair` / `swallowkit-provision`）。関連タスク時に自動ロード |
-| `.swallowkit/workflows/*.md` | 全エージェント（Skills 非対応含む） | エージェント非依存の自律ループランブック（Skills と同一内容） |
+| `.github/skills/*/SKILL.md` | スキル対応エージェント（Copilot VS Code / CLI / cloud エージェント等） | [Agent Skills](https://agentskills.io/) 標準のワークフロースキル（`swallowkit-add-model` / `swallowkit-modify-model` / `swallowkit-verify-repair` / `swallowkit-provision`）。関連タスク時に自動ロード |
+| `.swallowkit/workflows/*.md` | 全エージェント（スキル非対応含む） | エージェント非依存のエージェント向けの作業手順書（スキルと同一内容） |
 
-#### Canonical な AGENTS.md と Agent adapter
+#### 共通規約の AGENTS.md とエージェント別の参照指示
 
-最新の `AGENTS.md`、`CLAUDE.md`、Copilot instructions の全文と日本語訳は
-[Coding Agent ガイド](./coding-agent-guide.md) を参照してください。
-永続化、seed、実動作の証拠、データ保護の規約は `AGENTS.md` にまとめ、
-adapter と runbook は重複させず参照します。既存プロジェクトには差分レビュー後に
+最新の `AGENTS.md`、`CLAUDE.md`、Copilot 向け指示 の全文と日本語訳は
+[コーディングエージェントガイド](./coding-agent-guide.md) を参照してください。
+永続化、シード、実動作の証拠、データ保護の規約は `AGENTS.md` にまとめ、
+参照指示ファイルと作業手順書は重複させず参照します。既存プロジェクトには差分レビュー後に
 手動でマージします。`init` は既存ディレクトリを拒否するため、指示ファイルの更新には使いません。
 
 #### .github/copilot-instructions.md（GitHub Copilot 向け）
 
-このファイルは VS Code で GitHub Copilot が自動的に読み込みます。アーキテクチャの概要、主要ルール、命名規則、管理フィールドのサマリーに加え、framework 管理操作で使う MCP / machine-interface fallback も含みます。
+このファイルは VS Code で GitHub Copilot が自動的に読み込みます。アーキテクチャの概要、主要ルール、命名規則、管理フィールドのサマリーに加え、フレームワーク管理操作で使う MCP / MCP が使えない場合の machine CLIも含みます。
 
-#### .github/instructions/*.instructions.md（GitHub Copilot — レイヤー別）
+#### .github/instructions/*.instructions.md（GitHub Copilot。レイヤー別）
 
-これらのファイルは、`applyTo` glob パターンに一致するファイルを編集する際に GitHub Copilot が適用するコンテキスト固有のルールを提供します：
+これらのファイルは、`applyTo` glob パターンに一致するファイルを編集する際に GitHub Copilot が適用するコンテキスト固有のルールを提供します。
 
 | ファイル | 適用対象 | 主要ルール |
 |---------|---------|----------|
@@ -309,7 +309,7 @@ adapter と runbook は重複させず参照します。既存プロジェクト
 
 ### パッケージマネージャーの自動検出
 
-SwallowKit はパッケージマネージャーを自動的に選択します：
+SwallowKit はパッケージマネージャーを自動的に選択します。
 
 - **pnpm** がインストール済みの場合 → 常に pnpm を優先
 - それ以外の場合 → **npm** を使用
@@ -320,13 +320,13 @@ SwallowKit はパッケージマネージャーを自動的に選択します：
 
 ```bash
 # 新しいディレクトリに初期化（対話モード）
-npx swallowkit init my-awesome-app
+npx swallowkit@beta init my-awesome-app
 
 # 新しいディレクトリに初期化（非対話モード）
-npx swallowkit init my-awesome-app --cicd github --swa-plan free --cosmos-db-mode serverless --vnet outbound
+npx swallowkit@beta init my-awesome-app --cicd github --swa-plan free --cosmos-db-mode serverless --vnet outbound
 
 # pnpm で実行
-pnpm dlx swallowkit init my-awesome-app
+pnpm dlx swallowkit@beta init my-awesome-app
 
 # 初期化後
 cd my-awesome-app
@@ -335,8 +335,8 @@ cd my-awesome-app
 ## swallowkit create-model
 
 `shared/models/` 配下に 1 つ以上の Zod モデル雛形を生成します。新規の
-非 connector モデルでは Cosmos コンテナー用 migration も生成・登録します。
-Azure の provisioning や CRUD の生成は行いません。
+非コネクタモデルでは Cosmos コンテナー用マイグレーションも生成・登録します。
+Azure のリソースの作成・更新や CRUD の生成は行いません。
 
 ### 使用法
 
@@ -355,7 +355,7 @@ pnpm dlx swallowkit create-model <names...> [options]
 | オプション | 説明 | デフォルト |
 |----------|------|----------|
 | `--models-dir <dir>` | 生成先のモデルディレクトリ | `shared/models` |
-| `--connector <name>` | 指定した connector に紐づく connector 対応モデルを生成 | *（なし）* |
+| `--connector <name>` | 指定したコネクタに紐づくコネクタ対応モデルを生成 | *（なし）* |
 
 ### このコマンドが行うこと
 
@@ -365,7 +365,7 @@ pnpm dlx swallowkit create-model <names...> [options]
 - ファイル名は kebab-case、スキーマ名と型名は PascalCase に正規化
 - `shared/index.ts` に不足する再エクスポートを追記（なければ作成）。既存内容は保持
 - 初期スキーマに `id`、`name`、`createdAt`、`updatedAt` を含める
-- コンテナー Bicep、migration manifest エントリ、生成ファイル所有権記録を生成
+- コンテナー Bicep、マイグレーション台帳のエントリ、生成ファイル所有権記録を生成
 
 例:
 
@@ -389,12 +389,12 @@ export type Todo = z.infer<typeof Todo>;
 export const displayName = 'Todo';
 ```
 
-### Connector モデル
+### コネクタモデル
 
-`--connector` を指定すると、生成される雛形に connector 固有のメタデータを含む `connectorConfig` エクスポートが追加されます：
+`--connector` を指定すると、生成される雛形にコネクタ固有のメタデータを含む `connectorConfig` エクスポートが追加されます：
 
-- **RDB connector**: `table` と `idColumn` フィールドを含む
-- **API connector**: `endpoints` マッピングを含む
+- **RDB コネクタ**: `table` と `idColumn` フィールドを含む
+- **API コネクタ**: `endpoints` マッピングを含む
 - いずれも `operations` 配列を含む（API はすべての操作、RDB は読み取り専用がデフォルト）
 - Zod スキーマの雛形が変更される（バックエンドによる `createdAt`/`updatedAt` の自動管理なし）
 
@@ -407,7 +407,7 @@ npx swallowkit create-model backlog-issue --connector backlog
 
 ### 既存ファイルがある場合
 
-対象ファイルがすでに存在する場合は、上書きするかどうかを確認します。`no` を選ぶとそのモデルだけスキップされ、他のモデルの処理は続行されます。スキップしたモデルのインフラは backfill されません。手書きモデルのスキーマを変更せずに登録するには `migrations add-model <name>` を使います。
+対象ファイルがすでに存在する場合は、上書きするかどうかを確認します。`no` を選ぶとそのモデルだけスキップされ、他のモデルの処理は続行されます。スキップしたモデルのインフラは既存モデルへのインフラ定義の追加されません。手書きモデルのスキーマを変更せずに登録するには `migrations add-model <name>` を使います。
 
 ### 典型的な流れ
 
@@ -418,11 +418,11 @@ npx swallowkit migrations add-model todo --dry-run # 手書きまたはスキッ
 npx swallowkit scaffold shared/models/todo.ts # CRUD が必要な場合のみ
 ```
 
-`scaffold` や `provision` の前に生成された Zod モデルを編集します。migration が pending の状態で partition key を変更した場合は、`migrations add-model <name> --refresh-pending --resource-group <name> --dry-run` を明示して preview してください。読み取り専用のリモート確認を行い、適用済み・デプロイ試行済み・状態不明・手編集済みの migration は安全性を証明できなければ拒否します。
+`scaffold` や `provision` の前に生成された Zod モデルを編集します。マイグレーションが未適用の状態でパーティションキーを変更した場合は、`migrations add-model <name> --refresh-pending --resource-group <name> --dry-run` を明示して変更予定を確認してください。読み取り専用のリモート確認を行い、適用済み・デプロイ試行済み・状態不明・手編集済みのマイグレーションは安全性を証明できなければ拒否します。
 
 ## swallowkit add-connector
 
-外部データソースの connector を `swallowkit.config.js` に登録します。
+外部データソースのコネクタを `swallowkit.config.js` に登録します。
 
 ### 使用法
 
@@ -434,13 +434,13 @@ pnpm dlx swallowkit add-connector <name> --type=<type> [options]
 
 ### 引数
 
-- `name` (必須): connector 名（config のキーとして使用）
+- `name` (必須): コネクタ名（config のキーとして使用）
 
 ### オプション
 
 | オプション | 説明 | 必須 |
 |----------|------|------|
-| `--type <type>` | connector タイプ: `rdb` または `api` | はい |
+| `--type <type>` | コネクタタイプ: `rdb` または `api` | はい |
 | `--provider <provider>` | RDB プロバイダー: `mysql`, `postgres`, `sqlserver` | `--type rdb` の場合のみ |
 | `--connection-env <var>` | 接続文字列の環境変数名 | `--type rdb` の場合のみ |
 | `--base-url-env <var>` | API ベース URL の環境変数名 | `--type api` の場合のみ |
@@ -452,7 +452,7 @@ pnpm dlx swallowkit add-connector <name> --type=<type> [options]
 ### このコマンドが行うこと
 
 - 既存の `swallowkit.config.js` を読み込む
-- `connectors` セクションに connector 定義を追加
+- `connectors` セクションにコネクタ定義を追加
 - `connectors` セクションが存在しない場合は新規作成
 
 ### 例
@@ -490,14 +490,14 @@ pnpm dlx swallowkit add-auth [options]
 
 ### このコマンドが行うこと
 
-1. 共有認証モデルを生成（`shared/models/auth.ts` — LoginRequest, AuthUser, LoginResponse）
-2. 認証用 Functions を生成（login, me, logout）— 設定されたバックエンド言語に対応（TS/C#/Python）
+1. 共有認証モデルを生成（`shared/models/auth.ts`。LoginRequest, AuthUser, LoginResponse）
+2. 認証用 Functions を生成（login, me, logout）。 設定されたバックエンド言語に対応（TS/C#/Python）
 3. JWT ヘルパーユーティリティを生成（トークン検証・ロールチェック用）
-4. BFF ルートを生成（`app/api/auth/login|logout|me/route.ts`）— httpOnly Cookie 管理
-5. Next.js ミドルウェアを生成（`middleware.ts`）— Cookie ベースの認証チェックとリダイレクト
+4. BFF ルートを生成（`app/api/auth/login|logout|me/route.ts`）。 httpOnly Cookie 管理
+5. Next.js の `proxy.ts` を生成。Cookie と有効期限の事前確認、およびリダイレクトを担当
 6. ログインページを生成（`app/login/page.tsx`）
-7. 認証用 React コンテキストを生成（`lib/auth/auth-context.tsx`）— `useAuth` フック付き
-8. `lib/api/call-function.ts` を更新 — `Authorization` ヘッダーの転送を追加
+7. 認証用 React コンテキストを生成（`lib/auth/auth-context.tsx`）。 `useAuth` フック付き
+8. `lib/api/call-function.ts` を更新。`Authorization` ヘッダーの転送を追加
 9. `swallowkit.config.js` に `auth` セクションを追加（未設定の場合）
 10. バックエンドの依存パッケージをインストール（JWT ライブラリ + コネクタプロバイダーに対応する RDB ドライバー）
 
@@ -569,7 +569,7 @@ pnpm dlx swallowkit dev [options]
 | `--open` | `-o` | ブラウザを自動的に開く | `false` |
 | `--no-functions` | | Functions をスキップ | `false` |
 | `--seed-env <environment>` | | 起動前に `dev-seeds/<environment>` から対応する Cosmos Emulator コンテナを置換 | *（無効）* |
-| `--mock-connectors` | | connector モデル用のモックプロキシサーバーを起動 | `false` |
+| `--mock-connectors` | | コネクタモデル用のモックプロキシサーバーを起動 | `false` |
 | `--swa-port <port>` | | SWA認証エミュレーターのポート | `4280` |
 | `--no-swa` | | SWA認証エミュレーターをスキップ | `false` |
 | `--verbose` | `-v` | 詳細ログを表示 | `false` |
@@ -581,9 +581,9 @@ pnpm dlx swallowkit dev [options]
    - 必要ならデータベースを作成
    - 必要ならモデル用コンテナを作成
    - `--seed-env <environment>` が指定され、`dev-seeds/<environment>/` が存在する場合は、対応する JSON で各コンテナを置換
-3. **Connector Mock Server**（`--mock-connectors` 有効時）:
+3. **コネクタ Mock Server**（`--mock-connectors` 有効時）:
    - Functions ポート + 1（例: 7072）でプロキシサーバーを起動
-   - connector モデルに一致するルート → Zod 生成のモックデータによるインメモリ CRUD
+   - コネクタモデルに一致するルート → Zod 生成のモックデータによるインメモリ CRUD
    - その他のルート → 実際の Azure Functions にプロキシ
    - dev-seeds JSON が利用可能な場合は初期データとして読み込み
    - BFF は設定変更なしで自動的にモックプロキシを経由
@@ -601,7 +601,7 @@ pnpm dlx swallowkit dev [options]
 
 ### Dev Seed ワークフロー
 
-Cosmos DB Emulator の状態をデバッグ用に再現したい場合は、環境ごとの seed データを使います：
+Cosmos DB Emulator の状態をデバッグ用に再現したい場合は、環境ごとのシードデータを使います：
 
 ```bash
 npx swallowkit create-dev-seeds local
@@ -615,7 +615,7 @@ npx swallowkit dev --seed-env local
 
 便利な用途:
 
-- ローカルで手動登録したデータを、そのまま検証用 seed として保存
+- ローカルで手動登録したデータを、そのまま検証用シードとして保存
 - デモや受け入れ確認のために、毎回同じデータ状態をすぐ再現
 - 不具合調査時に「壊れるデータ状態」をチームで共有
 - 新メンバー向けに、動作確認済みの初期データセットを配布
@@ -623,8 +623,8 @@ npx swallowkit dev --seed-env local
 ルール:
 
 - ファイル名はスキーマファイルに対応します。例: `shared/models/todo.ts` -> `dev-seeds/local/todo.json`
-- 一致した seed ファイルは、対応する Cosmos コンテナの内容を丸ごと置き換えます
-- 一致する seed ファイルがないコンテナは変更されません
+- 一致したシードファイルは、対応する Cosmos コンテナの内容を丸ごと置き換えます
+- 一致するシードファイルがないコンテナは変更されません
 - `--seed-env` を省略した場合、または環境ディレクトリが存在しない場合は、既存の Emulator データを保持します
 - 各ドキュメントには空でない文字列の `id` が必要です
 
@@ -725,134 +725,76 @@ pnpm dlx swallowkit scaffold <model-file> [options]
 | `--functions-dir <dir>` | Azure Functions ディレクトリ | `functions` |
 | `--api-dir <dir>` | BFF ディレクトリ | Next.js: `app/api`、React: `bff` |
 | `--api-only` | UI コンポーネントのみをスキップします。Functions、BFF ルート、OpenAPI、ネイティブスキーマ資産は更新されます。 | `false` |
-| `--skip-infra` | この scaffold 操作では `infra/` 配下を作成・変更しません（`infra-skipped`）。既存のモデル migration は削除されません。未登録の場合は後から `migrations add-model` で追加できます。`machine plan/apply/generate scaffold` と MCP（`skipInfra`）でも使えます。 | `false` |
+| `--skip-infra` | この scaffold 操作では `infra/` 配下を作成・変更しません（`infra-skipped`）。既存のモデルマイグレーションは削除されません。未登録の場合は後から `migrations add-model` で追加できます。`machine plan/apply/generate scaffold` と MCP（`skipInfra`）でも使えます。 | `false` |
 | `--dry-run` | 書き込まずに変更予定のファイル一覧と競合を表示します | `false` |
 
-### Connector モデルの動作
+### コネクタモデルの動作
 
-モデルファイルに `connectorConfig` エクスポートが含まれている場合、scaffold は connector モデルとして検出します：
+モデルファイルに `connectorConfig` エクスポートが含まれている場合、scaffold はコネクタモデルとして検出します。
 
-- **RDB connector モデル**: `functions/Connectors/`（C#）または同等のディレクトリに SQL ベースの CRUD ハンドラーを生成
-- **API connector モデル**: HTTP クライアントハンドラーを生成
+- **RDB コネクタモデル**: `functions/Connectors/`（C#）または同等のディレクトリに SQL ベースの CRUD ハンドラーを生成
+- **API コネクタモデル**: HTTP クライアントハンドラーを生成
 - BFF ルートと React UI は通常のモデルと同一に生成
-- connector モデルでは Cosmos DB Bicep 生成をスキップ
-- 読み取り専用モデル（operations が `getAll`/`getById` のみ）は GET エンドポイントのみ生成
+- コネクタモデルでは Cosmos DB Bicep 生成をスキップ
+- 読み取り専用モデル（操作 が `getAll`/`getById` のみ）は GET エンドポイントのみ生成
 
 ### 生成されるコード
 
-**1. Azure Functions (CRUD エンドポイント)**
+| 対象 | 生成先 |
+| --- | --- |
+| TypeScript Functions | `functions/src/<model-kebab>.ts` |
+| C# Functions | `functions/Crud/<Model>CrudFunctions.cs` |
+| Python Functions | `functions/blueprints/<model_snake>.py` |
+| Next.js BFF | `app/api/<modelCamel>/route.ts` と `[id]/route.ts` |
+| React のマネージド BFF | `bff/src/<modelCamel>/index.ts` と `bff/<modelCamel>/function.json` |
+| Next.js の UI | `app/<model-kebab>/` のページと `_components/<Model>Form.tsx` |
+| React の UI | `src/pages/<model-kebab>/` のページ、フォーム、ルート登録 |
+
+TypeScript の CRUD は個別のハンドラーを生成し、Cosmos DB バインディングと SDK を処理に応じて使います。BFF は共有 Zod スキーマで入力と応答を検証します。生成物の所有権とインフラのマイグレーションも記録します。
+
+### モデルファイル
+
+`shared/models/` に Zod スキーマを定義します。Scaffold に `BaseModel` の継承は不要です。
 
 ```typescript
-// functions/src/functions/{resource}.ts
-- GET    /api/{resource}       - 全件取得
-- GET    /api/{resource}/{id}  - ID で取得
-- POST   /api/{resource}       - 作成
-- PUT    /api/{resource}/{id}  - 更新
-- DELETE /api/{resource}/{id}  - 削除
-```
+// shared/models/todo.ts
+import { z } from 'zod/v4';
 
-各エンドポイントは:
-- ✅ Cosmos DB input/output bindings を使用
-- ✅ Zod スキーマで自動検証
-- ✅ エラーハンドリング付き
-- ✅ TypeScript 型安全
-- ✅ ファクトリーパターン対応（共有 `crud-factory.ts`）
-
-**2. Next.js BFF API Routes**
-
-```typescript
-// app/api/{resource}/route.ts
-// app/api/{resource}/[id]/route.ts
-```
-
-各ルートは:
-- ✅ Azure Functions バックエンドを呼び出し
-- ✅ 自動スキーマ検証
-- ✅ エラーハンドリング
-
-**3. React コンポーネント（オプション）**
-
-```typescript
-// components/{Resource}List.tsx
-// components/{Resource}Form.tsx
-```
-
-### 前提条件
-
-**モデルファイルの要件:**
-
-```typescript
-// lib/models/todo.ts
-import { z } from 'zod';
-import { BaseModel } from '@/lib/database/base-model';
-
-// 1. Zod スキーマを定義
-export const todoSchema = z.object({
+export const Todo = z.object({
   id: z.string(),
   text: z.string().min(1),
   completed: z.boolean().default(false),
-  createdAt: z.string().default(() => new Date().toISOString()),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
 });
-
-// 2. 型を推論
-export type TodoType = z.infer<typeof todoSchema>;
-
-// 3. BaseModel を継承
-export class Todo extends BaseModel<TodoType> {
-  constructor() {
-    super(
-      'AppDatabase',      // データベース名
-      'Todos',            // コンテナ名
-      todoSchema          // スキーマ
-    );
-  }
-}
+export type Todo = z.infer<typeof Todo>;
 ```
-
-### 例
 
 ```bash
-# Todo モデルから CRUD を生成
-npx swallowkit scaffold lib/models/todo.ts
-
-# Product モデルから CRUD を生成
-npx swallowkit scaffold lib/models/product.ts
-
+npx swallowkit scaffold todo
+npx swallowkit scaffold shared/models/product.ts
 ```
 
-### 生成後の使用
+### 生成した API を呼ぶ
 
-**フロントエンドから使用:**
+標準の `Todo` API は単数形の `/api/todo` です。更新は全体の入力スキーマを検証するため、変更する項目だけでなく、必須項目も送信してください。
 
 ```typescript
-import { api } from '@/lib/api/backend';
-import type { TodoType } from '@/lib/models/todo';
-
-// 全件取得
-const todos = await api.get<TodoType[]>('/api/todos');
-
-// 作成（バックエンドで検証）
-const created = await api.post<TodoType>('/api/todos', {
-  text: '牛乳を買う',
-  completed: false
+const response = await fetch('/api/todo');
+const todos = await response.json();
+const created = await fetch('/api/todo', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ text: '牛乳を買う', completed: false }),
 });
-
-// 更新（バックエンドで検証）
-const updated = await api.put<TodoType>('/api/todos/123', {
-  completed: true
-});
-
-// 削除
-await api.delete('/api/todos/123');
 ```
 
-### 詳細
-
-詳しくは [Scaffold ガイド](./scaffold-guide) を参照してください。
+外部トークン認証を使う画面では、生成された認証付き fetch ヘルパーを使用します。
+詳細は [Scaffold ガイド](./scaffold-guide.md)と[認証ガイド](./auth-guide.md)を参照してください。
 
 ## swallowkit status
 
-生成物台帳（`.swallowkit/artifacts.json`）と現在のプロジェクト状態の乖離（drift）を表示します。
+生成物台帳（`.swallowkit/artifacts.json`）と現在のプロジェクト状態の乖離（記録とのずれ）を表示します。
 
 ### 使用法
 
@@ -864,16 +806,16 @@ npx swallowkit status [options]
 
 | オプション | 説明 | デフォルト |
 | --- | --- | --- |
-| `--artifacts` | 追跡中の全生成物を ownership 付きで一覧表示します | `false` |
+| `--artifacts` | 追跡中の全生成物を所有権付きで一覧表示します | `false` |
 
 ### 出力内容
 
 - 追跡中の生成物数、生成後に変更されたファイル数、欠損ファイル数
-- drift findings（schema-drift / artifact-modified / artifact-missing / generator-drift / manifest-drift）と修復アクション
+- 記録からのずれの検出結果（schema-drift / artifact-modified / artifact-missing / generator-drift / manifest-drift）と修復アクション
 
 ## swallowkit verify
 
-既定で structure / drift / typecheck / backend-build と設定済みのカスタムチェックを実行します。失敗があると exit code 1 を返します。
+既定で structure / 記録とのずれ / 型検査 / backend-build と設定済みのカスタムチェックを実行します。失敗があると終了コード 1 を返します。
 
 ### 使用法
 
@@ -893,17 +835,17 @@ npx swallowkit verify [options]
 | --- | --- |
 | `structure` | プロジェクト構造規約（`validate project` と同等） |
 | `drift` | 生成物と現在状態の乖離検出 |
-| `typecheck` | TypeScript 型検査（`typecheck` script があればそれを、なければプロジェクトの package manager で `tsc --noEmit` を実行） |
+| `typecheck` | TypeScript 型検査（`typecheck` スクリプト があればそれを、なければプロジェクトのパッケージマネージャーで `tsc --noEmit` を実行） |
 | `backend-build` | 独立 `functions/` の検証。C# は `dotnet build`、TypeScript はプロジェクトの `tsc --noEmit`、Python 3 は `compileall`（構文のみ。import や型は検査しない）。Python は PATH より `functions/.venv` を優先 |
-| `build` / `lint` / `test` | 明示指定した場合にルート package scripts を実行。script がなければ skip |
+| `build` / `lint` / `test` | 明示指定した場合にルートの package.json にあるスクリプトを実行。該当するスクリプトがなければ省略 |
 
-バックエンドのツールチェーンがなければ理由付きで `skip` になります。skip は検証成功ではありません。ツールチェーンを復元して再実行するまで、バックエンドを検証済みと扱わないでください。ルートの `build` は `backend-build` の代わりにはなりません。`machine explain failure` でファイル名・行番号を含むコンパイルエラーを確認できます。
+バックエンドのツールチェーンがなければ理由付きで `skip` になります。省略は検証成功ではありません。ツールチェーンを復元して再実行するまで、バックエンドを検証済みと扱わないでください。ルートの `build` は `backend-build` の代わりにはなりません。`machine explain failure` でファイル名・行番号を含むコンパイルエラーを確認できます。
 
 結果は `.swallowkit/state/last-verify.json` に保存され、`swallowkit machine explain failure` で失敗の詳細を取得できます。
 
 ## swallowkit create-dev-seeds
 
-`shared/models/` の現在のスキーマから JSON seed テンプレートを生成するか、ローカル Cosmos DB Emulator の現データを seed として書き出します。
+`shared/models/` の現在のスキーマから JSON シードテンプレートを生成するか、ローカル Cosmos DB Emulator の現データをシードとして書き出します。
 
 ### 使用法
 
@@ -915,20 +857,20 @@ pnpm dlx swallowkit create-dev-seeds <environment> [options]
 
 ### 引数
 
-- `environment` (必須): `dev-seeds/` 配下に作成する seed 環境ディレクトリ名
+- `environment` (必須): `dev-seeds/` 配下に作成するシード環境ディレクトリ名
 
 ### オプション
 
 | オプション | 説明 | デフォルト |
 |----------|------|----------|
 | `--models-dir <dir>` | スキーマを読むモデルディレクトリ | `shared/models` |
-| `--seeds-dir <dir>` | seed 環境を生成するベースディレクトリ | `dev-seeds` |
-| `--force` | 既存の JSON seed ファイルを上書き | `false` |
+| `--seeds-dir <dir>` | シード環境を生成するベースディレクトリ | `dev-seeds` |
+| `--force` | 既存の JSON シードファイルを上書き | `false` |
 | `--from-emulator` | ローカル Cosmos DB Emulator の現データを `dev-seeds/<environment>/` へ書き出す | `false` |
 
 ### 生成内容
 
-通常モードでは、`shared/models/` 配下の各スキーマについて、`dev-seeds/<environment>/` に JSON ファイルを生成します：
+通常モードでは、`shared/models/` 配下の各スキーマについて、`dev-seeds/<environment>/` に JSON ファイルを生成します。
 
 ```text
 dev-seeds/
@@ -950,7 +892,7 @@ dev-seeds/
 
 この拡張の価値:
 
-- アプリ操作で作った実データを seed として資産化できる
+- アプリ操作で作った実データをシードとして資産化できる
 - 手で JSON を起こさなくても、リアルな確認データを繰り返し使える
 - デバッグ・デモ・レビューで同一状態を再現しやすい
 - 既存の `swallowkit dev --seed-env <environment>` フローにそのまま接続できる
@@ -971,22 +913,22 @@ npx swallowkit dev --seed-env local
 
 ## swallowkit migrations add-model
 
-スキーマを上書きせず CRUD も生成せずに、モデルの Cosmos DB コンテナー migration を登録・backfill します。
+スキーマを上書きせず CRUD も生成せずに、モデルの Cosmos DB コンテナーマイグレーションを登録・既存モデルへのインフラ定義の追加します。
 
 ```bash
 npx swallowkit migrations add-model probe-item --dry-run
 npx swallowkit migrations add-model probe-item
 ```
 
-Machine/MCP では `machine plan model-infrastructure <model>` で preview し、
+Machine/MCP では `machine plan model-infrastructure <model>` で変更予定を確認し、
 返された plan を `machine apply model --plan <planId>` で適用してください。
-migration、manifest、生成台帳の書き込みを fingerprint 付きで確認できます。
+マイグレーション、プロジェクト情報ファイル、生成台帳の書き込みを変更検出用のハッシュ付きで確認できます。
 
 `infra/migrations/<version>-create-<model>-container/main.bicep` を作成し、`infra/migrations/manifest.json` を更新して、生成ファイル所有権を記録します。コネクターモデルにはコンテナーがありません。
 
-登録済みの場合も、現在の全モデルに合わせて `.swallowkit/project.json` を同期します。
-このメタデータ更新と fingerprint は plan に含まれ、dry-run では書き込みません。
-メタデータが最新なら、安全な pending 定義の更新を明示した場合を除いて、再実行しても変更はありません。
+登録済みの場合も、現在のすべてのモデルに合わせて `.swallowkit/project.json` を同期します。
+このメタデータ更新と変更検出用のハッシュは plan に含まれ、dry-run では書き込みません。
+メタデータが最新なら、安全な未適用の定義の更新を明示した場合を除いて、再実行しても変更はありません。
 
 `manifest-out-of-date` または `manifest-drift` の修復だけが必要なら、既存モデルを指定して次を実行します。
 CRUD やインフラは生成しません。
@@ -996,18 +938,18 @@ npx swallowkit machine plan model probe-item --overwrite never
 npx swallowkit machine apply model --plan <planId>
 ```
 
-既存スキーマの生成は skip されますが、project manifest は同期されます。
-plan を確認してから適用してください。スキーマ、既存 migration、その checksum は保持されます。
+既存スキーマの生成は省略されますが、プロジェクト情報ファイルは同期されます。
+plan を確認してから適用してください。スキーマ、既存マイグレーション、そのチェックサムは保持されます。
 この修復に Azure 接続や `--refresh-pending` は不要です。
 
-migration が pending の間に partition key を変更した場合のみ、明示的な target と読み取り専用の状態確認を指定して更新します：
+マイグレーションが未適用のの間にパーティションキーを変更した場合のみ、明示的な対象と読み取り専用の状態確認を指定して更新します。
 
 ```bash
 npx swallowkit migrations add-model probe-item --refresh-pending --resource-group <name> --dry-run
 npx swallowkit migrations add-model probe-item --refresh-pending --resource-group <name>
 ```
 
-Azure CLI の選択中 subscription 以外が対象なら `--subscription <id>` を追加してください。dry-run は書き込みません。適用済み・デプロイ試行済み・状態不明・手編集済みの migration は拒否します。デプロイされた可能性のある migration は編集しないでください。
+Azure CLI の選択中サブスクリプション以外が対象なら `--subscription <id>` を追加してください。dry-run は書き込みません。適用済み・デプロイ試行済み・状態不明・手編集済みのマイグレーションは拒否します。デプロイされた可能性のあるマイグレーションは編集しないでください。
 
 ## swallowkit configure-mcp
 
@@ -1042,14 +984,14 @@ pnpm dlx swallowkit provision [options]
 | `--location <region>` | | Functions / Cosmos DB のリージョン。非対話実行では必須 | |
 | `--swa-location <region>` | | Static Web Apps のリージョン。非対話実行では必須 | |
 | `--what-if` | | Azure what-if の結果を確認内容に含める | |
-| `--adopt-existing` | | タグなし既存環境を baseline として採用する | |
-| `--baseline <version>` | | adoption の baseline。現在は `0` のみ | |
+| `--adopt-existing` | | タグなし既存環境を初期インフラとして採用する | |
+| `--baseline <version>` | | adoption の初期インフラ。現在は `0` のみ | |
 | `--reconcile` | | `main.bicep` 全体を明示的に再デプロイする | |
 | `--approve` | | 互換性用。通常の provision はコマンド実行自体が実行指示になる | |
-| `--status <runId>` | | 元の deployment と実行チェックポイントを読み取り専用で確認 | |
-| `--resume <runId>` | | 元の承認済みチェックポイントから再開。送信済み deployment は再送しない | |
-| `--resume-deployment <name>` | | 旧 baseline の ARM／非 secret parameters の一致を確認して復旧。create はしない | |
-| `--wait-seconds <seconds>` | | 非表示。待機時間の上限（0〜3600秒）を明示する場合のみ指定。既定では provision と `--resume` は Azure の完了まで待ち、status は1回だけ確認 | |
+| `--status <runId>` | | 元のデプロイと実行チェックポイントを読み取り専用で確認 | |
+| `--resume <runId>` | | 元の承認済みチェックポイントから再開。送信済みデプロイは再送しない | |
+| `--resume-deployment <name>` | | 旧初期インフラの ARM／非 secret parameters の一致を確認して復旧。create はしない | |
+| `--wait-seconds <seconds>` | | 非表示。待機時間の上限（0〜3600秒）を明示する場合のみ指定。既定では provision と `--resume` は Azure の完了まで待ち、状態は1回だけ確認 | |
 
 ### リージョン選択
 
@@ -1127,17 +1069,17 @@ npx swallowkit provision \
 
 | Azure の状態 | 動作 |
 |---|---|
-| Resource Group が存在しない | `main.bicep` を初回デプロイし、baseline 0 タグを記録 |
-| タグとローカル checksum が一致 | 未適用 migration のみを version 順に実行 |
-| migration がない | `noop`。Azure リソースを変更しない |
-| Resource Group はあるがタグがない | `adoption-required`。明示 adoption が必要 |
-| Azure の version が先行、または checksum 不一致 | 安全のため停止 |
+| リソースグループ が存在しない | `main.bicep` を初回デプロイし、初期インフラ 0 タグを記録 |
+| タグとローカルチェックサムが一致 | 未適用マイグレーションのみを version 順に実行 |
+| マイグレーションがない | `noop`。Azure リソースを変更しない |
+| リソースグループ はあるがタグがない | `adoption-required`。明示 adoption が必要 |
+| Azure の version が先行、またはチェックサム不一致 | 安全のため停止 |
 
-適用直前と各 migration の前にもタグを再確認します。別のデプロイが先に状態を進めた場合は `stale-azure-state` で停止します。
+適用直前と各マイグレーションの前にもタグを再確認します。別のデプロイが先に状態を進めた場合は `stale-azure-state` で停止します。
 
 ### 待機と復旧
 
-`--no-wait` で送信した deployment を確認します。通常の `provision` と `provision --resume` は Azure の完了まで待ち、その後にリソース情報と CI/CD の設定値を表示します。machine／MCP の apply は時間を区切って確認します（既定300秒）。待機が途中で終わった場合、Running／Accepted は `in-progress`、照会不能／DeploymentNotFound は `blocked`／`outcome: "unknown"` であり、Azure の失敗を意味しません。Failed／Canceled では秘密を伏せた Azure の原因を示します。Succeeded でも tag／ledger 未完了なら `partial` で、記録まで完了したときだけ `complete` です。
+`--no-wait` で送信したデプロイを確認します。通常の `provision` と `provision --resume` は Azure の完了まで待ち、その後にリソース情報と CI/CD の設定値を表示します。machine／MCP の apply は時間を区切って確認します（既定300秒）。待機が途中で終わった場合、Running／Accepted は `in-progress`、照会不能／DeploymentNotFound は `blocked`／`outcome: "unknown"` であり、Azure の失敗を意味しません。Failed／Canceled では秘密を伏せた Azure の原因を示します。Succeeded でも tag／台帳未完了なら `partial` で、記録まで完了したときだけ `complete` です。
 
 ```powershell
 pnpm exec swallowkit provision --status <runId>
@@ -1147,17 +1089,17 @@ pnpm exec swallowkit machine inspect provision --plan <runId> --wait-seconds 300
 pnpm exec swallowkit machine apply provision --plan <runId> --approve
 ```
 
-`.swallowkit/state/provision/` のチェックポイントを保持してください。通常の `provision --resume` は続行の指示であり、追加の承認確認はありません。machine／MCP の再開には引き続き明示的な人の承認が必要です。どちらも fingerprint、subscription、deployment の識別子、migration checksum を再確認します。通常 CLI は成功後にリソース情報と CI/CD 設定手順を表示し、エラー時には machine ではなく通常の provision コマンドを案内します。Ctrl+C／強制終了後も Azure は続く場合があります。自動キャンセル・削除はしません。待機や記録の修復だけのために再計画／reconcile をしないでください。旧版の未追跡 baseline は[デプロイガイド](./deployment-guide.md)の `--resume-deployment` 手順を使います。
+`.swallowkit/state/provision/` のチェックポイントを保持してください。通常の `provision --resume` は続行の指示であり、追加の承認確認はありません。machine／MCP の再開には引き続き明示的な人の承認が必要です。どちらも変更検出用のハッシュ、サブスクリプション、デプロイの識別子、マイグレーションチェックサムを再確認します。通常 CLI は成功後にリソース情報と CI/CD 設定手順を表示し、エラー時には machine ではなく通常の provision コマンドを案内します。Ctrl+C／強制終了後も Azure は続く場合があります。自動キャンセル・削除はしません。待機や記録の修復だけのために再計画／reconcile をしないでください。旧版の未追跡初期インフラは[デプロイガイド](./deployment-guide.md)の `--resume-deployment` 手順を使います。
 
 ## swallowkit migrations init
 
-旧バージョンで作成したプロジェクトの現在の `infra/` を、変更せずに baseline 0 として記録します。
+旧バージョンで作成したプロジェクトの現在の `infra/` を、変更せずに初期インフラ 0 として記録します。
 
 ```bash
 npx swallowkit migrations init --legacy-baseline
 ```
 
-生成される `infra/migrations/manifest.json` は Git にコミットしてください。このコマンドは Azure に接続せず、既存 manifest を上書きしません。続いて次の adoption を実行します。
+生成される `infra/migrations/manifest.json` は Git にコミットしてください。このコマンドは Azure に接続せず、既存プロジェクト情報ファイルを上書きしません。続いて次の adoption を実行します。
 
 ```bash
 npx swallowkit provision -g my-app-rg \
@@ -1165,7 +1107,7 @@ npx swallowkit provision -g my-app-rg \
   --adopt-existing --baseline 0 --what-if
 ```
 
-adoption は `main.bicep` を実行せず、Resource Group の既存タグを保持したまま SwallowKit の状態タグだけを追加します。what-if に Create/Delete がある場合は停止します。
+adoption は `main.bicep` を実行せず、リソースグループ の既存タグを保持したまま SwallowKit の状態タグだけを追加します。what-if に Create/Delete がある場合は停止します。
 
 ## swallowkit create-migration
 
@@ -1176,7 +1118,7 @@ npx swallowkit create-migration add-search-service
 # infra/migrations/0001-add-search-service/main.bicep を編集
 ```
 
-生成した Bicep は `projectName` と `location` を受け取ります。既存リソースは `existing` で参照し、原則として追加的かつ再実行可能にしてください。適用済みファイルを編集すると checksum 不一致で停止するため、修正は新しい migration にします。
+生成した Bicep は `projectName` と `location` を受け取ります。既存リソースは `existing` で参照し、原則として追加的かつ再実行可能にしてください。適用済みファイルを編集するとチェックサム不一致で停止するため、修正は新しいマイグレーションにします。
 
 ### プロビジョニング後の確認
 
@@ -1210,7 +1152,7 @@ resource flexFunctionsServer 'Microsoft.Web/sites@2023-12-01' = {
 }
 ```
 
-baseline を意図的に変更した場合、通常の `provision` は `baseline-drift` で停止します。影響を Azure what-if で確認したうえで、`--reconcile --what-if` を指定してください。Functions app settings など template 管理プロパティが上書きされる可能性があります。追加リソースには `create-migration` を使用する方が安全です。
+初期インフラを意図的に変更した場合、通常の `provision` は `baseline-drift` で停止します。影響を Azure what-if で確認したうえで、`--reconcile --what-if` を指定してください。Functions app settings など テンプレートで管理するプロパティが上書きされる可能性があります。追加リソースには `create-migration` を使用する方が安全です。
 
 ### トラブルシューティング
 
@@ -1248,7 +1190,7 @@ CLI の動作を環境変数で制御:
 
 | 変数 | 説明 | デフォルト |
 |------|------|----------|
-| `SWALLOWKIT_LOG_LEVEL` | ログレベル (debug/info/warn/error) | `info` |
+| `SWALLOWKIT_LOG_LEVEL` | ログレベル (debug/info/warn/エラー) | `info` |
 | `COSMOS_DB_ENDPOINT` | Cosmos DB エンドポイント | `https://localhost:8081/` |
 | `BACKEND_API_URL` | Functions URL | `http://localhost:7071` |
 
@@ -1258,4 +1200,4 @@ CLI の動作を環境変数で制御:
 - [Scaffold ガイド](./scaffold-guide) - CRUD コード生成の詳細
 ## 名前付きスキームの add-auth
 
-`swallowkit add-auth --scheme admin --provider swa` と `swallowkit add-auth --scheme lineUser --provider external-token` はスキーム別ディレクトリへ生成します。同名スキームは安全に停止し、verifier/adapter は上書きしません。`--scheme` 省略時は従来の単一 provider フローです。
+`swallowkit add-auth --scheme admin --provider swa` と `swallowkit add-auth --scheme lineUser --provider external-token` はスキーム別ディレクトリへ生成します。同名スキームは安全に停止し、トークン検証処理/参照指示ファイルは上書きしません。`--scheme` 省略時は従来の単一プロバイダーフローです。

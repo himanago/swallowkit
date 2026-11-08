@@ -186,7 +186,9 @@ Managed artifacts are tracked by SwallowKit metadata such as
 
 ### shared
 
-Edit only outside SwallowKit-managed markers.
+Follow each path's current `editPolicy`. In marker-owned files, edit only outside
+SwallowKit-managed markers. `shared/index.ts` has no markers and permits manual
+model exports while preserving exports required by generated code.
 
 Always inspect the current boundary contract instead of relying solely on the
 examples in this document.

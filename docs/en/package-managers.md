@@ -4,7 +4,7 @@ Use Node.js 22.14+ and pnpm 11/12 or npm 10+. CI for apps deployed to SWA uses N
 
 | Operation | pnpm | npm |
 | --- | --- | --- |
-| Bootstrap | `pnpm dlx swallowkit init my-app` | `npx swallowkit init my-app` |
+| Bootstrap | `pnpm dlx swallowkit@beta init my-app` | `npx swallowkit@beta init my-app` |
 | Model | `pnpm exec swallowkit create-model todo` | `npx swallowkit create-model todo` |
 | Scaffold | `pnpm exec swallowkit scaffold todo` | `npx swallowkit scaffold todo` |
 | Development | `pnpm exec swallowkit dev` | `npx swallowkit dev` |

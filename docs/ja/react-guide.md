@@ -1,5 +1,7 @@
 # React フロントエンド
 
+React + Vite は SwallowKit 2.x からの機能です。1.x の安定版では利用できません。[対象バージョンと導入方法](./versions.md)を確認してください。
+
 SSR や React Server Components が不要なアプリでは、Next.js の代わりに React を選択できます。
 React + TypeScript の SPA を Vite、React Router、Tailwind CSS で生成します。
 
@@ -16,10 +18,10 @@ Next.js のランタイムは不要です。新規 init に適用する既定値
 init の対話プロンプトで **Next.js** または **React** を選びます。非対話環境では次のように指定します。
 
 ```sh
-npx swallowkit init my-app --frontend react --package-manager npm --cicd github --backend-language typescript --cosmos-db-mode freetier --vnet none --swa-plan free
+npx swallowkit@beta init my-app --frontend react --package-manager npm --cicd github --backend-language typescript --cosmos-db-mode freetier --vnet none --swa-plan free
 ```
 
-pnpm の場合は `pnpm dlx swallowkit init ... --package-manager pnpm` を使い、
+pnpm の場合は `pnpm dlx swallowkit@beta init ... --package-manager pnpm` を使い、
 作成したプロジェクト内では `pnpm exec swallowkit ...` を実行します。
 バックエンド言語は引き続き `typescript`、`csharp`、`python` から選べます。
 マネージド BFF は常に TypeScript です。`--next-version` は Next.js 選択時だけ使われます。
@@ -92,7 +94,7 @@ SPA は生成された `routes.tsx` を自動検出します。独自のペー�
 `--api-only` は UI だけを省略し、バックエンドとマネージド BFF は生成します。
 `--api-dir` の既定値は React では `bff`、Next.js では従来の `app/api` です。
 
-machine/MCP と plan/apply も同じ設定・生成処理を使います。inspect には
+machine/MCP と plan/apply も同じ設定・生成処理を使います。検査には
 `frontendFramework: react` と実際の React/BFF のパスが現れます。
 所有権、差分検出、承認の仕組みを迂回しないでください。
 
@@ -100,7 +102,7 @@ machine/MCP と plan/apply も同じ設定・生成処理を使います。inspe
 
 | サービス | 既定ポート | 役割 |
 | --- | --- | --- |
-| SWA CLI | 4280 | アプリの入口。同一オリジンの API ルーティングと SWA 認証 |
+| SWA CLI | 4280 | ブラウザーから接続する URL。同一オリジンの API ルーティングと SWA 認証 |
 | Vite | 3000 | フロントエンド開発サーバー |
 | マネージド BFF Functions | 7073 | BFF 専用 |
 | 独立 Functions | 7071 | バックエンド |
@@ -130,9 +132,9 @@ Cosmos DB Emulator は既存のものを使います。利用できなければ�
 既存の認証 plan/apply で `swa`、`external-token`、`custom-jwt` と名前付きスキームを使えます。
 React では Next.js の proxy/API Routes ではなく、マネージド BFF ハンドラーを生成します。
 
-- SWA 認証では、プラットフォームが注入した principal を検証・正規化して転送します。
-- external-token は managed SWA 区間で `x-swallowkit-external-token` を使います。アダプターと独立 Functions の verifier を実装してください。
-- custom-jwt のログインでは HttpOnly・SameSite Cookie にトークンを保持し、本番では Secure を付けます。BFF が bearer token に変換し、バックエンドが検証します。
+- SWA 認証では、プラットフォームが注入した認証済み利用者の情報を検証・正規化して転送します。
+- external-token は SWA のマネージド区間で `x-swallowkit-external-token` を使います。アダプターと独立 Functions のトークン検証処理を実装してください。
+- custom-jwt のログインでは HttpOnly・SameSite Cookie にトークンを保持し、本番では Secure を付けます。BFF が bearer トークンに変換し、バックエンドが検証します。
 - 認証情報はリクエストごとに処理します。モデルのポリシーとロールを強制するのはバックエンドです。UI の表示制御は認可の代わりになりません。
 
 Next.js と同様、生成 CRUD は利用者ごとのデータ所有権までは制御しません。
@@ -147,13 +149,13 @@ npx swallowkit machine verify project
 npx swallowkit machine verify project --checks "structure,drift,typecheck,backend-build,build"
 ```
 
-build は共有スキーマ、SPA の型検査とビルド、SWA 設定の `dist/` へのコピー、
+ビルドは共有スキーマ、SPA の型検査とビルド、SWA 設定の `dist/` へのコピー、
 BFF の型検査とバンドルを行います。verify の型検査も BFF を含みます。
 TypeScript の独立バックエンドは `npm run --workspace=functions build` で別途ビルドします。
 C#/Python は従来のネイティブツールチェーンを使います。
 
 SWA ポートから一覧・新規・詳細・更新・削除、不正入力、未認証・権限不足を確認してください。
-型検査が成功しても、実行時の動作、verifier の実装、Azure デプロイの成功が保証されるわけではありません。
+型検査が成功しても、実行時の動作、トークン検証処理の実装、Azure デプロイの成功が保証されるわけではありません。
 
 生成される GitHub Actions / Azure Pipelines は選択したパッケージマネージャーで
 ビルドし、次の設定でデプロイします。

@@ -32,7 +32,7 @@ pnpm exec swallowkit create-model product
 This generates `shared/models/product.ts`:
 
 ```typescript
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 // Product model
 export const product = z.object({
@@ -62,7 +62,7 @@ Edit the generated file to add your required fields:
 
 ```typescript
 // shared/models/product.ts
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 export const product = z.object({
   id: z.string(),
@@ -79,25 +79,13 @@ export const product = z.object({
 export type Product = z.infer<typeof product>;
 ```
 
-⚠️ **Important**: Always include `id`, `createdAt`, and `updatedAt` fields. These are automatically managed by the backend.
+Persistent models must declare a required `id: z.string()`. Add `createdAt` and `updatedAt` as optional fields when needed.
 
-#### SwallowKit-Managed Fields Specification
+#### SwallowKit-managed fields
 
-These fields behave as follows:
-
-- **Model Definition**: Defined as `optional()` (not required)
-- **Frontend**: Not submitted from forms; automatically set by the backend
-- **Backend (Create)**:
-  - Values sent from client are ignored
-  - `id`: UUID is auto-generated (or uses client-provided value if sent)
-  - `createdAt`: Set to current timestamp
-  - `updatedAt`: Set to current timestamp
-- **Backend (Update)**:
-  - Values sent from client are ignored
-  - `createdAt`: Existing value is preserved (never changed)
-  - `updatedAt`: Updated to current timestamp
-
-This ensures timestamp consistency and prevents clients from setting incorrect values.
+Standard forms do not expose `id`, `createdAt`, or `updatedAt` as inputs, and the BFF removes them during request validation.
+On creation, the backend sets the ID and timestamps. On update, it uses the URL ID, retains the existing creation time, and updates the modification time.
+If you call standalone Functions directly rather than through the BFF, check the generated handler for your backend language. For example, the TypeScript create handler accepts a body ID when one is supplied.
 
 ### 3. Run Scaffold Command
 
@@ -134,7 +122,7 @@ The scaffold command generates the following files:
 - `lib/scaffold-config.ts` - Navigation menu configuration
 
 **Infrastructure (Cosmos DB):**
-- `infra/containers/product-container.bicep` - Cosmos DB container definition generated from the model schema
+- `infra/migrations/<version>-create-product-container/main.bicep` - Cosmos DB container definition generated from the model schema
 
 **OpenAPI export for C#/Python backends:**
 - `functions/openapi/product.openapi.json` - OpenAPI exported from the Zod model graph
@@ -143,7 +131,7 @@ The scaffold command generates the following files:
 ### Backend Language Behavior
 
 - `typescript`: the generated Functions handlers import the shared Zod schema package directly.
-- `csharp` / `python`: the frontend and BFF still use Zod in `shared/models/`, and the backend consumes native-generated assets derived from the OpenAPI export.
+- `csharp` / `python`: the frontend and BFF still use Zod in `shared/models/`, and Scaffold exports OpenAPI and native model assets. C# CRUD validates input using the generated types. Python CRUD handles dictionaries and does not automatically invoke the generated Pydantic models; the BFF validates both with Zod.
 - Re-run `swallowkit scaffold shared/models/<name>.ts` whenever the schema changes so `functions/openapi/` and `functions/generated/` stay in sync.
 
 ### 4. Access Your Application
@@ -403,8 +391,8 @@ categoryId: z.string().min(1, "Category is required")
 ### Example: Todo with Category Reference
 
 ```typescript
-// lib/models/category.ts
-import { z } from 'zod';
+// shared/models/category.ts
+import { z } from 'zod/v4';
 
 export const category = z.object({
   id: z.string(),
@@ -414,8 +402,8 @@ export const category = z.object({
 
 export type Category = z.infer<typeof category>;
 
-// lib/models/todo.ts
-import { z } from 'zod';
+// shared/models/todo.ts
+import { z } from 'zod/v4';
 
 export const todo = z.object({
   id: z.string(),
@@ -506,6 +494,8 @@ This means your referenced models should have either a `name` or `title` field f
 
 ## Generated Code Examples
 
+These excerpts show Next.js list and form behavior. Replace `@my-app/shared` with the `name` in your actual `shared/package.json`. React uses the same presentation logic with React Router navigation.
+
 ### List Page (page.tsx)
 
 ```tsx
@@ -513,7 +503,7 @@ This means your referenced models should have either a `name` or `title` field f
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Todo } from '@/lib/models/todo';
+import { Todo } from '@my-app/shared';
 
 export default function TodoListPage() {
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -666,8 +656,8 @@ export default function TodoListPage() {
 
 import { useState, FormEvent, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { todo } from '@/lib/models/todo';
-import { z } from 'zod';
+import { todo } from '@my-app/shared';
+import { z } from 'zod/v4';
 
 interface TodoFormProps {
   initialData?: any;
@@ -707,10 +697,8 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
 
     try {
       // Validate with Zod
-      const validatedData = todo.parse({
-        ...formData,
-        id: initialData?.id || crypto.randomUUID(),
-      });
+      const submitData = { ...formData };
+      todo.omit({ id: true }).parse(submitData);
 
       const url = isEdit ? `/api/todo/${initialData.id}` : '/api/todo';
       const method = isEdit ? 'PUT' : 'POST';
@@ -718,12 +706,12 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(validatedData),
+        body: JSON.stringify(submitData),
       });
 
       if (!res.ok) {
         const error = await res.json();
-        throw new Error(error.message || 'Failed to save');
+        throw new Error(error.error || 'Failed to save');
       }
 
       router.push('/todo');
@@ -731,9 +719,9 @@ export default function TodoForm({ initialData, isEdit = false }: TodoFormProps)
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         const fieldErrors: Record<string, string> = {};
-        err.errors.forEach((error) => {
+        err.issues.forEach((error) => {
           if (error.path) {
-            fieldErrors[error.path[0]] = error.message;
+            fieldErrors[String(error.path[0])] = error.message;
           }
         });
         setErrors(fieldErrors);
@@ -925,54 +913,11 @@ If foreign keys show IDs instead of names:
 - Check that the referenced model has been scaffolded
 - Verify API endpoint `/api/<model>` returns data
 
-## Factory Pattern (Reducing CRUD Code Duplication)
+## Generated CRUD handlers
 
-SwallowKit uses a **factory pattern** to generate CRUD code. This eliminates per-entity code duplication (~94%) and significantly improves maintainability.
-
-### How It Works
-
-The `scaffold` command generates the following factory files:
-
-- `lib/api/crud-factory.ts` - Generic CRUD handlers for Next.js BFF
-- `functions/src/lib/crud-factory.ts` - Generic CRUD handlers for Azure Functions
-
-Each entity's route file becomes a concise wrapper that simply calls the factory:
-
-**Next.js BFF Route:**
-
-```typescript
-// app/api/todo/route.ts
-import { createCrudHandlers } from '@/lib/api/crud-factory';
-import { todo } from '@/lib/models/todo';
-
-const handlers = createCrudHandlers({
-  entityName: 'todo',
-  schema: todo,
-});
-
-export const GET = handlers.GET;
-export const POST = handlers.POST;
-```
-
-**Azure Functions:**
-
-```typescript
-// functions/src/todo.ts
-import { app } from '@azure/functions';
-import { createCrudFunctions } from './lib/crud-factory';
-import { todo } from './models/todo';
-
-const crud = createCrudFunctions({
-  schema: todo,
-  containerName: 'Todos',
-});
-
-app.http('getTodos', { methods: ['GET'], route: 'todo', handler: crud.getAll });
-app.http('getTodoById', { methods: ['GET'], route: 'todo/{id}', handler: crud.getById });
-app.http('createTodo', { methods: ['POST'], route: 'todo', handler: crud.create });
-app.http('updateTodo', { methods: ['PUT'], route: 'todo/{id}', handler: crud.update });
-app.http('deleteTodo', { methods: ['DELETE'], route: 'todo/{id}', handler: crud.delete });
-```
+Current Scaffold output contains explicit per-model Functions handlers and BFF routes. It does not generate a shared `crud-factory.ts`.
+Next.js BFF routes share input/response validation and backend communication through `lib/api/call-function.ts`; React managed BFF routes use `bff/src/lib/call-function.ts`.
+Keep business logic and data access in `functions/`. Edit models or configuration and regenerate through plan/apply. If you edit a managed file directly, review the conflict in the regeneration plan.
 
 ## Connector Models
 
@@ -992,7 +937,7 @@ Connector models use the same `scaffold` command and produce the same BFF routes
 | Aspect | Standard Model (Cosmos DB) | Connector Model |
 |--------|---------------------------|-----------------|
 | Functions code | Cosmos DB bindings | SQL queries (RDB) or HTTP client (API) |
-| Functions location | `functions/src/functions/` (TS) | `functions/Connectors/` (C#) or same dir (TS/Python) |
+| Functions location | `functions/src/` (TS) | `functions/Connectors/` (C#) or same dir (TS/Python) |
 | BFF routes | Standard `callFunction()` | Identical — transparent |
 | UI components | Full CRUD | Same, respecting `operations` |
 | Cosmos Bicep | Generated | Skipped |
@@ -1012,7 +957,7 @@ When authentication is set up via `swallowkit add-auth`, you can add role-based 
 
 ```typescript
 // shared/models/estimate.ts
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 export const estimate = z.object({
   id: z.string(),
@@ -1046,7 +991,7 @@ By default, all Cosmos DB containers use `/id` as the partition key. To use a cu
 
 ```typescript
 // shared/models/order.ts
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 export const Order = z.object({
   id: z.string(),

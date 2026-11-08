@@ -22,7 +22,7 @@ pnpm exec swallowkit dev
 ```
 :::
 
-通常は2つのサーバーが起動します：
+通常は2つのサーバーが起動します。
 - Next.js: http://localhost:3000
 - Azure Functions: http://localhost:7071
 
@@ -40,9 +40,9 @@ Turbopack 専用の CSS ローダーは webpack では動きません。
 
 ### Git worktree を使った並列開発
 
-Git linked worktree 内で `swallowkit dev` を実行すると、その worktree のローカル Cosmos DB データは自動的に分離されます。Cosmos DB Emulator のプロセス自体は全 worktree で共有しますが、linked worktree では正規化した worktree root path の hash（8文字）が database name に付与されます。たとえば `MyAppDatabase` は `MyAppDatabase_a31f92c4` になります。
+Git linked worktree 内で `swallowkit dev` を実行すると、その worktree のローカル Cosmos DB データは自動的に分離されます。Cosmos DB Emulator のプロセス自体は全 worktree で共有しますが、linked worktree では正規化した worktree ルートパスのハッシュ（8文字）がデータベース名に付与されます。たとえば `MyAppDatabase` は `MyAppDatabase_a31f92c4` になります。
 
-main worktree では suffix が付かず、従来の database name のままです。seed の置換と `create-dev-seeds --from-emulator` も解決済み database を使用するため、異なる linked worktree で並行動作する Coding Agent が互いの container やデータを削除・置換することはありません。起動ログには実際の database name と worktree isolation の有効状態が表示されます。
+main worktree では接尾辞が付かず、従来のデータベース名のままです。シードの置換と `create-dev-seeds --from-emulator` も解決済みデータベースを使用するため、異なる linked worktree で並行動作する Coding エージェントが互いのコンテナーやデータを削除・置換することはありません。起動ログには実際のデータベース名と worktree isolation の有効状態が表示されます。
 
 ### オプション
 
@@ -101,29 +101,29 @@ Dev seeds を使うと、サーバー起動前にローカルの Cosmos DB Emula
 
 ### モデルの定義から Azure への初期投入まで
 
-SwallowKit では `shared/models/` の Zod スキーマから CRUD を生成し、`dev-seeds/<name>/` の JSON で動作を確認できます。同じ seed ファイルを Azure の初期データにも使えるため、ローカル用とクラウド用で別々の投入スクリプトを管理する必要はありません。Azure への投入は TypeScript・C#・Python のバックエンドに対応し、GitHub Actions から手動で実行します。
+SwallowKit では `shared/models/` の Zod スキーマから CRUD を生成し、`dev-seeds/<name>/` の JSON で動作を確認できます。同じシードファイルを Azure の初期データにも使えるため、ローカル用とクラウド用で別々の投入スクリプトを管理する必要はありません。Azure への投入は TypeScript・C#・Python のバックエンドに対応し、GitHub Actions から手動で実行します。
 
-1. `shared/models/` にモデルを定義し、`swallowkit scaffold <model>` で CRUD と対応するインフラ migration を生成します。モデルの書き方と生成対象は [Scaffold ガイド](./scaffold-guide.md)を参照してください。
-2. `swallowkit create-dev-seeds local` で JSON のテンプレートを作ります。画面から入力したデータを保存する場合は `swallowkit create-dev-seeds local --from-emulator` を使います。既存の seed ファイルを上書きする場合だけ `--force` を付けてください。
-3. JSON を確認・編集し、`swallowkit dev --seed-env local` でローカルの対象コンテナーを置き換えて、画面や API の動作を確認します。seed を適用せず開発を続ける場合は `--seed-env` を省略してください。
-4. Azure で使う seed ファイルをレビューし、モデル・生成コードとともにコミットします。個人情報や秘密情報をテストデータとしてコミットしないでください。
-5. 対象の Azure 環境へ `swallowkit provision` でインフラとモデルの migration を適用し、データベースとコンテナーを用意します。通常の Functions デプロイと GitHub Actions のシークレット設定も済ませてください。
-6. `main` から **Initialize Azure Cosmos DB seed data** を手動実行し、`seed_name` に `local` を指定します。Function App 名を確認入力し、初回は通常モードで投入します。完了後は初期化と通常版への復元の両方を確認してください。
+1. `shared/models/` にモデルを定義し、`swallowkit scaffold <model>` で CRUD と対応するインフラマイグレーションを生成します。モデルの書き方と生成対象は [Scaffold ガイド](./scaffold-guide.md)を参照してください。
+2. `swallowkit create-dev-seeds local` で JSON のテンプレートを作ります。画面から入力したデータを保存する場合は `swallowkit create-dev-seeds local --from-emulator` を使います。既存のシードファイルを上書きする場合だけ `--force` を付けてください。
+3. JSON を確認・編集し、`swallowkit dev --seed-env local` でローカルの対象コンテナーを置き換えて、画面や API の動作を確認します。シードを適用せず開発を続ける場合は `--seed-env` を省略してください。
+4. Azure で使うシードファイルをレビューし、モデル・生成コードとともにコミットします。個人情報や秘密情報をテストデータとしてコミットしないでください。
+5. 対象の Azure 環境へ `swallowkit provision` でインフラとモデルのマイグレーションを適用し、データベースとコンテナーを用意します。通常の Functions デプロイと GitHub Actions のシークレット設定も済ませてください。
+6. `main` から **Initialize Azure Cosmos DB シードデータ** を手動実行し、`seed_name` に `local` を指定します。Function App 名を確認入力し、初回は通常モードで投入します。完了後は初期化と通常版への復元の両方を確認してください。
 
 Azure への具体的な投入手順、制限、復旧方法は[デプロイガイド](./deployment-guide.md)の「Cosmos DB の初期データ投入」を参照してください。
 
 ### データを修正するときの使い分け
 
-初期データの誤りを見つけたら、まず seed の JSON を修正してローカルで再確認します。レビュー済みの修正を Azure に反映するときは、手動ワークフローの `force` を有効にできます。同じ `id`・パーティションキーのアイテム全体を置き換えますが、seed に含まれないアイテムは残ります。稼働中のアプリで使う場合は、利用者が更新した値も上書きすることに注意してください。
+初期データの誤りを見つけたら、まずシードの JSON を修正してローカルで再確認します。レビュー済みの修正を Azure に反映するときは、手動ワークフローの `force` を有効にできます。同じ `id`・パーティションキーのアイテム全体を置き換えますが、シードに含まれないアイテムは残ります。稼働中のアプリで使う場合は、利用者が更新した値も上書きすることに注意してください。
 
 名前が似ていても、次の操作は対象と動作が異なります。
 
 | 操作 | 対象と動作 |
 |---|---|
-| `create-dev-seeds ... --force` | ローカルの seed ファイルを上書きします。Azure には投入しません。 |
-| `dev --seed-env <name>` | ローカル Emulator の対応するコンテナーを seed の内容で置き換えます。Azure には投入しません。 |
+| `create-dev-seeds ... --force` | ローカルのシードファイルを上書きします。Azure には投入しません。 |
+| `dev --seed-env <name>` | ローカル Emulator の対応するコンテナーをシードの内容で置き換えます。Azure には投入しません。 |
 | Azure ワークフローの `force: false` | 未作成のアイテムを追加し、同じ内容はスキップします。内容が異なる既存アイテムがあると停止します。 |
-| Azure ワークフローの `force: true` | seed のアイテムを作成・上書きします。seed にないアイテムやコンテナーは削除しません。 |
+| Azure ワークフローの `force: true` | シードのアイテムを作成・上書きします。シードにないアイテムやコンテナーは削除しません。 |
 
 Azure の force は全件削除を伴うリセットでも、一括で成功・失敗が決まるトランザクションでもありません。途中で失敗しても書き込み済みのデータは残るため、結果の件数と診断情報を確認してから再実行してください。
 
@@ -147,7 +147,7 @@ dev-seeds/
     category.json
 ```
 
-各ファイルは `shared/models/` のスキーマに対応します。テストデータを記述します：
+各ファイルは `shared/models/` のスキーマに対応します。テストデータを記述します。
 
 ```json
 [
@@ -200,7 +200,7 @@ pnpm exec swallowkit dev --seed-env local
 
 ## モックコネクタ
 
-外部データコネクタ（MySQL、PostgreSQL、REST API）を使うモデルでは、実際の外部サービスなしでローカル開発できます：
+外部データコネクタ（MySQL、PostgreSQL、REST API）を使うモデルでは、実際の外部サービスなしでローカル開発できます。
 
 ::: code-group
 ```bash [npm]
@@ -220,11 +220,11 @@ pnpm exec swallowkit dev --mock-connectors
 
 ## 次のステップ
 
-- [Scaffold ガイド](/ja/scaffold-guide) — CRUD 生成とモデル設定
-- [Azure へのデプロイ](/ja/deployment-guide) — ローカルからクラウドへ
-- [外部コネクタ](/ja/connector-guide) — MySQL、PostgreSQL、REST API への接続
+- [Scaffold ガイド](/ja/scaffold-guide)。CRUD 生成とモデル設定
+- [Azure へのデプロイ](/ja/deployment-guide)。ローカルからクラウドへ
+- [外部コネクタ](/ja/connector-guide)。MySQL、PostgreSQL、REST API への接続
 
 
 ### Durable Functions と Azurite
 
-独立 Durable Functions が Azure Storage provider と `UseDevelopmentStorage=true` を使う場合は、`swallowkit dev` の前に Azurite を起動してください。dev はこの設定で標準の Blob、Queue、Table ポート（10000〜10002）に到達できない場合に案内します。HTTP の起動確認は HTTP の範囲です。Durable の接続はテスト用オーケストレーションで確認します。Azure Storage への接続や他の Durable provider には各構成の前提が適用されます。Cosmos DB Emulator は別のサービスです。
+独立 Durable Functions が Azure Storage プロバイダーと `UseDevelopmentStorage=true` を使う場合は、`swallowkit dev` の前に Azurite を起動してください。dev はこの設定で標準の Blob、Queue、Table ポート（10000〜10002）に到達できない場合に案内します。HTTP の起動確認は HTTP の範囲です。Durable の接続はテスト用オーケストレーションで確認します。Azure Storage への接続や他の Durable プロバイダーには各構成の前提が適用されます。Cosmos DB Emulator は別のサービスです。

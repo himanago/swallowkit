@@ -20,7 +20,7 @@ Provision Azure resources and configure CI/CD for a SwallowKit project. After co
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Generated Resources](#generated-resources)
-- [CI/CD Setup](#cicd-setup)
+- [CI/CD Workflows](#ci-cd-workflows)
 - [Environment Variables](#environment-variables)
 - [Troubleshooting](#troubleshooting)
 
@@ -36,7 +36,7 @@ Provision Azure resources and configure CI/CD for a SwallowKit project. After co
 ### 1. Initialize Project
 
 ```bash
-npx swallowkit init my-app
+npx swallowkit@beta init my-app
 cd my-app
 ```
 

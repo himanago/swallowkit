@@ -13,7 +13,7 @@ SwallowKit uses a single Zod schema definition in `shared/models/` as the source
 - TypeScript types via `z.infer<>`
 - Frontend form validation
 - BFF request/response validation
-- Backend handler validation
+- TypeScript/C# backend validation and generated Python Pydantic types
 - Cosmos DB document structure
 - OpenAPI contracts (C#/Python backends)
 - Generated UI components

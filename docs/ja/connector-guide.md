@@ -6,7 +6,7 @@ Cosmos DB と並行して外部データソース（MySQL、PostgreSQL、SQL Ser
 
 ## アーキテクチャ
 
-Connector モデルは、標準の Cosmos DB モデルと同じアーキテクチャに組み込まれます。フロントエンドと BFF レイヤーはデータソースの違いを意識しません — 違いが生じるのは Functions レイヤーのみです。
+コネクタモデルは、標準の Cosmos DB モデルと同じアーキテクチャに組み込まれます。フロントエンドと BFF レイヤーはデータソースの違いを意識しません。違いが生じるのは Functions レイヤーのみです。
 
 ### 標準モデル（Cosmos DB）
 
@@ -14,32 +14,32 @@ Connector モデルは、標準の Cosmos DB モデルと同じアーキテク�
 Frontend → BFF (Next.js API Routes) → Azure Functions → Cosmos DB
 ```
 
-### Connector モデル
+### コネクタモデル
 
 ```
 Frontend → BFF (Next.js API Routes) → Azure Functions → 外部データソース (RDB / API)
 ```
 
-Connector モデルに対して生成される BFF ルートは、標準モデルと**まったく同じ**です。これは以下を意味します：
+コネクタモデルに対して生成される BFF ルートは、標準モデルと**まったく同じ**です。これは以下を意味します。
 
 - フロントエンドはすべてのモデルを同一のインターフェースで利用できる
 - フロントエンドを変更せずに、モデルを Cosmos DB から外部ソースへ（またはその逆へ）移行できる
 - UI コンポーネントはデータソースに関係なく同じ方法で生成される
 
-### ローカル開発時のモック Connector
+### ローカル開発時のモックコネクタ
 
 ```
 Frontend → BFF → Mock Proxy (:7072) ──┬─ Connector ルート → インメモリ CRUD（Zod 生成データ）
                                       └─ その他のルート → Azure Functions (:7071)
 ```
 
-モックプロキシは Connector モデルへのリクエストをインターセプトしてリアルなフェイクデータを返し、標準の Cosmos DB モデルへのリクエストは実際の Azure Functions ランタイムにプロキシします。
+モックプロキシはコネクタモデルへのリクエストをインターセプトしてリアルなフェイクデータを返し、標準の Cosmos DB モデルへのリクエストは実際の Azure Functions ランタイムにプロキシします。
 
 ## はじめに
 
-### 1. Connector を設定に追加
+### 1. コネクタを設定に追加
 
-`add-connector` コマンドで新しい外部データソースを登録します：
+`add-connector` コマンドで新しい外部データソースを登録します。
 
 ::: code-group
 ```bash [npm]
@@ -58,11 +58,11 @@ pnpm exec swallowkit add-connector backlog --type api
 ```
 :::
 
-これにより `swallowkit.config.js` の `connectors` セクションにエントリが追加されます。設定ファイルを手動で編集することも可能です — 詳しくは[設定リファレンス](#設定リファレンス)をご覧ください。
+これにより `swallowkit.config.js` の `connectors` セクションにエントリが追加されます。設定ファイルを手動で編集することも可能です。詳しくは[設定リファレンス](#設定リファレンス)をご覧ください。
 
-### 2. Connector モデルを作成
+### 2. コネクタモデルを作成
 
-`create-model` コマンドに `--connector` フラグを付けて、`connectorConfig` 付きのモデル雛形を生成します：
+`create-model` コマンドに `--connector` フラグを付けて、`connectorConfig` 付きのモデル雛形を生成します。
 
 ::: code-group
 ```bash [npm]
@@ -81,11 +81,11 @@ pnpm exec swallowkit create-model backlog-issue --connector backlog
 ```
 :::
 
-これにより `shared/models/user.ts`（または `backlog-issue.ts`）に Zod スキーマと、指定した Connector 用の `connectorConfig` エクスポートが生成されます。
+これにより `shared/models/user.ts`（または `backlog-issue.ts`）に Zod スキーマと、指定したコネクタ用の `connectorConfig` エクスポートが生成されます。
 
 ### 3. モデルを編集
 
-生成された Zod スキーマと `connectorConfig` を実際のデータソースに合わせてカスタマイズします：
+生成された Zod スキーマと `connectorConfig` を実際のデータソースに合わせてカスタマイズします。
 
 **RDB の例** (`shared/models/user.ts`):
 
@@ -147,7 +147,7 @@ export const connectorConfig = {
 
 ### 4. Scaffold の実行
 
-通常どおり `scaffold` を実行します — SwallowKit は `connectorConfig` エクスポートを検出し、Cosmos DB コードの代わりに Connector 固有の Functions コードを生成します：
+通常どおり `scaffold` を実行します。SwallowKit は `connectorConfig` エクスポートを検出し、Cosmos DB コードの代わりにコネクタ固有の Functions コードを生成します。
 
 ::: code-group
 ```bash [npm]
@@ -162,20 +162,20 @@ pnpm exec swallowkit scaffold shared/models/backlog-issue.ts
 
 生成されるファイルはバックエンド言語によって異なります：
 
-| コンポーネント | 標準モデル | Connector モデル |
+| コンポーネント | 標準モデル | コネクタモデル |
 |-------------|----------|----------------|
-| **Functions (C#)** | `functions/` | `functions/Connectors/` |
-| **Functions (TypeScript)** | `functions/src/functions/` | `functions/src/functions/` |
-| **Functions (Python)** | `functions/` | `functions/` |
+| **Functions (C#)** | `functions/Crud/` | `functions/Connectors/` |
+| **Functions (TypeScript)** | `functions/src/` | `functions/src/` |
+| **Functions (Python)** | `functions/blueprints/` | `functions/blueprints/` |
 | **BFF ルート** | 同一 | 同一（フロントエンドに対して透過的） |
 | **UI コンポーネント** | 同一 | 同一 |
 | **Cosmos DB Bicep** | 生成される | **スキップされる** |
 
-⚠️ **読み取り専用モデル**: `operations` に `getAll` や `getById` のみが含まれる場合、scaffold は POST、PUT、DELETE ハンドラを**生成しません**。そのモデルは読み取り専用として扱われます。
+**読み取り専用モデル**: `operations` に `getAll` や `getById` のみが含まれる場合、scaffold は POST、PUT、DELETE ハンドラを**生成しません**。そのモデルは読み取り専用として扱われます。
 
 ### 5. ローカル開発
 
-`--mock-connectors` フラグ付きで dev サーバーを起動すると、実際の外部接続なしで開発できます：
+`--mock-connectors` フラグ付きで dev サーバーを起動すると、実際の外部接続なしで開発できます。
 
 ::: code-group
 ```bash [npm]
@@ -190,7 +190,7 @@ pnpm exec swallowkit dev --mock-connectors
 
 ## 設定リファレンス
 
-外部データソースは `swallowkit.config.js` の `connectors` セクションで定義します。各キーはモデルの `connectorConfig` で使用される一意の Connector 名です。
+外部データソースは `swallowkit.config.js` の `connectors` セクションで定義します。各キーはモデルの `connectorConfig` で使用される一意のコネクタ名です。
 
 ### 設定の全体例
 
@@ -198,9 +198,6 @@ pnpm exec swallowkit dev --mock-connectors
 // swallowkit.config.js
 module.exports = {
   backend: { language: 'csharp' },
-  functions: {
-    baseUrl: process.env.BACKEND_FUNCTIONS_BASE_URL || 'http://localhost:7071',
-  },
   connectors: {
     mysql: {
       type: 'rdb',
@@ -234,25 +231,25 @@ module.exports = {
 };
 ```
 
-### RDB Connector のオプション
+### RDB コネクタのオプション
 
 | プロパティ | 型 | 必須 | 説明 |
 |----------|-----|------|------|
-| `type` | `'rdb'` | ✅ | Connector タイプ |
+| `type` | `'rdb'` | ✅ | コネクタタイプ |
 | `provider` | `'mysql'` \| `'postgres'` \| `'sqlserver'` | ✅ | データベースプロバイダー |
 | `connectionEnvVar` | `string` | ✅ | 接続文字列を格納する環境変数名 |
 
-### API Connector のオプション
+### API コネクタのオプション
 
 | プロパティ | 型 | 必須 | 説明 |
 |----------|-----|------|------|
-| `type` | `'api'` | ✅ | Connector タイプ |
+| `type` | `'api'` | ✅ | コネクタタイプ |
 | `baseUrlEnvVar` | `string` | ✅ | API のベース URL を格納する環境変数名 |
-| `auth` | `object` | ✅ | 認証設定（以下参照） |
+| `auth` | `object` | 任意 | 認証設定（以下参照） |
 
 ### API 認証タイプ
 
-**API Key** (`type: 'apiKey'`):
+**API キー** (`type: 'apiKey'`):
 
 | プロパティ | 型 | 必須 | 説明 |
 |----------|-----|------|------|
@@ -261,39 +258,36 @@ module.exports = {
 | `placement` | `'query'` \| `'header'` | ✅ | API キーの送信先 |
 | `paramName` | `string` | ✅ | クエリパラメータ名またはヘッダー名 |
 
-**Bearer Token** (`type: 'bearer'`):
+**Bearer トークン** (`type: 'bearer'`):
 
 | プロパティ | 型 | 必須 | 説明 |
 |----------|-----|------|------|
 | `type` | `'bearer'` | ✅ | 認証タイプ |
 | `envVar` | `string` | ✅ | Bearer トークンを格納する環境変数 |
 
-**OAuth 2.0** (`type: 'oauth2'`):
+**OAuth 2.0** (`type: 'oauth2'`)
 
-| プロパティ | 型 | 必須 | 説明 |
-|----------|-----|------|------|
-| `type` | `'oauth2'` | ✅ | 認証タイプ |
-| `tokenUrlEnvVar` | `string` | ✅ | トークンエンドポイント URL を格納する環境変数 |
-| `clientIdEnvVar` | `string` | ✅ | クライアント ID を格納する環境変数 |
-| `clientSecretEnvVar` | `string` | ✅ | クライアントシークレットを格納する環境変数 |
+現在のジェネレーターは `envVar` に指定した環境変数から既存のトークンを読み、Bearer トークンとして転送します。
+トークンエンドポイントへの要求や client 資格情報による自動取得・更新は生成しません。
+`tokenUrlEnvVar`、`clientIdEnvVar`、`clientSecretEnvVar` は現行の設定項目ではありません。
 
 ## モデルメタデータリファレンス
 
-モデルファイルの `connectorConfig` エクスポートは、SwallowKit にどの Connector を使用し、外部データソースとどのようにやり取りするかを伝えます。
+モデルファイルの `connectorConfig` エクスポートは、SwallowKit にどのコネクタを使用し、外部データソースとどのようにやり取りするかを伝えます。
 
 ### 共通フィールド
 
 | プロパティ | 型 | 必須 | 説明 |
 |----------|-----|------|------|
-| `connector` | `string` | ✅ | Connector 名（`connectors` 設定のキーと一致する必要あり） |
-| `operations` | `readonly string[]` | ✅ | 有効なオペレーションの配列 |
+| `connector` | `string` | ✅ | コネクタ名（`connectors` 設定のキーと一致する必要あり） |
+| `operations` | `readonly string[]` | ✅ | 有効な操作の配列 |
 
 ### RDB 固有フィールド
 
 | プロパティ | 型 | 必須 | 説明 |
 |----------|-----|------|------|
 | `table` | `string` | ✅ | データベーステーブル名 |
-| `idColumn` | `string` | ✅ | 主キーカラム名 |
+| `idColumn` | `string` | 任意 | 主キーカラム名。省略時は `id` |
 
 ```typescript
 export const connectorConfig = {
@@ -308,7 +302,7 @@ export const connectorConfig = {
 
 | プロパティ | 型 | 必須 | 説明 |
 |----------|-----|------|------|
-| `endpoints` | `object` | ✅ | オペレーション名から HTTP メソッド + パスへのマッピング |
+| `endpoints` | `object` | 任意 | 操作名から HTTP メソッド + パスへのマッピング |
 
 ```typescript
 export const connectorConfig = {
@@ -324,17 +318,17 @@ export const connectorConfig = {
 
 エンドポイントのパスでは、リソース識別子のプレースホルダーとして `{id}` を使用します。
 
-## サポートされるオペレーション
+## サポートされる操作
 
-| オペレーション | HTTP メソッド | RDB（生成される SQL） | API（生成される HTTP） | 説明 |
+| 操作 | HTTP メソッド | RDB（生成される SQL） | API（生成される HTTP） | 説明 |
 |-------------|-------------|---------------------|---------------------|------|
 | `getAll` | GET | `SELECT * FROM {table}` | `GET {endpoint}` | 全レコードの取得 |
 | `getById` | GET | `SELECT * FROM {table} WHERE {idColumn} = ?` | `GET {endpoint}/{id}` | 単一レコードの取得 |
 | `create` | POST | `INSERT INTO {table} ...` | `POST {endpoint}` | 新規レコードの作成 |
-| `update` | PUT | `UPDATE {table} SET ... WHERE {idColumn} = ?` | `PATCH {endpoint}/{id}` | 既存レコードの更新 |
+| `update` | PUT | `UPDATE {table} SET ... WHERE {idColumn} = ?` | `PUT {endpoint}/{id}` | 既存レコードの更新 |
 | `delete` | DELETE | `DELETE FROM {table} WHERE {idColumn} = ?` | `DELETE {endpoint}/{id}` | レコードの削除 |
 
-💡 **読み取り専用パターン**: 読み取り専用の統合を作成するには、`operations` 配列に `getAll` と `getById` のみを含めます。scaffold は書き込みハンドラをスキップし、モックサーバーは書き込みリクエストに対して 405 を返します。
+**読み取り専用パターン**: 読み取り専用の統合を作成するには、`operations` 配列に `getAll` と `getById` のみを含めます。scaffold は書き込みハンドラをスキップし、モックサーバーは書き込みリクエストに対して 405 を返します。
 
 ## モックサーバー
 
@@ -343,13 +337,13 @@ export const connectorConfig = {
 ### 動作の仕組み
 
 1. **起動**: モックプロキシがポート 7072 で起動し、BFF はこのプロキシを経由するよう設定される
-2. **ルーティング**: Connector モデルへのリクエストはインターセプトされインメモリで処理される。その他のリクエストはポート 7071 の Azure Functions にプロキシされる
-3. **データ生成**: 起動時に各 Connector モデルの Zod スキーマを読み取り、フィールド名のヒューリスティクスに基づいてリアルなフェイクデータを生成する（例：`email` フィールドにはメールアドレス風の値、`name` フィールドには名前風の値）
+2. **ルーティング**: コネクタモデルへのリクエストはインターセプトされインメモリで処理される。その他のリクエストはポート 7071 の Azure Functions にプロキシされる
+3. **データ生成**: 起動時に各コネクタモデルの Zod スキーマを読み取り、フィールド名のヒューリスティクスに基づいてリアルなフェイクデータを生成する（例：`email` フィールドにはメールアドレス風の値、`name` フィールドには名前風の値）
 4. **インメモリ CRUD**: 生成されたデータはメモリに保存され、各モデルの `operations` 配列に応じた CRUD 操作をサポートする
 
 ### モックデータの生成
 
-モックサーバーは Zod スキーマのフィールド名と型に基づいてリアルなデータを自動生成します：
+モックサーバーは Zod スキーマのフィールド名と型に基づいてリアルなデータを自動生成します。
 
 | フィールドパターン | 生成される値 |
 |----------------|------------|
@@ -365,7 +359,7 @@ export const connectorConfig = {
 
 ### Dev Seeds との統合
 
-Connector モデルに初期データを提供するには、dev-seeds JSON ファイルを使用します：
+コネクタモデルに初期データを提供するには、dev-seeds JSON ファイルを使用します。
 
 ::: code-group
 ```bash [npm]
@@ -378,9 +372,9 @@ pnpm exec swallowkit create-dev-seeds shared/models/user.ts
 
 これにより、自動生成データの代わりにモックサーバーが読み込む初期データの JSON シードファイルが作成されます。シードファイルの形式は標準の Cosmos DB モデルと同じです。
 
-### サポートされていないオペレーション
+### サポートされていない操作
 
-モデルの `operations` 配列に含まれないオペレーションへのリクエストは、モックサーバーから **405 Method Not Allowed** が返されます。
+モデルの `operations` 配列に含まれない操作へのリクエストは、モックサーバーから **405 Method Not Allowed** が返されます。
 
 ```
 # user モデルが ['getAll', 'getById'] のみの場合：
@@ -390,16 +384,16 @@ DELETE /api/users/123 → 405 Method Not Allowed
 
 ## ベストプラクティス
 
-### Connector を使うべきケース
+### コネクタを使うべきケース
 
-- ✅ プロジェクトで既存のリレーショナルデータベースからデータが必要な場合
-- ✅ サードパーティの SaaS API を SwallowKit アプリに統合したい場合
-- ✅ Cosmos DB データと並行して外部データの読み取り専用ビューが必要な場合
-- ✅ すべてのデータソースに対して一貫した型安全な UI と BFF レイヤーが必要な場合
+- プロジェクトで既存のリレーショナルデータベースからデータが必要な場合
+- サードパーティの SaaS API を SwallowKit アプリに統合したい場合
+- Cosmos DB データと並行して外部データの読み取り専用ビューが必要な場合
+- すべてのデータソースに対して一貫した型安全な UI と BFF レイヤーが必要な場合
 
 ### 読み取り専用パターン
 
-変更すべきでない外部データソース（例：共有の社内データベース）には、読み取り専用の Connector を使用します：
+変更すべきでない外部データソース（例：共有の社内データベース）には、読み取り専用のコネクタを使用します。
 
 ```typescript
 export const connectorConfig = {
@@ -417,13 +411,13 @@ export const connectorConfig = {
 
 ### 命名規則
 
-- **Connector 名**（設定内）: 小文字の説明的な名前を使用（例：`mysql`、`backlog`、`salesforce`）
+- **コネクタ名**（設定内）: 小文字の説明的な名前を使用（例：`mysql`、`backlog`、`salesforce`）
 - **モデルファイル**: モデル名に合わせたケバブケースを使用（例：`backlog-issue.ts`）
 - **環境変数**: 明確なプレフィックス付きの UPPER_SNAKE_CASE を使用（例：`BACKLOG_API_BASE_URL`、`MYSQL_CONNECTION_STRING`）
 
 ### 環境変数の管理
 
-Connector の認証情報はすべて環境変数に格納し、接続文字列や API キーをハードコードしないでください：
+コネクタの認証情報はすべて環境変数に格納し、接続文字列や API キーをハードコードしないでください：
 
 ```bash
 # .env.local（ローカル開発用）
@@ -432,20 +426,20 @@ BACKLOG_API_BASE_URL=https://your-space.backlog.com/api/v2
 BACKLOG_API_KEY=your-api-key-here
 ```
 
-### Cosmos DB モデルと Connector モデルの混在
+### Cosmos DB モデルとコネクタモデルの混在
 
-同じプロジェクト内で標準の Cosmos DB モデルと Connector モデルを自由に混在させることができます。フロントエンドと BFF レイヤーはそれらを同一に扱います — 違いが生じるのは Functions レイヤーのみです。
+同じプロジェクト内で標準の Cosmos DB モデルとコネクタモデルを自由に混在させることができます。フロントエンドと BFF レイヤーはそれらを同一に扱います。違いが生じるのは Functions レイヤーのみです。
 
 ## 制限事項
 
-Connector 機能の現時点での制限事項は以下のとおりです：
+コネクタ機能の現時点での制限事項は以下のとおりです。
 
-- **キャッシュレイヤーなし**: Connector で生成された Functions にはキャッシュが含まれません。高トラフィックの外部 API 呼び出しには手動でキャッシュを追加してください
+- **キャッシュレイヤーなし**: コネクタで生成された Functions にはキャッシュが含まれません。高トラフィックの外部 API 呼び出しには手動でキャッシュを追加してください
 - **カスタム認証フローなし**: OAuth 2.0 はクライアントクレデンシャルフローのみをサポートしています。対話型・認可コードフローは未サポートです
-- **ページネーションのパススルーなし**: `getAll` オペレーションはページネーションパラメータを外部ソースに渡しません。大規模なデータセットでは手動でページネーションを実装してください
-- **JOIN / リレーションなし**: RDB Connector はモデルごとに単一テーブルで動作します。テーブル間クエリにはカスタム実装が必要です
-- **スキーママイグレーションなし**: SwallowKit は RDB Connector 向けのデータベーステーブルの作成やマイグレーションは行いません — テーブルは事前に存在している必要があります
-- **Webhook / イベントサポートなし**: Connector はリクエスト・レスポンス型のみです。プッシュ型の統合はサポートされていません
+- **ページネーションのパススルーなし**: `getAll` 操作はページネーションパラメータを外部ソースに渡しません。大規模なデータセットでは手動でページネーションを実装してください
+- **JOIN / リレーションなし**: RDB コネクタはモデルごとに単一テーブルで動作します。テーブル間クエリにはカスタム実装が必要です
+- **スキーママイグレーションなし**: SwallowKit は RDB コネクタ向けのデータベーステーブルの作成やマイグレーションは行いません。テーブルは事前に存在している必要があります
+- **Webhook / イベントサポートなし**: コネクタはリクエスト・レスポンス型のみです。プッシュ型の統合はサポートされていません
 - **コネクションプーリング設定なし**: RDB のコネクションプーリングはドライバーのデフォルトに依存します。高度なプール設定は公開されていません
 
-💡 **参考情報**: CLI コマンドの詳細は **[CLI リファレンス](./cli-reference)** を、標準の Cosmos DB モデルの scaffold については **[Scaffold ガイド](./scaffold-guide)** をご参照ください。
+**参考情報**: CLI コマンドの詳細は **[CLI リファレンス](./cli-reference)** を、標準の Cosmos DB モデルの scaffold については **[Scaffold ガイド](./scaffold-guide)** をご参照ください。

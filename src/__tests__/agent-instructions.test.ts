@@ -390,7 +390,7 @@ describe("coding-agent documentation synchronization", () => {
     expect(translation).toContain("デプロイ可能と案内したりしてはなりません");
     for (const rule of [
       "dev-seeds/<environment>/learning-profile.json",
-      "再 seed せずにアプリを再起動",
+      "再シードせずにアプリを再起動",
       "`AzureWebJobsStorage`",
       "TLS 検証を無効化",
       "worktree 分離後の DB 名",
@@ -442,15 +442,15 @@ describe("coding-agent documentation synchronization", () => {
       expect(englishGuide.toLowerCase()).toContain(topic.toLowerCase());
     }
     for (const topic of [
-      "生成される Agent integration files",
+      "生成される指示ファイル",
       "開発ライフサイクル全体での SwallowKit",
-      "質問・設計の前に inspect する",
-      "Responsibility boundary",
-      "Planning と ticketing",
-      "Implementation workflow",
-      "Verification と semantic review の違い",
-      "Human approval",
-      "外部 development process との composition",
+      "質問・設計の前の検査",
+      "責任範囲と編集規則",
+      "計画とチケット作成",
+      "実装の進め方",
+      "構造の検証と仕様のレビュー",
+      "人による承認",
+      "外部開発プロセスとの組み合わせ",
     ]) {
       expect(japaneseGuide).toContain(topic);
     }

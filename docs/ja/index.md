@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: "SwallowKit"
-  text: "スキーマ駆動 scaffolding"
+  text: "Zod スキーマからアプリを生成"
   tagline: "共有 Zod スキーマを中心に、Next.js / React フロントエンド・BFF・Azure Functions バックエンド・インフラ構成の整合性を保ちます。"
   image:
     src: /logo.png
@@ -21,8 +21,8 @@ hero:
 
 features:
   - title: 共有スキーマと契約の一元化
-    details: ドメインモデルを Zod スキーマとして一度定義すれば、TypeScript 型、バリデーション、BFF ルート、バックエンドハンドラー、API 契約が生成されます。アプリケーションが大きくなっても定義がずれません。
-  - title: フルスタック CRUD scaffolding
+    details: モデルを Zod スキーマで定義し、その内容から型、画面、API、入力検証を生成します。モデルの変更後は再生成し、検証コマンドで定義と生成物のずれを確認できます。
+  - title: 画面と CRUD API の生成
     details: "1 つのスキーマから Azure Functions、Next.js API Routes または SWA マネージド Functions BFF、React UI を生成します。init で Next.js / React + Vite SPA を選べます。"
   - title: Azure インフラとデプロイ
     details: Bicep テンプレート、CI/CD ワークフロー（GitHub Actions または Azure Pipelines）、Azure リソースのプロビジョニングがアプリケーションコードと一緒に生成されます。Static Web Apps、Functions、Cosmos DB は Managed Identity で構成されます。
@@ -38,14 +38,14 @@ features:
 
 AI はコードをすばやく生成できますが、レイヤー間の整合性を自動で維持してはくれません。フレームワークは複雑さを隠せますが、本番アプリケーションには開発者が読み変更できる明示的なアーキテクチャが必要です。
 
-SwallowKit は共有 Zod スキーマを中心に置き、その周辺のアプリケーション構造を生成することでこの問題に対処します。ランタイムフレームワークではなく scaffolding ツールです。生成されたコードは読み、編集し、置き換えられます。
+SwallowKit は共有 Zod スキーマを中心に置き、その周辺のアプリケーション構造を生成することでこの問題に対処します。アプリケーションのひな形を生成するツールです。生成されたコードは読み、編集し、置き換えられます。
 
 ## 次のステップ
 
-- [はじめる](/ja/getting-started) — プロジェクトを作成し、最初の CRUD フローを生成する
-- [基本概念](/ja/concepts) — スキーマ中心のアーキテクチャを理解する
-- [Scaffold ガイド](/ja/scaffold-guide) — CRUD 生成の詳細
-- [Azure へのデプロイ](/ja/deployment-guide) — Bicep でプロビジョニングとデプロイ
-- [AI / MCP ガイド](/ja/ai-mcp-guide) — コーディングエージェント向けの機械可読インターフェース
+- [はじめる](/ja/getting-started)。プロジェクトを作成し、最初の CRUD フローを生成する
+- [基本概念](/ja/concepts)。スキーマ中心のアーキテクチャを理解する
+- [Scaffold ガイド](/ja/scaffold-guide)。CRUD 生成の詳細
+- [Azure へのデプロイ](/ja/deployment-guide)。Bicep でプロビジョニングとデプロイ
+- [AI / MCP ガイド](/ja/ai-mcp-guide)。コーディングエージェント向けの機械可読インターフェース
 
 </div>
